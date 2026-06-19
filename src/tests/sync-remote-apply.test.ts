@@ -65,7 +65,8 @@ function freshDb(): Database.Database {
       deleted_by_user_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      lamport TEXT NOT NULL DEFAULT '0'
+      lamport TEXT NOT NULL DEFAULT '0',
+      field_lamports TEXT
     )
   `)
 
@@ -174,28 +175,31 @@ describe('applyRemoteMeetings', () => {
     expect(row?.lamport).toBe('5')
   })
 
-  it('skips a row whose lamport is <= local', () => {
+  // Field-LWW (Phase 4.5): meetings no longer skip at the row level — the apply
+  // always descends into the per-column merge, which itself no-ops every column
+  // whose incoming clock loses. So a lower/equal incoming clock leaves the local
+  // value untouched (the guarantee that matters), via the merge rather than a
+  // row-level skip. (Whole-row skip bookkeeping no longer applies.)
+  it('a lower per-column clock wins no columns (local value preserved)', () => {
     db.prepare(
       "INSERT INTO meetings (id, title, date, lamport) VALUES ('mtg-1', 'Local', '2026-05-22T10:00:00.000Z', '10')",
     ).run()
-    const result = applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
       makeRow({ id: 'mtg-1', lamport: '5', title: 'Older' }),
     ])
-    expect(result.appliedIds).toEqual([])
-    expect(result.skippedLowLamport).toBe(1)
     const row = db.prepare('SELECT title FROM meetings WHERE id = ?').get('mtg-1') as { title: string }
     expect(row.title).toBe('Local')
   })
 
-  it('skips equal lamport (must be strictly greater)', () => {
+  it('an equal clock wins no columns (strictly-greater required; local preserved)', () => {
     db.prepare(
       "INSERT INTO meetings (id, title, date, lamport) VALUES ('mtg-1', 'Local', '2026-05-22T10:00:00.000Z', '7')",
     ).run()
-    const result = applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
       makeRow({ id: 'mtg-1', lamport: '7', title: 'Tied' }),
     ])
-    expect(result.appliedIds).toEqual([])
-    expect(result.skippedLowLamport).toBe(1)
+    const row = db.prepare('SELECT title FROM meetings WHERE id = ?').get('mtg-1') as { title: string }
+    expect(row.title).toBe('Local')
   })
 
   it('overwrites row when incoming lamport > local', () => {
@@ -506,5 +510,51 @@ describe('applyRemoteMeetings', () => {
       .prepare('SELECT transcript_segments FROM meetings WHERE id = ?')
       .get('mtg-a4') as { transcript_segments: string | null }
     expect(row.transcript_segments).toBeNull()
+  })
+
+  // ── Field-LWW (Phase 4.5) ──────────────────────────────────────────────────
+  it('2A: a winning-but-null transcript keeps the local value AND the local clock', () => {
+    // Local mid-recording: transcript present, clock 5 for transcript_segments.
+    db.prepare(
+      `INSERT INTO meetings (id, title, date, lamport, field_lamports, transcript_segments)
+       VALUES ('mtg-2a', 'Local', '2026-05-22T10:00:00.000Z', '5',
+               '{"transcript_segments":"5","title":"5"}', '[{"text":"local"}]')`,
+    ).run()
+    // A teammate retitles (clock 10) while the gateway nulls the in-progress
+    // transcript on the wire, but its field clock still advances to 10.
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-2a',
+        lamport: '10',
+        title: 'Renamed',
+        transcriptSegments: null,
+        fieldLamports: { transcript_segments: '10', title: '10' },
+      }),
+    ])
+    const row = db
+      .prepare('SELECT title, transcript_segments, field_lamports FROM meetings WHERE id = ?')
+      .get('mtg-2a') as { title: string; transcript_segments: string; field_lamports: string }
+    expect(row.title).toBe('Renamed') // the real winner applied
+    expect(row.transcript_segments).toBe('[{"text":"local"}]') // local transcript preserved
+    // clock NOT advanced for transcript_segments (else a later real update loses)
+    expect(JSON.parse(row.field_lamports).transcript_segments).toBe('5')
+    expect(JSON.parse(row.field_lamports).title).toBe('10')
+  })
+
+  it('NULL field_lamports (migrated row) → first field-LWW write degrades to whole-row', () => {
+    // Phase-4 rows have field_lamports = NULL (no backfill). The first merge must
+    // densify at the row baseline and let the higher incoming row clock win.
+    db.prepare(
+      `INSERT INTO meetings (id, title, date, lamport, field_lamports)
+       VALUES ('mtg-nm', 'Local', '2026-05-22T10:00:00.000Z', '5', NULL)`,
+    ).run()
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({ id: 'mtg-nm', lamport: '10', title: 'Newer' }), // no fieldLamports
+    ])
+    const row = db
+      .prepare('SELECT title, lamport FROM meetings WHERE id = ?')
+      .get('mtg-nm') as { title: string; lamport: string }
+    expect(row.title).toBe('Newer')
+    expect(row.lamport).toBe('10')
   })
 })

@@ -387,11 +387,54 @@ export function applyRemoteMeetings(
 const MEETINGS_SPEC: TableSpec<PulledMeetingRow> = {
   tableName: 'meetings',
   hasUserId: true,
+  fieldLww: true, // Phase 4.5 — per-column merge (a retitle won't clobber owner edits).
   selectLamportSql: 'SELECT lamport FROM meetings WHERE id = ?',
   rowKey: (row) => [row.id],
   rowId: (row) => row.id,
   upsert: (db, row) => upsertMeetingRow(db, row),
 }
+
+// Synced data columns for the meetings field-LWW merge (snake↔camel). Mirrors
+// the upsert's INSERT column set (NOT every meetings column — owner-only fields
+// like me_speaker_index / transcript_provider / self_name aren't pulled to
+// teammates, pre-existing). Excludes PK `id` + meta `lamport`/`field_lamports`.
+// Guarded by a completeness test against the INSERT's bind keys.
+export const MEETING_COL_MAP: ReadonlyArray<readonly [snake: string, camel: string]> = [
+  ['title', 'title'],
+  ['date', 'date'],
+  ['duration_seconds', 'durationSeconds'],
+  ['calendar_event_id', 'calendarEventId'],
+  ['meeting_platform', 'meetingPlatform'],
+  ['meeting_url', 'meetingUrl'],
+  ['location', 'location'],
+  ['transcript_path', 'transcriptPath'],
+  ['summary_path', 'summaryPath'],
+  ['recording_path', 'recordingPath'],
+  ['transcript_drive_id', 'transcriptDriveId'],
+  ['summary_drive_id', 'summaryDriveId'],
+  ['template_id', 'templateId'],
+  ['speaker_count', 'speakerCount'],
+  ['speaker_map', 'speakerMap'],
+  ['transcript_segments', 'transcriptSegments'],
+  ['notes', 'notes'],
+  ['summary', 'summary'],
+  ['attendees', 'attendees'],
+  ['attendee_emails', 'attendeeEmails'],
+  ['chat_messages', 'chatMessages'],
+  ['companies', 'companies'],
+  ['dismissed_companies', 'dismissedCompanies'],
+  ['status', 'status'],
+  ['was_impromptu', 'wasImpromptu'],
+  ['is_group_event', 'isGroupEvent'],
+  ['is_group_event_user_set', 'isGroupEventUserSet'],
+  ['scheduled_end_at', 'scheduledEndAt'],
+  ['is_private', 'isPrivate'],
+  ['deleted_at', 'deletedAt'],
+  ['deleted_by_user_id', 'deletedByUserId'],
+  ['created_at', 'createdAt'],
+  ['updated_at', 'updatedAt'],
+]
+const MEETING_SNAKE_TO_CAMEL = new Map<string, string>(MEETING_COL_MAP)
 
 // ─── Notes (T14) ─────────────────────────────────────────────────────────
 
@@ -644,7 +687,7 @@ const ORG_COMPANIES_SPEC: TableSpec<PulledOrgCompanyRow> = {
 // would silently drop those columns from the per-field merge. `field_lamports`
 // keys are snake (the bare-row diff's native casing); this map looks up the
 // matching camelCase value in the pulled (camelCase) row.
-const ORG_COMPANY_COL_MAP: ReadonlyArray<readonly [snake: string, camel: keyof PulledOrgCompanyRow]> = [
+const ORG_COMPANY_COL_MAP: ReadonlyArray<readonly [snake: string, camel: string]> = [
   ['canonical_name', 'canonicalName'], ['normalized_name', 'normalizedName'],
   ['description', 'description'], ['primary_domain', 'primaryDomain'],
   ['website_url', 'websiteUrl'], ['linkedin_company_url', 'linkedinCompanyUrl'],
@@ -684,6 +727,95 @@ const ORG_COMPANY_COL_MAP: ReadonlyArray<readonly [snake: string, camel: keyof P
 ]
 const ORG_COMPANY_SNAKE_TO_CAMEL = new Map(ORG_COMPANY_COL_MAP)
 
+// ─── Generic field-LWW upsert (shared by org_companies/tasks/contacts/meetings)─
+//
+// The per-column merge + insert/update dispatch is identical across every
+// fieldLww table; only the `bind` object (which columns + value transforms) and
+// the INSERT statement differ. This centralizes the skeleton so the four
+// `upsert*Row` functions only supply their table-specific bind + insert.
+//
+//   incoming row ─▶ mergeFieldLww(local vs incoming per-column clocks)
+//                     │
+//        ┌────────────┴─────────────┐
+//     isInsert                    update
+//     write whole row          write ONLY merge.winners (losers keep local =
+//     (caller's INSERT)        protects un-pushed local edits); winners=∅ → no-op
+//
+// largeColNullKeepLocal: snake columns the gateway may send as NULL purely for
+// transport (in-progress meeting transcript_segments). If such a column "wins"
+// but its incoming value is null while the local value is non-null, keep BOTH
+// the local value AND the local clock — advancing the clock with a stale value
+// would shadow a later legitimate update.
+interface FieldLwwUpsertOpts {
+  db: Database.Database
+  table: string
+  snakeToCamel: ReadonlyMap<string, string>
+  allSnakeCols: readonly string[]
+  id: string
+  incomingFieldLamports: unknown
+  incomingRowLamport: string
+  bind: Record<string, unknown>
+  insert: (bind: Record<string, unknown>) => void
+  largeColNullKeepLocal?: readonly string[]
+}
+
+function upsertFieldLwwRow(opts: FieldLwwUpsertOpts): void {
+  const { db, table, snakeToCamel, allSnakeCols, id, bind } = opts
+  const keepLocal = opts.largeColNullKeepLocal ?? []
+  const extra = keepLocal.length ? ', ' + keepLocal.join(', ') : ''
+  const local = db
+    .prepare(`SELECT lamport, field_lamports${extra} FROM ${table} WHERE id = ? LIMIT 1`)
+    .get(id) as Record<string, unknown> | undefined
+  const isInsert = local == null
+
+  const incomingMap = parseFieldLamports((opts.incomingFieldLamports as string | null) ?? null)
+  const merge = mergeFieldLww({
+    existingFieldLamports: isInsert ? null : parseFieldLamports(local!.field_lamports as string | null),
+    existingRowLamport: isInsert ? '0' : (local!.lamport as string),
+    incomingFieldLamports: incomingMap,
+    incomingRowLamport: opts.incomingRowLamport,
+    incomingColumns: incomingMap ? Object.keys(incomingMap) : allSnakeCols,
+    isInsert,
+  })
+
+  let winners = merge.winners
+  let mergedMap = merge.mergedFieldLamports
+
+  if (!isInsert && keepLocal.length) {
+    const existing = parseFieldLamports(local!.field_lamports as string | null) ?? {}
+    for (const col of keepLocal) {
+      const camel = snakeToCamel.get(col)
+      if (!camel) continue
+      if (winners.includes(col) && bind[camel] == null && local![col] != null) {
+        winners = winners.filter((w) => w !== col)
+        if (existing[col] != null) mergedMap = { ...mergedMap, [col]: existing[col] }
+        else {
+          const m = { ...mergedMap }
+          delete m[col]
+          mergedMap = m
+        }
+      }
+    }
+  }
+
+  bind.lamport = merge.newRowLamport
+  bind.fieldLamports = JSON.stringify(mergedMap)
+
+  if (isInsert) {
+    opts.insert(bind)
+    return
+  }
+  if (winners.length === 0) return // incoming lost every column — no-op.
+  const setParts: string[] = []
+  for (const snake of winners) {
+    const camel = snakeToCamel.get(snake)
+    if (!camel) continue // unknown/meta column — skip defensively.
+    setParts.push(`${snake} = @${camel}`)
+  }
+  setParts.push('field_lamports = @fieldLamports', 'lamport = @lamport')
+  db.prepare(`UPDATE ${table} SET ${setParts.join(', ')} WHERE id = @id`).run(bind)
+}
+
 function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): void {
   // Resurrection guard: if this id was hard-purged, never re-create it (handles a
   // row arriving in the same pull page as its tombstone, in either order).
@@ -695,23 +827,8 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
   //   • update → write ONLY the columns the incoming write wins (incoming
   //     per-column clock > local). Losing columns are left untouched in the DB
   //     (they keep the local value), protecting un-pushed local edits.
-  const local = db
-    .prepare('SELECT lamport, field_lamports FROM org_companies WHERE id = ? LIMIT 1')
-    .get(row.id) as { lamport: string; field_lamports: string | null } | undefined
-  const isInsert = local == null
-
-  const incomingMap = parseFieldLamports(row.fieldLamports ?? null)
-  const merge = mergeFieldLww({
-    existingFieldLamports: isInsert ? null : parseFieldLamports(local!.field_lamports),
-    existingRowLamport: isInsert ? '0' : local!.lamport,
-    incomingFieldLamports: incomingMap,
-    incomingRowLamport: row.lamport,
-    incomingColumns: incomingMap
-      ? Object.keys(incomingMap)
-      : ORG_COMPANY_COL_MAP.map(([snake]) => snake),
-    isInsert,
-  })
-
+  // The merge + insert/update dispatch is centralized in upsertFieldLwwRow.
+  //
   // Audit FKs reference users(id) (enforced in SQLite). A teammate's user row
   // may not be in the local directory yet — store NULL rather than FK-fail the
   // whole company (attribution resolves once the firm directory syncs).
@@ -796,28 +913,23 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
     fieldSources: stringify(row.fieldSources),
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
-    lamport: merge.newRowLamport,
-    fieldLamports: JSON.stringify(merge.mergedFieldLamports),
   }
 
-  if (!isInsert) {
-    // Dynamic update: only the winning columns + the merged map + row lamport.
-    if (merge.winners.length === 0) return // incoming lost every column — no-op.
-    const setParts: string[] = []
-    for (const snake of merge.winners) {
-      const camel = ORG_COMPANY_SNAKE_TO_CAMEL.get(snake)
-      if (!camel) continue // unknown/meta column — skip defensively.
-      setParts.push(`${snake} = @${camel}`)
-    }
-    setParts.push('field_lamports = @fieldLamports', 'lamport = @lamport')
-    db.prepare(`UPDATE org_companies SET ${setParts.join(', ')} WHERE id = @id`).run(bind)
-    return
-  }
-
-  // Insert path — write the whole incoming row (SQLite org_companies has no
-  // user_id column; Postgres carries it for multi-tenant filtering).
-  db.prepare(
-    `INSERT INTO org_companies (
+  upsertFieldLwwRow({
+    db,
+    table: 'org_companies',
+    snakeToCamel: ORG_COMPANY_SNAKE_TO_CAMEL,
+    allSnakeCols: ORG_COMPANY_COL_MAP.map(([snake]) => snake),
+    id: row.id,
+    incomingFieldLamports: row.fieldLamports,
+    incomingRowLamport: row.lamport,
+    bind,
+    // Insert path — write the whole incoming row (SQLite org_companies has no
+    // user_id column; Postgres carries it for multi-tenant filtering).
+    insert: (b) =>
+      db
+        .prepare(
+          `INSERT INTO org_companies (
        id, canonical_name, normalized_name, description,
        primary_domain, website_url, linkedin_company_url, twitter_handle,
        crunchbase_url, angellist_url,
@@ -938,7 +1050,9 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        updated_at = excluded.updated_at,
        lamport = excluded.lamport,
        field_lamports = excluded.field_lamports`,
-  ).run(bind)
+        )
+        .run(b),
+  })
 }
 
 // ─── Org Company Aliases (T14) ───────────────────────────────────────────
@@ -1125,11 +1239,66 @@ export function applyRemoteContacts(
 const CONTACTS_SPEC: TableSpec<PulledContactRow> = {
   tableName: 'contacts',
   hasUserId: true,
+  fieldLww: true, // Phase 4.5 — per-column merge protects concurrent teammate edits.
   selectLamportSql: 'SELECT lamport FROM contacts WHERE id = ?',
   rowKey: (row) => [row.id],
   rowId: (row) => row.id,
   upsert: (db, row) => upsertContactRow(db, row),
 }
+
+// Data columns for the contacts field-LWW merge (snake↔camel). Excludes the PK
+// `id`, meta (`lamport`/`field_lamports`), and the un-synced audit FKs
+// (`created_by_user_id`/`updated_by_user_id` are not pulled into local SQLite —
+// pre-existing). Guarded by a completeness test.
+export const CONTACT_COL_MAP: ReadonlyArray<readonly [snake: string, camel: string]> = [
+  ['full_name', 'fullName'],
+  ['first_name', 'firstName'],
+  ['last_name', 'lastName'],
+  ['normalized_name', 'normalizedName'],
+  ['email', 'email'],
+  ['phone', 'phone'],
+  ['primary_company_id', 'primaryCompanyId'],
+  ['title', 'title'],
+  ['contact_type', 'contactType'],
+  ['linkedin_url', 'linkedinUrl'],
+  ['crm_contact_id', 'crmContactId'],
+  ['crm_provider', 'crmProvider'],
+  ['twitter_handle', 'twitterHandle'],
+  ['other_socials', 'otherSocials'],
+  ['city', 'city'],
+  ['state', 'state'],
+  ['timezone', 'timezone'],
+  ['pronouns', 'pronouns'],
+  ['birthday', 'birthday'],
+  ['university', 'university'],
+  ['previous_companies', 'previousCompanies'],
+  ['work_history', 'workHistory'],
+  ['education_history', 'educationHistory'],
+  ['tags', 'tags'],
+  ['relationship_strength', 'relationshipStrength'],
+  ['last_met_event', 'lastMetEvent'],
+  ['warm_intro_path', 'warmIntroPath'],
+  ['fund_size', 'fundSize'],
+  ['typical_check_size_min', 'typicalCheckSizeMin'],
+  ['typical_check_size_max', 'typicalCheckSizeMax'],
+  ['investment_stage_focus', 'investmentStageFocus'],
+  ['investment_sector_focus', 'investmentSectorFocus'],
+  ['investment_sector_focus_notes', 'investmentSectorFocusNotes'],
+  ['proud_portfolio_companies', 'proudPortfolioCompanies'],
+  ['linkedin_headline', 'linkedinHeadline'],
+  ['linkedin_skills', 'linkedinSkills'],
+  ['linkedin_enriched_at', 'linkedinEnrichedAt'],
+  ['talent_pipeline', 'talentPipeline'],
+  ['key_takeaways', 'keyTakeaways'],
+  ['field_sources', 'fieldSources'],
+  ['notes', 'notes'],
+  ['is_private', 'isPrivate'],
+  ['deleted_at', 'deletedAt'],
+  ['deleted_by_user_id', 'deletedByUserId'],
+  ['created_at', 'createdAt'],
+  ['updated_at', 'updatedAt'],
+]
+const CONTACT_SNAKE_TO_CAMEL = new Map<string, string>(CONTACT_COL_MAP)
 
 function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
   // Phase 4 resurrection guard — never re-create a hard-purged contact.
@@ -1142,8 +1311,69 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
   const userExists = (uid: string | null | undefined): boolean =>
     uid != null && db.prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1').get(uid) != null
   const deletedByUserId = userExists(row.deletedByUserId) ? row.deletedByUserId : null
-  db.prepare(
-    `INSERT INTO contacts (
+  const bind: Record<string, unknown> = {
+    id: row.id,
+    fullName: row.fullName,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    normalizedName: row.normalizedName,
+    email: row.email,
+    phone: row.phone,
+    primaryCompanyId: row.primaryCompanyId,
+    title: row.title,
+    contactType: row.contactType,
+    linkedinUrl: row.linkedinUrl,
+    crmContactId: row.crmContactId,
+    crmProvider: row.crmProvider,
+    twitterHandle: row.twitterHandle,
+    otherSocials: stringify(row.otherSocials),
+    city: row.city,
+    state: row.state,
+    timezone: row.timezone,
+    pronouns: row.pronouns,
+    birthday: row.birthday,
+    university: row.university,
+    previousCompanies: stringify(row.previousCompanies),
+    workHistory: stringify(row.workHistory),
+    educationHistory: stringify(row.educationHistory),
+    tags: stringify(row.tags),
+    relationshipStrength: row.relationshipStrength,
+    lastMetEvent: row.lastMetEvent,
+    warmIntroPath: row.warmIntroPath,
+    fundSize: row.fundSize,
+    typicalCheckSizeMin: row.typicalCheckSizeMin,
+    typicalCheckSizeMax: row.typicalCheckSizeMax,
+    investmentStageFocus: stringify(row.investmentStageFocus),
+    investmentSectorFocus: stringify(row.investmentSectorFocus),
+    investmentSectorFocusNotes: row.investmentSectorFocusNotes,
+    proudPortfolioCompanies: stringify(row.proudPortfolioCompanies),
+    linkedinHeadline: row.linkedinHeadline,
+    linkedinSkills: stringify(row.linkedinSkills),
+    linkedinEnrichedAt: row.linkedinEnrichedAt ? toIso(row.linkedinEnrichedAt) : null,
+    talentPipeline: row.talentPipeline,
+    keyTakeaways: row.keyTakeaways,
+    fieldSources: stringify(row.fieldSources),
+    notes: row.notes,
+    isPrivate: row.isPrivate ? 1 : 0,
+    deletedAt: row.deletedAt ? toIso(row.deletedAt) : null,
+    deletedByUserId,
+    createdAt: toIso(row.createdAt),
+    updatedAt: toIso(row.updatedAt),
+  }
+
+  upsertFieldLwwRow({
+    db,
+    table: 'contacts',
+    snakeToCamel: CONTACT_SNAKE_TO_CAMEL,
+    allSnakeCols: CONTACT_COL_MAP.map(([snake]) => snake),
+    id: row.id,
+    incomingFieldLamports: row.fieldLamports,
+    incomingRowLamport: row.lamport,
+    bind,
+    insert: (b) =>
+      db
+        .prepare(
+          `INSERT INTO contacts (
        id, full_name, first_name, last_name, normalized_name,
        email, phone,
        primary_company_id, title, contact_type,
@@ -1156,7 +1386,7 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        proud_portfolio_companies, linkedin_headline, linkedin_skills, linkedin_enriched_at,
        talent_pipeline, key_takeaways, field_sources, notes,
        is_private, deleted_at, deleted_by_user_id,
-       created_at, updated_at, lamport
+       created_at, updated_at, lamport, field_lamports
      ) VALUES (
        @id, @fullName, @firstName, @lastName, @normalizedName,
        @email, @phone,
@@ -1170,7 +1400,7 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        @proudPortfolioCompanies, @linkedinHeadline, @linkedinSkills, @linkedinEnrichedAt,
        @talentPipeline, @keyTakeaways, @fieldSources, @notes,
        @isPrivate, @deletedAt, @deletedByUserId,
-       @createdAt, @updatedAt, @lamport
+       @createdAt, @updatedAt, @lamport, @fieldLamports
      )
      ON CONFLICT(id) DO UPDATE SET
        full_name = excluded.full_name,
@@ -1219,56 +1449,10 @@ function upsertContactRow(db: Database.Database, row: PulledContactRow): void {
        deleted_by_user_id = excluded.deleted_by_user_id,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
-       lamport = excluded.lamport`,
-  ).run({
-    id: row.id,
-    fullName: row.fullName,
-    firstName: row.firstName,
-    lastName: row.lastName,
-    normalizedName: row.normalizedName,
-    email: row.email,
-    phone: row.phone,
-    primaryCompanyId: row.primaryCompanyId,
-    title: row.title,
-    contactType: row.contactType,
-    linkedinUrl: row.linkedinUrl,
-    crmContactId: row.crmContactId,
-    crmProvider: row.crmProvider,
-    twitterHandle: row.twitterHandle,
-    otherSocials: stringify(row.otherSocials),
-    city: row.city,
-    state: row.state,
-    timezone: row.timezone,
-    pronouns: row.pronouns,
-    birthday: row.birthday,
-    university: row.university,
-    previousCompanies: stringify(row.previousCompanies),
-    workHistory: stringify(row.workHistory),
-    educationHistory: stringify(row.educationHistory),
-    tags: stringify(row.tags),
-    relationshipStrength: row.relationshipStrength,
-    lastMetEvent: row.lastMetEvent,
-    warmIntroPath: row.warmIntroPath,
-    fundSize: row.fundSize,
-    typicalCheckSizeMin: row.typicalCheckSizeMin,
-    typicalCheckSizeMax: row.typicalCheckSizeMax,
-    investmentStageFocus: stringify(row.investmentStageFocus),
-    investmentSectorFocus: stringify(row.investmentSectorFocus),
-    investmentSectorFocusNotes: row.investmentSectorFocusNotes,
-    proudPortfolioCompanies: stringify(row.proudPortfolioCompanies),
-    linkedinHeadline: row.linkedinHeadline,
-    linkedinSkills: stringify(row.linkedinSkills),
-    linkedinEnrichedAt: row.linkedinEnrichedAt ? toIso(row.linkedinEnrichedAt) : null,
-    talentPipeline: row.talentPipeline,
-    keyTakeaways: row.keyTakeaways,
-    fieldSources: stringify(row.fieldSources),
-    notes: row.notes,
-    isPrivate: row.isPrivate ? 1 : 0,
-    deletedAt: row.deletedAt ? toIso(row.deletedAt) : null,
-    deletedByUserId,
-    createdAt: toIso(row.createdAt),
-    updatedAt: toIso(row.updatedAt),
-    lamport: row.lamport,
+       lamport = excluded.lamport,
+       field_lamports = excluded.field_lamports`,
+        )
+        .run(b),
   })
 }
 
@@ -1833,7 +2017,7 @@ const TASKS_SPEC: TableSpec<PulledTaskRow> = {
 // can't silently drop a column to a converter edge case. `field_lamports` keys
 // are snake (the bare-row diff's native casing); this looks up the camelCase
 // value in the pulled (camelCase) row.
-const TASK_COL_MAP: ReadonlyArray<readonly [snake: string, camel: keyof PulledTaskRow]> = [
+const TASK_COL_MAP: ReadonlyArray<readonly [snake: string, camel: string]> = [
   ['title', 'title'], ['description', 'description'],
   ['meeting_id', 'meetingId'], ['company_id', 'companyId'], ['contact_id', 'contactId'],
   ['status', 'status'], ['category', 'category'], ['priority', 'priority'],
@@ -1849,26 +2033,9 @@ const TASK_SNAKE_TO_CAMEL = new Map(TASK_COL_MAP)
 function upsertTaskRow(db: Database.Database, row: PulledTaskRow): void {
   // Resurrection guard — never re-create a hard-purged task (see upsertOrgCompanyRow).
   if (isTombstoned(db, 'task', row.id)) return
-  // Field-LWW pull merge — same shape as upsertOrgCompanyRow: insert writes the
-  // whole row; update writes only the columns the incoming write wins, leaving
-  // losing columns at their local value (protecting un-pushed local edits).
-  const local = db
-    .prepare('SELECT lamport, field_lamports FROM tasks WHERE id = ? LIMIT 1')
-    .get(row.id) as { lamport: string; field_lamports: string | null } | undefined
-  const isInsert = local == null
-
-  const incomingMap = parseFieldLamports(row.fieldLamports ?? null)
-  const merge = mergeFieldLww({
-    existingFieldLamports: isInsert ? null : parseFieldLamports(local!.field_lamports),
-    existingRowLamport: isInsert ? '0' : local!.lamport,
-    incomingFieldLamports: incomingMap,
-    incomingRowLamport: row.lamport,
-    incomingColumns: incomingMap
-      ? Object.keys(incomingMap)
-      : TASK_COL_MAP.map(([snake]) => snake),
-    isInsert,
-  })
-
+  // Field-LWW pull merge — centralized in upsertFieldLwwRow (insert writes the
+  // whole row; update writes only winning columns, protecting un-pushed edits).
+  //
   // Audit FKs reference users(id). A teammate's user row may not be in the local
   // directory yet — store NULL rather than FK-fail the whole task (attribution
   // resolves once the firm directory syncs).
@@ -1900,27 +2067,23 @@ function upsertTaskRow(db: Database.Database, row: PulledTaskRow): void {
     updatedByUserId,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
-    lamport: merge.newRowLamport,
-    fieldLamports: JSON.stringify(merge.mergedFieldLamports),
   }
 
-  if (!isInsert) {
-    if (merge.winners.length === 0) return // incoming lost every column — no-op.
-    const setParts: string[] = []
-    for (const snake of merge.winners) {
-      const camel = TASK_SNAKE_TO_CAMEL.get(snake)
-      if (!camel) continue // unknown/meta column — skip defensively.
-      setParts.push(`${snake} = @${camel}`)
-    }
-    setParts.push('field_lamports = @fieldLamports', 'lamport = @lamport')
-    db.prepare(`UPDATE tasks SET ${setParts.join(', ')} WHERE id = @id`).run(bind)
-    return
-  }
-
-  // Insert path — write the whole incoming row. SQLite tasks has no user_id /
-  // firm_id column (the gateway firm-scopes the pull), so neither is written.
-  db.prepare(
-    `INSERT INTO tasks (
+  upsertFieldLwwRow({
+    db,
+    table: 'tasks',
+    snakeToCamel: TASK_SNAKE_TO_CAMEL,
+    allSnakeCols: TASK_COL_MAP.map(([snake]) => snake),
+    id: row.id,
+    incomingFieldLamports: row.fieldLamports,
+    incomingRowLamport: row.lamport,
+    bind,
+    // Insert path — write the whole incoming row. SQLite tasks has no user_id /
+    // firm_id column (the gateway firm-scopes the pull), so neither is written.
+    insert: (b) =>
+      db
+        .prepare(
+          `INSERT INTO tasks (
        id, title, description, meeting_id, company_id, contact_id,
        status, category, priority, assignee, due_date,
        source, source_section, extraction_hash,
@@ -1957,7 +2120,9 @@ function upsertTaskRow(db: Database.Database, row: PulledTaskRow): void {
        updated_at = excluded.updated_at,
        lamport = excluded.lamport,
        field_lamports = excluded.field_lamports`,
-  ).run(bind)
+        )
+        .run(b),
+  })
 }
 
 // ─── Tombstones (Phase 3 — hard-purge replication) ───────────────────────────
@@ -2218,83 +2383,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
     uid != null && db.prepare('SELECT 1 FROM users WHERE id = ? LIMIT 1').get(uid) != null
   const deletedByUserId = userExists(row.deletedByUserId) ? row.deletedByUserId : null
 
-  // Hand-rolled camelCase → snake_case mapping. The set of columns is
-  // stable; adding a future column means adding it here too. Explicit over
-  // clever — matches the project's "no magic" sync convention.
-  db.prepare(
-    `INSERT INTO meetings (
-       id, title, date, duration_seconds, calendar_event_id,
-       meeting_platform, meeting_url, location,
-       transcript_path, summary_path, recording_path,
-       transcript_drive_id, summary_drive_id,
-       template_id,
-       speaker_count, speaker_map, transcript_segments,
-       notes, summary,
-       attendees, attendee_emails, chat_messages,
-       companies, dismissed_companies,
-       status, was_impromptu, is_group_event, is_group_event_user_set,
-       scheduled_end_at,
-       is_private, deleted_at, deleted_by_user_id,
-       created_at, updated_at, lamport
-     ) VALUES (
-       @id, @title, @date, @durationSeconds, @calendarEventId,
-       @meetingPlatform, @meetingUrl, @location,
-       @transcriptPath, @summaryPath, @recordingPath,
-       @transcriptDriveId, @summaryDriveId,
-       @templateId,
-       @speakerCount, @speakerMap, @transcriptSegments,
-       @notes, @summary,
-       @attendees, @attendeeEmails, @chatMessages,
-       @companies, @dismissedCompanies,
-       @status, @wasImpromptu, @isGroupEvent, @isGroupEventUserSet,
-       @scheduledEndAt,
-       @isPrivate, @deletedAt, @deletedByUserId,
-       @createdAt, @updatedAt, @lamport
-     )
-     ON CONFLICT(id) DO UPDATE SET
-       title = excluded.title,
-       date = excluded.date,
-       duration_seconds = excluded.duration_seconds,
-       calendar_event_id = excluded.calendar_event_id,
-       meeting_platform = excluded.meeting_platform,
-       meeting_url = excluded.meeting_url,
-       location = excluded.location,
-       transcript_path = excluded.transcript_path,
-       summary_path = excluded.summary_path,
-       recording_path = excluded.recording_path,
-       transcript_drive_id = excluded.transcript_drive_id,
-       summary_drive_id = excluded.summary_drive_id,
-       template_id = excluded.template_id,
-       speaker_count = excluded.speaker_count,
-       speaker_map = excluded.speaker_map,
-       -- COALESCE so null on the wire = "preserve local". The gateway
-       -- suppresses transcript_segments for in-progress meetings on
-       -- /sync/pull (see api-gateway/src/routes/sync.ts
-       -- MEETING_IN_PROGRESS_STATUSES). Without this guard, a cross-device
-       -- metadata bump (calendar sync, stale-sweeper, mobile PATCH on
-       -- title/attendees) while a meeting is mid-recording would ship a
-       -- pull row with lamport > local_lamport AND transcript_segments=null,
-       -- silently clobbering the desktop's live transcript.
-       transcript_segments = COALESCE(excluded.transcript_segments, meetings.transcript_segments),
-       notes = excluded.notes,
-       summary = excluded.summary,
-       attendees = excluded.attendees,
-       attendee_emails = excluded.attendee_emails,
-       chat_messages = excluded.chat_messages,
-       companies = excluded.companies,
-       dismissed_companies = excluded.dismissed_companies,
-       status = excluded.status,
-       was_impromptu = excluded.was_impromptu,
-       is_group_event = excluded.is_group_event,
-       is_group_event_user_set = excluded.is_group_event_user_set,
-       scheduled_end_at = excluded.scheduled_end_at,
-       is_private = excluded.is_private,
-       deleted_at = excluded.deleted_at,
-       deleted_by_user_id = excluded.deleted_by_user_id,
-       created_at = excluded.created_at,
-       updated_at = excluded.updated_at,
-       lamport = excluded.lamport`,
-  ).run({
+  const bind: Record<string, unknown> = {
     id: row.id,
     title: row.title,
     date: toIso(row.date),
@@ -2329,7 +2418,96 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
     deletedByUserId,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
-    lamport: row.lamport,
+  }
+
+  upsertFieldLwwRow({
+    db,
+    table: 'meetings',
+    snakeToCamel: MEETING_SNAKE_TO_CAMEL,
+    allSnakeCols: MEETING_COL_MAP.map(([snake]) => snake),
+    id: row.id,
+    incomingFieldLamports: row.fieldLamports,
+    incomingRowLamport: row.lamport,
+    bind,
+    // 2A: the gateway nulls transcript_segments for in-progress meetings on the
+    // wire (api-gateway/src/routes/sync.ts MEETING_IN_PROGRESS_STATUSES). If it
+    // "wins" the field-LWW clock but arrives null while the local transcript is
+    // non-null, keep BOTH the local value AND the local clock — advancing the
+    // clock with a stale value would shadow a later real transcript update.
+    largeColNullKeepLocal: ['transcript_segments'],
+    insert: (b) =>
+      db
+        .prepare(
+          `INSERT INTO meetings (
+       id, title, date, duration_seconds, calendar_event_id,
+       meeting_platform, meeting_url, location,
+       transcript_path, summary_path, recording_path,
+       transcript_drive_id, summary_drive_id,
+       template_id,
+       speaker_count, speaker_map, transcript_segments,
+       notes, summary,
+       attendees, attendee_emails, chat_messages,
+       companies, dismissed_companies,
+       status, was_impromptu, is_group_event, is_group_event_user_set,
+       scheduled_end_at,
+       is_private, deleted_at, deleted_by_user_id,
+       created_at, updated_at, lamport, field_lamports
+     ) VALUES (
+       @id, @title, @date, @durationSeconds, @calendarEventId,
+       @meetingPlatform, @meetingUrl, @location,
+       @transcriptPath, @summaryPath, @recordingPath,
+       @transcriptDriveId, @summaryDriveId,
+       @templateId,
+       @speakerCount, @speakerMap, @transcriptSegments,
+       @notes, @summary,
+       @attendees, @attendeeEmails, @chatMessages,
+       @companies, @dismissedCompanies,
+       @status, @wasImpromptu, @isGroupEvent, @isGroupEventUserSet,
+       @scheduledEndAt,
+       @isPrivate, @deletedAt, @deletedByUserId,
+       @createdAt, @updatedAt, @lamport, @fieldLamports
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       date = excluded.date,
+       duration_seconds = excluded.duration_seconds,
+       calendar_event_id = excluded.calendar_event_id,
+       meeting_platform = excluded.meeting_platform,
+       meeting_url = excluded.meeting_url,
+       location = excluded.location,
+       transcript_path = excluded.transcript_path,
+       summary_path = excluded.summary_path,
+       recording_path = excluded.recording_path,
+       transcript_drive_id = excluded.transcript_drive_id,
+       summary_drive_id = excluded.summary_drive_id,
+       template_id = excluded.template_id,
+       speaker_count = excluded.speaker_count,
+       speaker_map = excluded.speaker_map,
+       -- COALESCE preserves a live local transcript on the rare insert-path
+       -- conflict where the wire value is null (see largeColNullKeepLocal for
+       -- the normal field-LWW update path).
+       transcript_segments = COALESCE(excluded.transcript_segments, meetings.transcript_segments),
+       notes = excluded.notes,
+       summary = excluded.summary,
+       attendees = excluded.attendees,
+       attendee_emails = excluded.attendee_emails,
+       chat_messages = excluded.chat_messages,
+       companies = excluded.companies,
+       dismissed_companies = excluded.dismissed_companies,
+       status = excluded.status,
+       was_impromptu = excluded.was_impromptu,
+       is_group_event = excluded.is_group_event,
+       is_group_event_user_set = excluded.is_group_event_user_set,
+       scheduled_end_at = excluded.scheduled_end_at,
+       is_private = excluded.is_private,
+       deleted_at = excluded.deleted_at,
+       deleted_by_user_id = excluded.deleted_by_user_id,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       lamport = excluded.lamport,
+       field_lamports = excluded.field_lamports`,
+        )
+        .run(b),
   })
 }
 
