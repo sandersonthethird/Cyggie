@@ -61,6 +61,27 @@ describe('integer-flag preservation (regression)', () => {
   })
 })
 
+describe('jsonb column accepts a non-JSON / CSV string', () => {
+  test('contacts.investmentStageFocus CSV string → valid JSON string (no SQL error)', () => {
+    const r = validateWritePayload('contacts', 'update', {
+      investmentStageFocus: 'Pre-Seed, Seed, Series A',
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      // wrapped to valid JSON text representing the string
+      expect(r.data['investmentStageFocus']).toBe('"Pre-Seed, Seed, Series A"')
+      expect(() => JSON.parse(r.data['investmentStageFocus'] as string)).not.toThrow()
+    }
+  })
+  test('contacts jsonb that is already a JSON object string → parsed object', () => {
+    const r = validateWritePayload('contacts', 'update', {
+      fieldSources: '{"title":"abc"}',
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.data['fieldSources']).toEqual({ title: 'abc' })
+  })
+})
+
 describe('digit-suffix column name mapping accepts the row', () => {
   test('org_companies.followonCheck2 validates (was rejected by lossy camelToSnake)', () => {
     const r = validateWritePayload('org_companies', 'update', { followonCheck2: 5 })
