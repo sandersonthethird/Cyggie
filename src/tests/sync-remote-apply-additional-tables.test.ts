@@ -604,6 +604,45 @@ describe('applyRemoteContacts', () => {
     }
     expect(row.full_name).toBe('Local')
   })
+
+  it('protects an un-pushed local field while applying a remote win on another field', () => {
+    // Local has an un-pushed edit to title (clock 20, row lamport 20). A teammate
+    // changed city (clock 30) without touching title. The PULLED row carries the
+    // gateway's DENSE field_lamports — title pinned at its real clock 20, city 30
+    // — so field-LWW applies city WITHOUT clobbering the local title.
+    db.prepare(
+      `INSERT INTO contacts (id, full_name, normalized_name, title, city, lamport, field_lamports)
+       VALUES ('ct-up', 'Alice', 'alice', 'LocalTitle', NULL, '20', '{"title":"20"}')`,
+    ).run()
+    applyRemoteContacts(db, DEVICE_ID, USER_ID, [
+      makeContactRow({
+        id: 'ct-up',
+        lamport: '30',
+        title: 'RemoteTitle', // stale value, but its clock ties local → loses
+        city: 'Boston',
+        fieldLamports: { city: '30', title: '20' },
+      }),
+    ])
+    const row = db
+      .prepare('SELECT title, city FROM contacts WHERE id = ?')
+      .get('ct-up') as { title: string; city: string }
+    expect(row.title).toBe('LocalTitle') // tie on title (20 == 20) → local kept
+    expect(row.city).toBe('Boston') // city 30 > local baseline 20 → applied
+  })
+
+  it('NULL field_lamports (migrated row) → first field-LWW write degrades to whole-row', () => {
+    db.prepare(
+      "INSERT INTO contacts (id, full_name, normalized_name, lamport, field_lamports) VALUES ('ct-nm', 'Local', 'local', '5', NULL)",
+    ).run()
+    applyRemoteContacts(db, DEVICE_ID, USER_ID, [
+      makeContactRow({ id: 'ct-nm', lamport: '10', fullName: 'Newer' }), // no fieldLamports
+    ])
+    const row = db
+      .prepare('SELECT full_name, lamport FROM contacts WHERE id = ?')
+      .get('ct-nm') as { full_name: string; lamport: string }
+    expect(row.full_name).toBe('Newer')
+    expect(row.lamport).toBe('10')
+  })
 })
 
 describe('applyRemoteContactEmails', () => {

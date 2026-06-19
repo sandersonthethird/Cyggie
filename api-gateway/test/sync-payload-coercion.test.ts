@@ -105,3 +105,40 @@ describe('TABLE_COLUMN_MAPS maps digit-suffix columns to real SQL names', () => 
     expect(m.camelToSql.get('isPrivate')).toBe('is_private')
   })
 })
+
+// =============================================================================
+// Field-LWW (Phase 4.5) — the contacts/meetings push payload now carries a
+// field_lamports map + SQLite-native values (is_private 0/1, jsonb-as-string,
+// ISO dates). Guard that the real validator accepts that shape (1A — a reject
+// here is the #51 class: the row silently strands in the desktop outbox).
+// =============================================================================
+describe('field-LWW payload validates (contacts + meetings)', () => {
+  test('contacts field-LWW update is accepted; field_lamports survives', () => {
+    const r = validateWritePayload('contacts', 'update', {
+      fullName: 'Alice',
+      isPrivate: 0, // SQLite int → bool
+      otherSocials: '{"x":1}', // jsonb-as-string
+      tags: '["a","b"]',
+      linkedinEnrichedAt: '2026-06-12T00:00:00.000Z',
+      fieldLamports: { full_name: '7', is_private: '7' },
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.data['isPrivate']).toBe(false)
+      expect(r.data['fieldLamports']).toBeTruthy()
+    }
+  })
+
+  test('meetings field-LWW update is accepted (transcript string, is_private, dates)', () => {
+    const r = validateWritePayload('meetings', 'update', {
+      title: 'Sync sync',
+      isPrivate: 1,
+      transcriptSegments: '[{"start":0,"end":1,"text":"x"}]',
+      speakerMap: '{}',
+      scheduledEndAt: '2026-06-12T01:00:00.000Z',
+      fieldLamports: { title: '9', transcript_segments: '9' },
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.data['isPrivate']).toBe(true)
+  })
+})
