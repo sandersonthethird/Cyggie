@@ -54,7 +54,8 @@ function buildDb(): Database.Database {
       deleted_by_user_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      lamport TEXT NOT NULL DEFAULT '0'
+      lamport TEXT NOT NULL DEFAULT '0',
+      field_lamports TEXT
     );
     CREATE TABLE sync_state (
       device_id TEXT PRIMARY KEY,

@@ -92,13 +92,16 @@ export const createMeeting = withSync(rawMeeting.createMeeting, {
 export const updateMeeting = withSync(rawMeeting.updateMeeting, {
   table: 'meetings',
   op: 'update',
-  // T38: snapshot meeting state before the update so the wrapper can
-  // diff large JSONB columns (transcriptSegments, chatMessages, summary,
-  // notes) against post-update and omit unchanged ones from the outbox
-  // payload. Keeps a status-flip or title-rename from dragging a 5 MB
-  // transcript across the wire on every change.
-  captureBeforeUpdate: (_db, [id]) =>
-    rawMeeting.getMeeting(id) as unknown as Record<string, unknown> | null,
+  // Field-LWW (meetings is `fieldLww`): the wrapper diffs this BARE pre-row
+  // against the bare post-row to compute the changed-column set + the densify
+  // baseline, and still trims unchanged large columns (transcript_segments,
+  // chat_messages, summary, notes — declared snake in owned-tables). MUST be the
+  // bare snake row, NOT getMeeting() (enriched camelCase + parsed arrays) — that
+  // mismatched the bare row's casing/values and made the diff mark everything
+  // changed. extractRow re-reads the bare post-row so the outbox payload + diff
+  // are apples-to-apples (raw updateMeeting returns an enriched camel DTO).
+  captureBeforeUpdate: (_db, [id]) => selectMeetingRow(id as string),
+  extractRow: ({ args }) => selectMeetingRow(args[0] as string),
 })
 
 export const deleteMeeting = withSync(rawMeeting.deleteMeeting, {
@@ -166,6 +169,11 @@ export const createContact = withSync(rawContact.createContact, {
 export const updateContact = withSync(rawContact.updateContact, {
   table: 'contacts',
   op: 'update',
+  // Field-LWW (contacts is `fieldLww`): bare pre-row for the changed-column diff
+  // + densify baseline; bare post-row for the outbox payload (raw updateContact
+  // returns an enriched camel ContactDetail). Mirrors updateTask/updateMeeting.
+  captureBeforeUpdate: (_db, [id]) => selectContactRow(id as string),
+  extractRow: ({ args }) => selectContactRow(args[0] as string),
 })
 
 // contact_emails is a composite-PK table (contact_id, email). The raw repo
@@ -878,6 +886,21 @@ function selectTaskRow(taskId: string): Record<string, unknown> | null {
   return getDatabase()
     .prepare('SELECT * FROM tasks WHERE id = ?')
     .get(taskId) as Record<string, unknown> | null
+}
+
+// Bare snake-case row reads for the field-LWW wrappers (contacts/meetings).
+// NOT the enriched repo getters — the field-LWW diff + densify must run on the
+// raw column values in the row's native snake casing.
+function selectContactRow(id: string): Record<string, unknown> | null {
+  return getDatabase()
+    .prepare('SELECT * FROM contacts WHERE id = ?')
+    .get(id) as Record<string, unknown> | null
+}
+
+function selectMeetingRow(id: string): Record<string, unknown> | null {
+  return getDatabase()
+    .prepare('SELECT * FROM meetings WHERE id = ?')
+    .get(id) as Record<string, unknown> | null
 }
 
 export const createTask = withSync(rawTask.createTask, {

@@ -65,7 +65,8 @@ function freshDb(): Database.Database {
       deleted_by_user_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      lamport TEXT NOT NULL DEFAULT '0'
+      lamport TEXT NOT NULL DEFAULT '0',
+      field_lamports TEXT
     )
   `)
 
@@ -174,28 +175,31 @@ describe('applyRemoteMeetings', () => {
     expect(row?.lamport).toBe('5')
   })
 
-  it('skips a row whose lamport is <= local', () => {
+  // Field-LWW (Phase 4.5): meetings no longer skip at the row level — the apply
+  // always descends into the per-column merge, which itself no-ops every column
+  // whose incoming clock loses. So a lower/equal incoming clock leaves the local
+  // value untouched (the guarantee that matters), via the merge rather than a
+  // row-level skip. (Whole-row skip bookkeeping no longer applies.)
+  it('a lower per-column clock wins no columns (local value preserved)', () => {
     db.prepare(
       "INSERT INTO meetings (id, title, date, lamport) VALUES ('mtg-1', 'Local', '2026-05-22T10:00:00.000Z', '10')",
     ).run()
-    const result = applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
       makeRow({ id: 'mtg-1', lamport: '5', title: 'Older' }),
     ])
-    expect(result.appliedIds).toEqual([])
-    expect(result.skippedLowLamport).toBe(1)
     const row = db.prepare('SELECT title FROM meetings WHERE id = ?').get('mtg-1') as { title: string }
     expect(row.title).toBe('Local')
   })
 
-  it('skips equal lamport (must be strictly greater)', () => {
+  it('an equal clock wins no columns (strictly-greater required; local preserved)', () => {
     db.prepare(
       "INSERT INTO meetings (id, title, date, lamport) VALUES ('mtg-1', 'Local', '2026-05-22T10:00:00.000Z', '7')",
     ).run()
-    const result = applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
       makeRow({ id: 'mtg-1', lamport: '7', title: 'Tied' }),
     ])
-    expect(result.appliedIds).toEqual([])
-    expect(result.skippedLowLamport).toBe(1)
+    const row = db.prepare('SELECT title FROM meetings WHERE id = ?').get('mtg-1') as { title: string }
+    expect(row.title).toBe('Local')
   })
 
   it('overwrites row when incoming lamport > local', () => {

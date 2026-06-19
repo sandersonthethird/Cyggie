@@ -198,7 +198,8 @@ function freshDb(): Database.Database {
       deleted_by_user_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      lamport TEXT NOT NULL DEFAULT '0'
+      lamport TEXT NOT NULL DEFAULT '0',
+      field_lamports TEXT
     );
 
     CREATE TABLE contact_emails (
@@ -588,15 +589,20 @@ describe('applyRemoteContacts', () => {
     expect(JSON.parse(row.work_history)).toEqual([{ company: 'OpenAI', role: 'Engineer' }])
   })
 
-  it('skips when local lamport is greater', () => {
+  it('a lower per-column clock wins no columns (local value preserved)', () => {
+    // Field-LWW (Phase 4.5): contacts no longer skip at the row level — the
+    // apply descends into the per-column merge, which no-ops every column whose
+    // incoming clock loses. A lower incoming clock leaves the local value intact.
     db.prepare(
       "INSERT INTO contacts (id, full_name, normalized_name, lamport) VALUES ('ct-1', 'Local', 'local', '99')",
     ).run()
-    const r = applyRemoteContacts(db, DEVICE_ID, USER_ID, [
-      makeContactRow({ id: 'ct-1', lamport: '5' }),
+    applyRemoteContacts(db, DEVICE_ID, USER_ID, [
+      makeContactRow({ id: 'ct-1', lamport: '5', fullName: 'Older' }),
     ])
-    expect(r.appliedIds).toEqual([])
-    expect(r.skippedLowLamport).toBe(1)
+    const row = db.prepare('SELECT full_name FROM contacts WHERE id = ?').get('ct-1') as {
+      full_name: string
+    }
+    expect(row.full_name).toBe('Local')
   })
 })
 

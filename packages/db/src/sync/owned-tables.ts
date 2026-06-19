@@ -150,12 +150,13 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
   // Investor links (co/prior/subsequent). Firm-shared child of org_companies —
   // rides the parent's firm scope in the pull, same as org_company_aliases.
   { table: 'company_investors', primaryKey: ['id'], hasUserId: false },
-  // Phase 4 multiplayer — contacts are firm-shared (whole-row LWW) with an
-  // is_private owner-only opt-out enforced by entityVisibilityFilter on the pull.
-  // Whole-row LWW for V1 (field-LWW for contacts + meetings is a documented
-  // follow-up — the field_lamports column is in place for it). firmScoped stamps
-  // firm_id from the JWT on push.
-  { table: 'contacts', primaryKey: ['id'], hasUserId: true, firmScoped: true },
+  // Phase 4 multiplayer — contacts are firm-shared with an is_private owner-only
+  // opt-out enforced by entityVisibilityFilter on the pull. FIELD-LWW: contacts
+  // are collaboratively enriched, so two teammates editing different fields must
+  // both survive (whole-row LWW would clobber). firmScoped stamps firm_id from
+  // the JWT on push. captureBeforeUpdate (a bare-row SELECT) is wired in the
+  // barrel so the wrapper can diff the changed-column set.
+  { table: 'contacts', primaryKey: ['id'], hasUserId: true, fieldLww: true, firmScoped: true },
   // Investment memos — added 2026-05-23 to unblock the mobile Memos tab on
   // company detail. SQLite table lacks user_id (created_by_user_id only),
   // matching the notes pattern — hasUserId: true makes the gateway stamp
@@ -195,18 +196,20 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
     primaryKey: ['id'],
     hasUserId: true,
     // Phase 4 multiplayer — meetings are firm-shared with an is_private
-    // owner-only opt-out (enforced by entityVisibilityFilter). WHOLE-ROW LWW
-    // (NOT field-LWW): meetings are single-author recordings, and the apply path
-    // has bespoke calendar-reconcile + transcript-COALESCE logic that a dynamic
-    // field-LWW rewrite would jeopardize for little gain. (Contacts ARE field-LWW
-    // — collaboratively enriched.) Field-LWW for meetings is a documented follow-up.
+    // owner-only opt-out (enforced by entityVisibilityFilter). FIELD-LWW: a
+    // teammate retitling/recategorizing a meeting must not clobber the owner's
+    // concurrent edits. The apply path keeps its transcript-COALESCE null-guard
+    // (orthogonal to field-LWW — see upsertFieldLwwRow's largeColNullKeepLocal).
+    fieldLww: true,
     firmScoped: true,
-    // T38: meetings carry the largest JSONB columns in the schema. A
-    // single transcriptSegments array can run to several MB; chatMessages
-    // and summary grow over the meeting's lifetime. Most updates touch
-    // none of them (title rename, status flip, etc.), so trimming them
-    // out of the outbox payload when unchanged keeps batches small.
-    largeColumns: ['transcriptSegments', 'chatMessages', 'summary', 'notes'],
+    // T38: meetings carry the largest JSONB columns in the schema. A single
+    // transcript_segments array can run to several MB; chat_messages and summary
+    // grow over the meeting's lifetime. Most updates touch none of them (title
+    // rename, status flip, etc.), so trimming them out of the outbox payload when
+    // unchanged keeps batches small. SNAKE_CASE here (not camel) because under
+    // field-LWW the wrapper diffs the BARE snake row — captureBeforeUpdate +
+    // extractRow are bare SELECTs, so trimUnchangedLargeColumns must match.
+    largeColumns: ['transcript_segments', 'chat_messages', 'summary', 'notes'],
   },
 
   // ── Layer 5 ────────────────────────────────────────────────────────────
