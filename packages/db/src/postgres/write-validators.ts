@@ -144,8 +144,15 @@ function makeCoerce(kindByCamel: Map<string, SqlKind>): (input: unknown) => unkn
         try {
           const parsed = JSON.parse(v)
           if (parsed !== null && typeof parsed === 'object') out[key] = parsed
+          // else: valid JSON scalar text ('"x"', '5', 'true') — Postgres parses
+          // the string fine, leave as-is.
         } catch {
-          /* leave the string; let drizzle-zod surface the real error */
+          // Not valid JSON text — e.g. a plain/CSV string like 'Pre-Seed, Seed'
+          // in a jsonb column (investment_stage_focus). Wrap it as a JSON string
+          // so the jsonb column accepts it instead of erroring "invalid input
+          // syntax for type json" at the SQL layer (lossless: stored as a json
+          // string value).
+          out[key] = JSON.stringify(v)
         }
         continue
       }
