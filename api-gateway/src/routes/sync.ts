@@ -6,6 +6,7 @@ import { schema } from '@cyggie/db'
 import { OWNED_TABLES_BY_NAME } from '@cyggie/db/sync/owned-tables'
 import { decodeRowId } from '@cyggie/db/sync/encode-row-id'
 import { mergeFieldLww, parseFieldLamports } from '@cyggie/db/sync/field-lww'
+import { Sentry } from '../sentry'
 import {
   validateWritePayload,
   TABLE_COLUMN_MAPS,
@@ -245,6 +246,17 @@ export async function registerSyncRoutes(
               },
               'sync.push rejected entry: lamport out of range',
             )
+            Sentry.captureMessage('sync.push lamport rejected', {
+              level: 'warning',
+              tags: { metric: 'sync.push.lamport_rejected', table: entry.table },
+              extra: {
+                outboxId: entry.outboxId,
+                userId: user.sub,
+                rowId: entry.rowId,
+                incoming: entry.lamport,
+                reason: lamportCheck.reason,
+              },
+            })
             continue
           }
 
@@ -344,6 +356,18 @@ export async function registerSyncRoutes(
                 },
                 'sync.push rejected entry: validation failed',
               )
+              // Loud alert: a rejected push silently strands the row in the
+              // desktop outbox (status='failed'). This blind spot let #51 lose
+              // 4,366 contacts for a day. NEVER include the payload (PII).
+              Sentry.captureMessage('sync.push validation rejected', {
+                level: 'warning',
+                tags: {
+                  metric: 'sync.push.validation_rejected',
+                  table: entry.table,
+                  op: entry.op,
+                },
+                extra: { outboxId: entry.outboxId, userId: user.sub, reason: v.reason },
+              })
               continue
             }
             validatedPayload = mapColumns(v.data, entry.table, 'toSql')

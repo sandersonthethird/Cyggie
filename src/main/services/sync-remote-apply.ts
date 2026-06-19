@@ -399,7 +399,7 @@ const MEETINGS_SPEC: TableSpec<PulledMeetingRow> = {
 // like me_speaker_index / transcript_provider / self_name aren't pulled to
 // teammates, pre-existing). Excludes PK `id` + meta `lamport`/`field_lamports`.
 // Guarded by a completeness test against the INSERT's bind keys.
-const MEETING_COL_MAP: ReadonlyArray<readonly [snake: string, camel: string]> = [
+export const MEETING_COL_MAP: ReadonlyArray<readonly [snake: string, camel: string]> = [
   ['title', 'title'],
   ['date', 'date'],
   ['duration_seconds', 'durationSeconds'],
@@ -1250,7 +1250,7 @@ const CONTACTS_SPEC: TableSpec<PulledContactRow> = {
 // `id`, meta (`lamport`/`field_lamports`), and the un-synced audit FKs
 // (`created_by_user_id`/`updated_by_user_id` are not pulled into local SQLite —
 // pre-existing). Guarded by a completeness test.
-const CONTACT_COL_MAP: ReadonlyArray<readonly [snake: string, camel: string]> = [
+export const CONTACT_COL_MAP: ReadonlyArray<readonly [snake: string, camel: string]> = [
   ['full_name', 'fullName'],
   ['first_name', 'firstName'],
   ['last_name', 'lastName'],
