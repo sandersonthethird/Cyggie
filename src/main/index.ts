@@ -36,6 +36,7 @@ import { backfillPreferencesForSyncOnLaunch } from './services/preference-sync.s
 import { consolidateTargetStageFieldsOnLaunch } from './services/target-stage-consolidation-backfill.service'
 import { backfillCustomFieldsForSyncOnLaunch } from './services/custom-field-sync-backfill.service'
 import { backfillMeetingCascadeForSyncOnLaunch } from './services/meeting-cascade-sync-backfill.service'
+import { requeueFailedOutboxOnLaunch } from './services/outbox-failed-requeue.service'
 import { backfillNotesPrivacyOnLaunch } from './services/notes-privacy-backfill.service'
 import { startExtractionWorker } from './services/flagged-file-extraction-worker'
 import { handleAuthCallback } from './auth/cyggie-auth'
@@ -383,6 +384,12 @@ app.whenReady().then(() => {
   // contact_emails row still at lamport='0' (parents before children) so they
   // sync after the next /sync/push drain. Deferred 4s; idempotent.
   backfillMeetingCascadeForSyncOnLaunch(startupUserId)
+
+  // One-time re-drive of outbox rows the gateway rejected before the 2026-06-19
+  // sync-push hardening (lossy camelToSnake on digit-suffix columns + missing
+  // int→boolean coercion). Resets 'failed'/'dead' → 'pending' once so they drain
+  // against the fixed gateway. Run-once guarded; deferred after the backfills.
+  requeueFailedOutboxOnLaunch()
 
   // (The one-time pull-watermark re-pull now lives in bootstrapSync(), reset
   // synchronously before the pull service starts — see

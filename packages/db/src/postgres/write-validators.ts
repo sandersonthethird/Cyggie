@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { getTableColumns } from 'drizzle-orm'
 import { createInsertSchema, createUpdateSchema } from 'drizzle-zod'
 import { companyFlaggedFiles, orgCompanies, orgCompanyAliases, companyInvestors } from '../schema/companies'
 import { contacts, contactEmails } from '../schema/contacts'
@@ -53,89 +54,99 @@ interface ValidatorBundle {
 // drizzle's internal types to express it. The drizzle-zod functions accept
 // any PgTable at runtime, so the loose typing here is a pragmatic shortcut.
 //
-// 2026-05-23 — drizzle-zod's stock `createInsertSchema` / `createUpdateSchema`
-// emit `z.date()` for timestamp columns, which only accepts `Date` instances.
-// Desktop SQLite stores timestamps as ISO strings and the outbox payload
-// carries those strings unchanged. This caused every meeting/notes/etc.
-// UPDATE to fail validation today with messages like
-// `date: Invalid input: expected date, received string`. The preprocess
-// below converts well-formed ISO strings to Date objects before validation;
-// other values pass through untouched. The list of affected keys is
-// table-agnostic — anything matching a date column name across the
-// owned-table schemas (created_at, updated_at, last_message_at, deleted_at,
-// joined_at, date) and their camelCase equivalents. False positives are
-// guarded by an `isFinite(d.getTime())` check.
-const DATE_KEYS = new Set([
-  'date',
-  'createdAt', 'created_at',
-  'updatedAt', 'updated_at',
-  'lastMessageAt', 'last_message_at',
-  'deletedAt', 'deleted_at',
-  'joinedAt', 'joined_at',
-  'startsAt', 'starts_at',
-  'endsAt', 'ends_at',
-  'scheduledEndAt', 'scheduled_end_at',
-  'lastSyncedAt', 'last_synced_at',
-  // email_messages timestamps (lean email sync — Part B).
-  'sentAt', 'sent_at',
-  'receivedAt', 'received_at',
-  // org_companies portfolio-row fields surfaced by tonight's drain.
-  'dateOfInitialInvestment', 'date_of_initial_investment',
-  'followonDate', 'followon_date',
-  // custom_field_values: a `date`-type custom field stores its value here as an
-  // ISO string; Postgres value_date is timestamptz, so coerce like the others.
-  'valueDate', 'value_date',
-])
-
-// 2026-05-23 — desktop repo mappers (mapSession, mapMeeting, etc.) convert
-// SQLite integer flags to JS booleans for renderer ergonomics. The outbox
-// payload picks up the DTO shape (boolean) instead of the DB shape
-// (integer), so drizzle-zod's createUpdateSchema (which sees `integer`
-// columns as z.number()) rejects with "expected number, received boolean".
-// Coerce true→1, false→0 for known integer-flag columns at the validator
-// boundary so the existing desktop mappers don't need to change shape.
-// TABLE-AWARE int-flag coerce. Same column name maps to different Postgres
-// types across tables — `is_pinned` is `integer` in chat_sessions but
-// `boolean` in notes, etc. A single column-name-keyed coerce can't get
-// both right (the symptom: round-3 drain rejected notes.isPinned because
-// the coerce flipped the JS boolean to a number that drizzle-zod then
-// rejected). The fix is to look up per-table which keys need
-// boolean→integer at the validator boundary.
+// 2026-06-19 — SCHEMA-DRIVEN coercion + name maps (replaces the hand-maintained
+// DATE_KEYS / INT_FLAG_KEYS_BY_TABLE lists, which silently missed columns).
 //
-// Audited 2026-05-23 — keys here MUST be Postgres `integer` columns in
-// the named table that the desktop's mapper emits as JS boolean. Adding
-// a key here for a Postgres `boolean` column would flip the wire format
-// wrong and reject correct writes.
-const INT_FLAG_KEYS_BY_TABLE: Record<string, ReadonlySet<string>> = {
-  chat_sessions: new Set([
-    'isActive', 'is_active',
-    'isPinned', 'is_pinned',
-    'isArchived', 'is_archived',
-  ]),
-  org_companies: new Set([
-    'includeInCompaniesView', 'include_in_companies_view',
-  ]),
-  // notes.is_pinned → Postgres boolean (no coerce — passes through as-is)
-  // meetings.is_group_event(_user_set) → Postgres boolean (no coerce)
-  // chat_session_messages — no flag columns
-  // Other tables — extend here if a new flag column needs coercion.
+// Two mismatches between the desktop's SQLite-derived payloads and the Postgres
+// schema must be bridged at the validator boundary, both keyed off the drizzle
+// column's REAL SQL type (`col.getSQLType()`) so they update automatically when
+// the schema changes (no second list to drift):
+//
+//   • timestamp/date column + incoming ISO string → Date (drizzle-zod emits
+//     z.date(), which rejects strings). Generalizes the old DATE_KEYS list —
+//     now every timestamp column is covered (e.g. linkedin_enriched_at, which
+//     the old list missed and which was rejecting every contact insert).
+//   • integer column + incoming JS boolean → 1/0 (desktop DTO mappers emit
+//     booleans for integer flags like include_in_companies_view / chat flags).
+//   • boolean column + incoming number 0/1 → boolean (RAW SQLite rows emit the
+//     integer 0/1 for a Postgres boolean like contacts.is_private — the bug
+//     that rejected 4k+ contact inserts).
+//   • jsonb column + incoming JSON string → parsed object (SQLite stores JSON
+//     as TEXT; the raw row carries the string).
+//
+// The two boolean directions are mutually exclusive (a column is integer OR
+// boolean), so there's no double-conversion. drizzle-zod's generated object
+// schema already strips truly-unknown keys, so no extra stripping is needed.
+
+type SqlKind = 'boolean' | 'integer' | 'timestamp' | 'jsonb' | 'other'
+
+/** Per-table maps from the drizzle schema: camelCase JS prop ↔ real SQL column
+ *  name, and the SQL kind of each column (for coercion). Exported so the
+ *  /sync/push handler can map payload keys via the schema instead of a naive
+ *  camel/snake regex — the regex loses the underscore before a digit
+ *  (`followonCheck2` → `followon_check2`, but the column is `followon_check_2`),
+ *  which was rejecting every org_companies insert that carried those columns. */
+export interface TableColumnMap {
+  camelToSql: Map<string, string>
+  sqlToCamel: Map<string, string>
+}
+export const TABLE_COLUMN_MAPS: Record<string, TableColumnMap> = {}
+
+function introspect(t: unknown): {
+  kindByCamel: Map<string, SqlKind>
+  camelToSql: Map<string, string>
+  sqlToCamel: Map<string, string>
+} {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cols = getTableColumns(t as any)
+  const kindByCamel = new Map<string, SqlKind>()
+  const camelToSql = new Map<string, string>()
+  const sqlToCamel = new Map<string, string>()
+  for (const [camel, col] of Object.entries(cols)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const c = col as any
+    const sqlName = String(c.name)
+    camelToSql.set(camel, sqlName)
+    sqlToCamel.set(sqlName, camel)
+    const sqlType = String(c.getSQLType())
+    let kind: SqlKind = 'other'
+    if (sqlType === 'boolean') kind = 'boolean'
+    else if (sqlType === 'integer' || sqlType === 'smallint' || sqlType === 'bigint') kind = 'integer'
+    else if (sqlType.startsWith('timestamp') || sqlType === 'date') kind = 'timestamp'
+    else if (sqlType === 'jsonb' || sqlType === 'json') kind = 'jsonb'
+    kindByCamel.set(camel, kind)
+  }
+  return { kindByCamel, camelToSql, sqlToCamel }
 }
 
-function makeCoerce(intFlagKeys: ReadonlySet<string>): (input: unknown) => unknown {
+function makeCoerce(kindByCamel: Map<string, SqlKind>): (input: unknown) => unknown {
   return (input: unknown): unknown => {
     if (input === null || typeof input !== 'object') return input
     const out: Record<string, unknown> = { ...(input as Record<string, unknown>) }
     for (const key of Object.keys(out)) {
       const v = out[key]
-      if (DATE_KEYS.has(key) && typeof v === 'string') {
+      const kind = kindByCamel.get(key)
+      if (kind === undefined) continue
+      if (kind === 'timestamp' && typeof v === 'string') {
         const d = new Date(v)
-        if (Number.isFinite(d.getTime())) {
-          out[key] = d
-        }
+        if (Number.isFinite(d.getTime())) out[key] = d
         continue
       }
-      if (intFlagKeys.has(key) && typeof v === 'boolean') {
+      if (kind === 'integer' && typeof v === 'boolean') {
         out[key] = v ? 1 : 0
+        continue
+      }
+      if (kind === 'boolean' && typeof v === 'number') {
+        out[key] = v !== 0
+        continue
+      }
+      if (kind === 'jsonb' && typeof v === 'string') {
+        try {
+          const parsed = JSON.parse(v)
+          if (parsed !== null && typeof parsed === 'object') out[key] = parsed
+        } catch {
+          /* leave the string; let drizzle-zod surface the real error */
+        }
         continue
       }
     }
@@ -146,8 +157,9 @@ function makeCoerce(intFlagKeys: ReadonlySet<string>): (input: unknown) => unkno
 function bundleFor(table: unknown, tableName: string): ValidatorBundle {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const t = table as any
-  const intFlagKeys = INT_FLAG_KEYS_BY_TABLE[tableName] ?? new Set<string>()
-  const coerce = makeCoerce(intFlagKeys)
+  const { kindByCamel, camelToSql, sqlToCamel } = introspect(t)
+  TABLE_COLUMN_MAPS[tableName] = { camelToSql, sqlToCamel }
+  const coerce = makeCoerce(kindByCamel)
   return {
     insert: z.preprocess(coerce, createInsertSchema(t)),
     update: z.preprocess(coerce, createUpdateSchema(t)),

@@ -275,10 +275,12 @@ export class SyncAgent {
     void this.flushOnce().catch(() => undefined)
   }
 
-  /** Manual: re-attempts dead-letter rows by resetting their status. */
+  /** Manual: re-attempts failed + dead-letter rows by resetting their status.
+   *  Includes 'failed' (not just 'dead') so a fixed gateway can re-drive rows
+   *  that haven't yet exhausted MAX_ATTEMPTS. */
   retryDeadLetters(): number {
     const result = this.cfg.db
-      .prepare(`UPDATE outbox SET status = 'pending', attempts = 0 WHERE status = 'dead'`)
+      .prepare(`UPDATE outbox SET status = 'pending', attempts = 0, last_error = NULL WHERE status IN ('failed', 'dead')`)
       .run()
     return result.changes
   }
