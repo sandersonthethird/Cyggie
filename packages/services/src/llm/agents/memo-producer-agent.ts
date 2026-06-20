@@ -743,8 +743,11 @@ export function carryForwardEvidence(
     .filter((e) => !e.section || !targetSet.has(e.section))
     .map((e) => ({
       claimText: e.claimText,
-      claimCategory: e.claimCategory,
-      sourceType: e.sourceType,
+      // StoredMemoEvidence widens these to DB types (sourceType: string,
+      // claimCategory: string | null) — narrow back to the EvidenceRow enums.
+      // Safe: every stored row passed EvidenceRowSchema when first persisted.
+      claimCategory: (e.claimCategory ?? undefined) as EvidenceRow['claimCategory'],
+      sourceType: e.sourceType as EvidenceRow['sourceType'],
       sourceId: e.sourceId,
       sourceUrl: e.sourceUrl,
       snippet: e.snippet,
