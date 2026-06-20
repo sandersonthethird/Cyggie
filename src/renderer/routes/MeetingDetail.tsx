@@ -18,6 +18,7 @@ import { useRecordingStore } from '../stores/recording.store'
 import { useSharedAudioCapture, useSharedVideoCapture } from '../contexts/AudioCaptureContext'
 import { useEnhancement } from '../contexts/EnhancementContext'
 import { useFindInPage } from '../hooks/useFindInPage'
+import { useTiptapFindHighlight } from '../hooks/useTiptapFindHighlight'
 import FindBar from '../components/common/FindBar'
 import ConfirmDialog from '../components/common/ConfirmDialog'
 import { useNotice } from '../components/common/NoticeModal'
@@ -1848,22 +1849,10 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
   })
 
   // Push find matches into the summary editor's FindHighlight extension so they
-  // render as <mark> decorations in the editor DOM. Streaming branch keeps using
-  // the legacy injectFindMarks path because no TipTap editor exists during streaming.
-  //
-  // Guard: tiptap v3's useEditor destroys + recreates on dep change ([id] here),
-  // and during that transition the returned `editor` object can be truthy but
-  // have a null `.commands` (internal view/state not yet rewired). Cheap belt-
-  // and-suspenders check avoids the crash on the "New Meeting from an existing
-  // MeetingDetail" path.
-  useEffect(() => {
-    if (!summaryEditor || summaryEditor.isDestroyed || !summaryEditor.commands) return
-    if (isGenerating) {
-      summaryEditor.commands.clearFindMatches()
-      return
-    }
-    summaryEditor.commands.setFindMatches(findMatches, activeMatchIndex)
-  }, [summaryEditor, findMatches, activeMatchIndex, isGenerating])
+  // render as <mark> decorations in the editor DOM. While generating, the editor
+  // holds no final content, so matches are cleared (enabled=false). The streaming
+  // branch keeps using the legacy injectFindMarks path (no TipTap editor exists yet).
+  useTiptapFindHighlight(summaryEditor, findMatches, activeMatchIndex, !isGenerating)
 
   if (!data) {
     return <div className={styles.loading}>Loading...</div>

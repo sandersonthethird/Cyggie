@@ -40,7 +40,9 @@ import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import { TABLE_EXTENSIONS } from '../../lib/tiptap-extensions'
+import { FindHighlight } from '../../lib/find-highlight-extension'
 import { useFindInPage } from '../../hooks/useFindInPage'
+import { useTiptapFindHighlight } from '../../hooks/useTiptapFindHighlight'
 import FindBar from '../common/FindBar'
 import { api } from '../../api'
 import styles from './MemoEditModal.module.css'
@@ -80,19 +82,41 @@ function MemoEditModalInner({ memo, onSaved, onClose, initialFindQuery }: MemoEd
   const findOpenRef = useRef(!!initialFindQuery)
   useEffect(() => { findOpenRef.current = findOpen }, [findOpen])
 
+  // Editor is created before useFindInPage so the find text can read its
+  // plain-text content (offsets must align with FindHighlight's cursor walk).
+  const { editor, loadContent } = useTiptapMarkdown({
+    extensions: [StarterKit, Markdown, Link, ...TABLE_EXTENSIONS, FindHighlight],
+    onUpdate: ({ editor: e }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mkd = (e as any).getMarkdown?.() ?? ''
+      setContentDraft(mkd)
+    },
+  }, [memo.id])
+
   const {
     query: findQuery,
     setQuery: setFindQuery,
     matchCount,
     activeMatchIndex,
+    matches: findMatches,
     goToNext,
     goToPrev,
   } = useFindInPage({
-    text: contentDraft,
+    // Feed editor.state.doc.textContent (NOT getText() — see find-highlight-extension.ts
+    // header) so match offsets align with FindHighlight's cursor walk. Gated on findOpen
+    // so we don't walk the whole doc on every keystroke while find is closed; the
+    // contentDraft fallback is unused for matching then (query is empty).
+    text: findOpen && editor ? editor.state.doc.textContent : contentDraft,
     isOpen: findOpen,
     onOpen: () => setFindOpen(true),
     onClose: () => setFindOpen(false),
+    // Scope the active-match scroll to this editor so an underlying read-only
+    // memo view (left with find open) isn't what scrolls, and center the match.
+    scrollRoot: editor?.view.dom ?? null,
   })
+
+  // Push matches into the editor's FindHighlight extension as <mark> decorations.
+  useTiptapFindHighlight(editor, findMatches, activeMatchIndex)
 
   // Pre-populate query when opened from view mode with an active search
   // useRef avoids ESLint exhaustive-deps warning — intentional initial-value-only pattern
@@ -100,15 +124,6 @@ function MemoEditModalInner({ memo, onSaved, onClose, initialFindQuery }: MemoEd
   useEffect(() => {
     if (initialFindQueryRef.current) setFindQuery(initialFindQueryRef.current)
   }, [setFindQuery]) // setFindQuery is a stable useState setter — effectively runs once
-
-  const { editor, loadContent } = useTiptapMarkdown({
-    extensions: [StarterKit, Markdown, Link, ...TABLE_EXTENSIONS],
-    onUpdate: ({ editor: e }) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mkd = (e as any).getMarkdown?.() ?? ''
-      setContentDraft(mkd)
-    },
-  }, [memo.id])
 
   // Load content on mount
   useEffect(() => {
