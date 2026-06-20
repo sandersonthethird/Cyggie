@@ -10,16 +10,16 @@ import { schema } from '@cyggie/db'
 import type { getDb } from '../../db'
 import { ok, type ToolResult } from '../../shared/error-envelope'
 import { noteVisibilityFilter } from '../../notes/visibility'
+import { companyVisibilityFilter, entityVisibilityFilter } from '../../sync/visibility'
 import { cyggieUrl, formatDate, formatRecency } from '../format'
 import { UNTRUSTED_NOTE_BANNER, wrapUntrustedNote, defangInline } from '../untrusted'
 
 export interface CyggieSearchArgs {
   db: ReturnType<typeof getDb>
   userId: string
-  // The caller's firm — gates note visibility to firm-shared (tagged,
-  // non-private) teammate notes + the caller's own; null falls back to
-  // owner-only. (Companies/contacts/meetings here remain owner-only — see the
-  // follow-up TODO; only notes are firm-scoped in this workstream.)
+  // The caller's firm — gates all four buckets to firm scope (parity with the
+  // REST /search route): companies are fully firm-shared; contacts/meetings/
+  // notes are shared unless is_private. null falls back to owner-only.
   firmId: string | null
   query: string
   // Per-bucket result cap. 5 matches the REST route default; LLM can
@@ -63,11 +63,13 @@ export async function runCyggieSearch(
     }
   }
 
-  // Run all four lookups in parallel — same pattern as the REST route.
+  // Run all four lookups in parallel — same pattern as the REST route. All four
+  // are firm-scoped (parity with REST WS1): companies are fully firm-shared;
+  // contacts/meetings/notes share unless is_private; null firm → owner-only.
   const [companies, contacts, meetings, notes] = await Promise.all([
-    searchCompanies(db, userId, trimmed, limit),
-    searchContacts(db, userId, trimmed, limit),
-    searchMeetings(db, userId, trimmed, limit),
+    searchCompanies(db, userId, firmId, trimmed, limit),
+    searchContacts(db, userId, firmId, trimmed, limit),
+    searchMeetings(db, userId, firmId, trimmed, limit),
     searchNotes(db, userId, firmId, trimmed, limit),
   ])
 
@@ -197,11 +199,16 @@ function renderNoteHit(n: NoteHit): string {
 async function searchCompanies(
   db: ReturnType<typeof getDb>,
   userId: string,
+  firmId: string | null,
   q: string,
   limit: number,
 ): Promise<{ items: CompanyHit[]; total: number }> {
+  // Companies are fully firm-shared (no is_private) when the caller has a firm.
+  const visibility: SQL = firmId
+    ? companyVisibilityFilter({ sub: userId, firm_id: firmId })
+    : (eq(schema.orgCompanies.userId, userId) as SQL)
   const where = and(
-    eq(schema.orgCompanies.userId, userId),
+    visibility,
     ilike(schema.orgCompanies.canonicalName, `%${q}%`),
   )
   const [items, countRow] = await Promise.all([
@@ -228,11 +235,16 @@ async function searchCompanies(
 async function searchContacts(
   db: ReturnType<typeof getDb>,
   userId: string,
+  firmId: string | null,
   q: string,
   limit: number,
 ): Promise<{ items: ContactHit[]; total: number }> {
+  // Firm-shared with an is_private opt-out when the caller has a firm.
+  const visibility: SQL = firmId
+    ? entityVisibilityFilter('contacts', { sub: userId, firm_id: firmId })
+    : (eq(schema.contacts.userId, userId) as SQL)
   const where = and(
-    eq(schema.contacts.userId, userId),
+    visibility,
     or(
       ilike(schema.contacts.fullName, `%${q}%`),
       ilike(schema.contacts.email, `%${q}%`),
@@ -266,11 +278,16 @@ async function searchContacts(
 async function searchMeetings(
   db: ReturnType<typeof getDb>,
   userId: string,
+  firmId: string | null,
   q: string,
   limit: number,
 ): Promise<{ items: MeetingHit[]; total: number }> {
+  // Firm-shared with an is_private opt-out when the caller has a firm.
+  const visibility: SQL = firmId
+    ? entityVisibilityFilter('meetings', { sub: userId, firm_id: firmId })
+    : (eq(schema.meetings.userId, userId) as SQL)
   const where = and(
-    eq(schema.meetings.userId, userId),
+    visibility,
     ilike(schema.meetings.title, `%${q}%`),
   )
   const [items, countRow] = await Promise.all([
