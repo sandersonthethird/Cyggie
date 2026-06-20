@@ -9,7 +9,7 @@ import type { getDb } from '../../db'
 import { err, ok, ERROR_CODE, type ToolResult } from '../../shared/error-envelope'
 import { noteVisibilityFilter } from '../../notes/visibility'
 import { cyggieUrl, formatDate, formatRecency } from '../format'
-import { UNTRUSTED_NOTE_BANNER, wrapUntrustedNote } from '../untrusted'
+import { UNTRUSTED_NOTE_BANNER, wrapUntrustedNote, defangInline } from '../untrusted'
 
 export interface CyggieGetNotesArgs {
   db: ReturnType<typeof getDb>
@@ -125,16 +125,21 @@ interface NoteRow {
 }
 
 function renderNote(n: NoteRow, includeFullContent: boolean, viewerId: string): string {
-  const title = n.title ?? '(untitled note)'
+  // Title is untrusted user content rendered inline (outside the body fence) —
+  // defang it so it can't forge the fence or inject fake structure.
+  const title = n.title ? defangInline(n.title) : '(untitled note)'
   const pin = n.isPinned ? '📌 ' : ''
   const attached = [n.companyName, n.contactName].filter(Boolean).join(' / ')
   const rel = formatRecency(n.updatedAt)
   const date = formatDate(n.updatedAt)
   const dateBit = date && rel ? `${date} (${rel})` : (date ?? rel ?? '')
   // Provenance: surface the author for a teammate's firm-shared note so the
-  // reader (and the model) knows it isn't their own.
+  // reader (and the model) knows it isn't their own. authorName is user-set —
+  // defang it too.
   const byline =
-    n.ownerUserId !== viewerId ? `by ${n.authorName ?? 'a teammate'}` : null
+    n.ownerUserId !== viewerId
+      ? `by ${defangInline(n.authorName ?? '') || 'a teammate'}`
+      : null
   const tail = [attached, byline, dateBit].filter(Boolean).join(' · ')
 
   const body = includeFullContent ? n.content : preview(n.content)

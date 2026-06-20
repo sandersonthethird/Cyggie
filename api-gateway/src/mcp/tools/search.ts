@@ -11,7 +11,7 @@ import type { getDb } from '../../db'
 import { ok, type ToolResult } from '../../shared/error-envelope'
 import { noteVisibilityFilter } from '../../notes/visibility'
 import { cyggieUrl, formatDate, formatRecency } from '../format'
-import { UNTRUSTED_NOTE_BANNER, wrapUntrustedNote } from '../untrusted'
+import { UNTRUSTED_NOTE_BANNER, wrapUntrustedNote, defangInline } from '../untrusted'
 
 export interface CyggieSearchArgs {
   db: ReturnType<typeof getDb>
@@ -177,8 +177,10 @@ export interface NoteHit {
   updatedAt: Date
 }
 function renderNoteHit(n: NoteHit): string {
-  const title = n.title ?? '(untitled note)'
-  const byline = n.authorName ? `by ${n.authorName}` : null
+  // Title + author byline are untrusted, rendered inline outside the fence —
+  // defang them (prompt-injection boundary).
+  const title = n.title ? defangInline(n.title) : '(untitled note)'
+  const byline = n.authorName ? `by ${defangInline(n.authorName)}` : null
   const attached = [n.companyName, n.contactName].filter(Boolean).join(' / ')
   const rel = formatRecency(n.updatedAt)
   const tail = [attached, byline, rel].filter(Boolean).join(' · ')
