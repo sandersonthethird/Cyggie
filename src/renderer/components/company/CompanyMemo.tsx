@@ -9,6 +9,7 @@ import { MemoEditModal } from './MemoEditModal'
 import { useNotice } from '../common/NoticeModal'
 import LargeContextWarningModal from './LargeContextWarningModal'
 import { useFindInPage } from '../../hooks/useFindInPage'
+import { useTiptapFindHighlight } from '../../hooks/useTiptapFindHighlight'
 import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import { TABLE_EXTENSIONS } from '../../lib/tiptap-extensions'
 import { FindHighlight } from '../../lib/find-highlight-extension'
@@ -188,10 +189,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
   })
 
   // Push matches into the editor's FindHighlight extension as <mark> decorations.
-  useEffect(() => {
-    if (!memoEditor) return
-    memoEditor.commands.setFindMatches(findMatches, activeMatchIndex)
-  }, [memoEditor, findMatches, activeMatchIndex])
+  useTiptapFindHighlight(memoEditor, findMatches, activeMatchIndex)
 
   // Clear share + version state when company changes
   useEffect(() => {
