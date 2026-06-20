@@ -5,15 +5,22 @@
 // markdown. Cheap (DB-only, no LLM) → safe for the LLM to call
 // liberally during disambiguation.
 
-import { and, desc, eq, ilike, or, sql } from 'drizzle-orm'
+import { and, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import type { getDb } from '../../db'
 import { ok, type ToolResult } from '../../shared/error-envelope'
+import { noteVisibilityFilter } from '../../notes/visibility'
 import { cyggieUrl, formatDate, formatRecency } from '../format'
+import { UNTRUSTED_NOTE_BANNER, wrapUntrustedNote } from '../untrusted'
 
 export interface CyggieSearchArgs {
   db: ReturnType<typeof getDb>
   userId: string
+  // The caller's firm — gates note visibility to firm-shared (tagged,
+  // non-private) teammate notes + the caller's own; null falls back to
+  // owner-only. (Companies/contacts/meetings here remain owner-only — see the
+  // follow-up TODO; only notes are firm-scoped in this workstream.)
+  firmId: string | null
   query: string
   // Per-bucket result cap. 5 matches the REST route default; LLM can
   // raise to 20 for broader exploration.
@@ -42,7 +49,7 @@ function buildPreview(content: string): string {
 export async function runCyggieSearch(
   args: CyggieSearchArgs,
 ): Promise<SearchResults> {
-  const { db, userId, query } = args
+  const { db, userId, firmId, query } = args
   const limit = Math.min(args.limit ?? 5, MAX_LIMIT)
   const trimmed = query.trim()
 
@@ -61,7 +68,7 @@ export async function runCyggieSearch(
     searchCompanies(db, userId, trimmed, limit),
     searchContacts(db, userId, trimmed, limit),
     searchMeetings(db, userId, trimmed, limit),
-    searchNotes(db, userId, trimmed, limit),
+    searchNotes(db, userId, firmId, trimmed, limit),
   ])
 
   return { query: trimmed, companies, contacts, meetings, notes }
@@ -106,6 +113,8 @@ export async function cyggieSearch(args: CyggieSearchArgs): Promise<ToolResult> 
   if (notes.items.length > 0) {
     sections.push(
       sectionHeader('Notes', notes.items.length, notes.total) +
+        '\n' +
+        UNTRUSTED_NOTE_BANNER +
         '\n' +
         notes.items.map((n) => renderNoteHit(n)).join('\n'),
     )
@@ -161,16 +170,21 @@ export interface NoteHit {
   id: string
   title: string | null
   contentPreview: string
+  // Author display name when the note belongs to a teammate (null = own note).
+  authorName: string | null
   companyName: string | null
   contactName: string | null
   updatedAt: Date
 }
 function renderNoteHit(n: NoteHit): string {
   const title = n.title ?? '(untitled note)'
+  const byline = n.authorName ? `by ${n.authorName}` : null
   const attached = [n.companyName, n.contactName].filter(Boolean).join(' / ')
   const rel = formatRecency(n.updatedAt)
-  const tail = [attached, rel].filter(Boolean).join(' · ')
-  return `- **${title}**${tail ? ` — ${tail}` : ''}\n  > ${n.contentPreview} [${cyggieUrl('note', n.id)}]`
+  const tail = [attached, byline, rel].filter(Boolean).join(' · ')
+  // Preview is untrusted user content — fence it (prompt-injection boundary).
+  const fenced = wrapUntrustedNote(n.contentPreview)
+  return `- **${title}**${tail ? ` — ${tail}` : ''}\n${fenced} [${cyggieUrl('note', n.id)}]`
 }
 
 // ─── Query helpers ────────────────────────────────────────────────────────
@@ -282,11 +296,18 @@ async function searchMeetings(
 async function searchNotes(
   db: ReturnType<typeof getDb>,
   userId: string,
+  firmId: string | null,
   q: string,
   limit: number,
 ): Promise<{ items: NoteHit[]; total: number }> {
+  // Firm-shared visibility (own + same-firm tagged non-private) when the caller
+  // has a firm; owner-only otherwise. The predicate's firm guard needs the
+  // users inner-join below.
+  const visibility: SQL = firmId
+    ? noteVisibilityFilter({ sub: userId, firm_id: firmId })
+    : (eq(schema.notes.userId, userId) as SQL)
   const where = and(
-    eq(schema.notes.userId, userId),
+    visibility,
     sql`to_tsvector('english', coalesce(${schema.notes.title}, '') || ' ' || substring(${schema.notes.content} from 1 for 500000)) @@ plainto_tsquery('english', ${q})`,
   )
   const [items, countRow] = await Promise.all([
@@ -295,11 +316,17 @@ async function searchNotes(
         id: schema.notes.id,
         title: schema.notes.title,
         content: schema.notes.content,
+        ownerUserId: schema.notes.userId,
+        authorName: schema.users.displayName,
         companyName: schema.orgCompanies.canonicalName,
         contactName: schema.contacts.fullName,
         updatedAt: schema.notes.updatedAt,
       })
       .from(schema.notes)
+      // INNER JOIN users: required by noteVisibilityFilter's firm guard +
+      // author attribution. Kept on the owner-only path too so the shape and
+      // the count query (which also joins) stay identical.
+      .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
       .leftJoin(
         schema.orgCompanies,
         eq(schema.notes.companyId, schema.orgCompanies.id),
@@ -311,6 +338,7 @@ async function searchNotes(
     db
       .select({ n: sql<number>`count(*)::int` })
       .from(schema.notes)
+      .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
       .where(where),
   ])
   return {
@@ -318,6 +346,7 @@ async function searchNotes(
       id: n.id,
       title: n.title,
       contentPreview: buildPreview(n.content ?? ''),
+      authorName: n.ownerUserId === userId ? null : (n.authorName ?? 'a teammate'),
       companyName: n.companyName,
       contactName: n.contactName,
       updatedAt: new Date(n.updatedAt),

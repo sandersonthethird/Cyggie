@@ -214,8 +214,10 @@ describe('POST /slack/events — slash NL Q&A (slice 5)', () => {
     expect(reply.text).toBe(":thinking_face: Looking that up...")
     expect(reply.mrkdwn).toBe(true)
 
-    // Wait for the async background task to run + POST to response_url.
-    await new Promise((r) => setTimeout(r, 50))
+    // Wait for the async background task to run + POST to response_url. (Uses
+    // waitFor, not a fixed delay — the Slack path now resolves the caller's
+    // firm via a DB roundtrip before cyggieAsk fires.)
+    await waitFor(() => fetchMock.mock.calls.length >= 1, 3000)
     expect(cyggieAskMock).toHaveBeenCalledTimes(1)
     expect(cyggieAskMock).toHaveBeenCalledWith(
       expect.objectContaining({

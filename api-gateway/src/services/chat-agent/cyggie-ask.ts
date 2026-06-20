@@ -47,6 +47,10 @@ export interface CyggieAskArgs {
   // DB + userId are needed by the tool handlers (data scoping).
   db: ReturnType<typeof getDb>
   userId: string
+  // The caller's firm — lets the search/notes tools surface firm-shared
+  // (tagged, non-private) teammate notes into the answer. null = firmless user
+  // (owner-only). Resolve from the verified token (MCP) or the users row (Slack).
+  firmId: string | null
   log?: FastifyBaseLogger
   // Audit/observability tags: caller identifies itself so metrics +
   // Sentry can attribute the call.
@@ -178,6 +182,7 @@ interface ToolEntry {
 interface ToolCtx {
   db: ReturnType<typeof getDb>
   userId: string
+  firmId: string | null
   // Part 2 (1A): cyggie_get_context calls this with the entity it loaded so
   // cyggieAsk can surface it as loadedFocus. Optional — only the Slack path
   // that persists focus wires it.
@@ -210,6 +215,7 @@ const TOOL_REGISTRY: Record<string, ToolEntry> = {
       cyggieSearch({
         db: ctx.db,
         userId: ctx.userId,
+        firmId: ctx.firmId,
         query: String(input['query'] ?? ''),
         limit: typeof input['limit'] === 'number' ? input['limit'] : undefined,
       }),
@@ -344,6 +350,7 @@ const TOOL_REGISTRY: Record<string, ToolEntry> = {
       cyggieGetNotes({
         db: ctx.db,
         userId: ctx.userId,
+        firmId: ctx.firmId,
         companyId: input['companyId'] as string | undefined,
         contactId: input['contactId'] as string | undefined,
         meetingId: input['meetingId'] as string | undefined,
@@ -430,6 +437,7 @@ export async function cyggieAsk(args: CyggieAskArgs): Promise<CyggieAskResult> {
   const ctx: ToolCtx = {
     db: args.db,
     userId: args.userId,
+    firmId: args.firmId,
     onLoadedFocus: (f) => {
       loadedFocus = f
     },

@@ -3187,12 +3187,33 @@ visibility predicate.
 
 **Effort:** L. **Priority:** P2. **Owner:** Sandy.
 
-## Notes — let AI + MCP reason over firm-shared notes
+## Notes — let AI + MCP reason over firm-shared notes ✅ SHIPPED
 
-**What:** Route the AI/RAG context builder and the `cyggie_get_notes` MCP tool
-through `noteVisibilityFilter` so they surface firm-shared (tagged, non-private)
-notes in addition to the caller's own — unlocking "ask the firm brain" across
-the partnership's collective note-taking.
+**Status:** SHIPPED (firm-brain notes workstream). `cyggie_get_notes` and the
+notes path of `cyggie_search` now apply `noteVisibilityFilter` (+ a `users`
+inner-join) instead of `eq(notes.userId, me)`, so a teammate's tagged,
+non-private notes reach the Slack bot, `cyggie_ask`, and MCP answers; private
+and untagged notes stay owner-only. `firmId` is threaded from the verified
+token (MCP) or the users row (Slack, via `src/shared/resolve-firm.ts`); a null
+firm falls back to owner-only. The **prompt-injection boundary** lives in
+[`api-gateway/src/mcp/untrusted.ts`](api-gateway/src/mcp/untrusted.ts): every
+note body the tools emit is fenced in `<note_content>` (forged close-tags
+defanged) under a banner telling the model to treat it as data, never
+instructions. Teammate notes also carry an author byline for provenance. Leak
+tests: `api-gateway/test/mcp-notes-firm-shared.test.ts` (+ unit coverage of the
+boundary in `mcp-unit.test.ts`). No MCP tool name/schema/error-code changed —
+output-additive only.
+
+**Follow-up (separate workstream):** the `cyggie_search` MCP tool still scopes
+**companies / contacts / meetings** to `user_id = me` (only its notes path is
+firm-scoped here). WS1 made the REST search firm-scoped; bringing the other
+three MCP-search entity types to firm scope (with their own leak tests) is a
+clean next slice — "MCP read paths → firm scope (parity with REST WS1)".
+
+**What (original):** Route the AI/RAG context builder and the `cyggie_get_notes`
+MCP tool through `noteVisibilityFilter` so they surface firm-shared
+(tagged, non-private) notes in addition to the caller's own — unlocking
+"ask the firm brain" across the partnership's collective note-taking.
 
 **Why:** The private-notes feature enforces visibility at the two REST routes
 (`GET /notes`, `GET /notes/:id`). The MCP read path

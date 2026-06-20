@@ -3,15 +3,21 @@
 // LLM could trivially exfiltrate the entire note table — and the result
 // would be too big to be useful anyway).
 
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import type { getDb } from '../../db'
 import { err, ok, ERROR_CODE, type ToolResult } from '../../shared/error-envelope'
+import { noteVisibilityFilter } from '../../notes/visibility'
 import { cyggieUrl, formatDate, formatRecency } from '../format'
+import { UNTRUSTED_NOTE_BANNER, wrapUntrustedNote } from '../untrusted'
 
 export interface CyggieGetNotesArgs {
   db: ReturnType<typeof getDb>
   userId: string
+  // The caller's firm. When present, firm-shared (tagged, non-private) notes
+  // owned by teammates are visible alongside the caller's own; when null
+  // (firmless user) we fall back to owner-only. See noteVisibilityFilter.
+  firmId: string | null
   companyId?: string
   contactId?: string
   meetingId?: string
@@ -30,7 +36,7 @@ const MAX_LIMIT = 25
 const PREVIEW_CHARS = 240
 
 export async function cyggieGetNotes(args: CyggieGetNotesArgs): Promise<ToolResult> {
-  const { db, userId } = args
+  const { db, userId, firmId } = args
   const limit = Math.min(args.limit ?? 10, MAX_LIMIT)
   const includeFullContent = args.includeFullContent === true
 
@@ -41,7 +47,13 @@ export async function cyggieGetNotes(args: CyggieGetNotesArgs): Promise<ToolResu
     )
   }
 
-  const whereParts = [eq(schema.notes.userId, userId)]
+  // Firm-shared visibility (own + same-firm tagged non-private) when the caller
+  // has a firm; owner-only otherwise. noteVisibilityFilter needs the users
+  // inner-join below to test the firm guard.
+  const visibility: SQL = firmId
+    ? noteVisibilityFilter({ sub: userId, firm_id: firmId })
+    : (eq(schema.notes.userId, userId) as SQL)
+  const whereParts: SQL[] = [visibility]
   if (args.companyId) whereParts.push(eq(schema.notes.companyId, args.companyId))
   if (args.contactId) whereParts.push(eq(schema.notes.contactId, args.contactId))
   if (args.meetingId)
@@ -61,11 +73,16 @@ export async function cyggieGetNotes(args: CyggieGetNotesArgs): Promise<ToolResu
       title: schema.notes.title,
       content: schema.notes.content,
       isPinned: schema.notes.isPinned,
+      ownerUserId: schema.notes.userId,
+      authorName: schema.users.displayName,
       companyName: schema.orgCompanies.canonicalName,
       contactName: schema.contacts.fullName,
       updatedAt: schema.notes.updatedAt,
     })
     .from(schema.notes)
+    // INNER JOIN users: required by noteVisibilityFilter's firm guard, and
+    // doubles as the author-attribution source for firm-shared notes.
+    .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
     .leftJoin(
       schema.orgCompanies,
       eq(schema.notes.companyId, schema.orgCompanies.id),
@@ -81,8 +98,8 @@ export async function cyggieGetNotes(args: CyggieGetNotesArgs): Promise<ToolResu
   }
 
   const header = buildHeader(args, rows.length)
-  const items = rows.map((n) => renderNote(n, includeFullContent))
-  return ok(`${header}\n\n${items.join('\n\n')}`)
+  const items = rows.map((n) => renderNote(n, includeFullContent, userId))
+  return ok(`${header}\n\n${UNTRUSTED_NOTE_BANNER}\n\n${items.join('\n\n')}`)
 }
 
 function buildHeader(args: CyggieGetNotesArgs, count: number): string {
@@ -100,27 +117,34 @@ interface NoteRow {
   title: string | null
   content: string
   isPinned: boolean
+  ownerUserId: string
+  authorName: string | null
   companyName: string | null
   contactName: string | null
   updatedAt: Date
 }
 
-function renderNote(n: NoteRow, includeFullContent: boolean): string {
+function renderNote(n: NoteRow, includeFullContent: boolean, viewerId: string): string {
   const title = n.title ?? '(untitled note)'
   const pin = n.isPinned ? '📌 ' : ''
   const attached = [n.companyName, n.contactName].filter(Boolean).join(' / ')
   const rel = formatRecency(n.updatedAt)
   const date = formatDate(n.updatedAt)
   const dateBit = date && rel ? `${date} (${rel})` : (date ?? rel ?? '')
-  const tail = [attached, dateBit].filter(Boolean).join(' · ')
+  // Provenance: surface the author for a teammate's firm-shared note so the
+  // reader (and the model) knows it isn't their own.
+  const byline =
+    n.ownerUserId !== viewerId ? `by ${n.authorName ?? 'a teammate'}` : null
+  const tail = [attached, byline, dateBit].filter(Boolean).join(' · ')
 
-  const body = includeFullContent
-    ? n.content
-    : preview(n.content)
+  const body = includeFullContent ? n.content : preview(n.content)
 
   const lines: string[] = [`### ${pin}${title}`]
   if (tail) lines.push(`_${tail}_`)
-  if (body) lines.push(body)
+  // Note bodies are untrusted user content — fence them so they can't act as
+  // instructions to the consuming model (prompt-injection boundary).
+  const fenced = wrapUntrustedNote(body)
+  if (fenced) lines.push(fenced)
   lines.push(`[View in Cyggie](${cyggieUrl('note', n.id)})`)
   return lines.join('\n\n')
 }
