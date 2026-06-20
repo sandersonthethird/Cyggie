@@ -21,6 +21,7 @@ import {
   type CyggieAskErrorCode,
 } from '../../services/chat-agent/cyggie-ask'
 import { resolveAnthropicKey } from '../../llm/resolve-key'
+import { resolveFirmId } from '../../shared/resolve-firm'
 import { markdownToMrkdwn } from '../markdown-to-mrkdwn'
 import type { SlackClient } from '../client'
 import {
@@ -295,6 +296,9 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
       apiKey,
       db,
       userId,
+      // Firm scope for note visibility — the Slack path holds only a Cyggie
+      // userId, so resolve the firm from the users row (null = firmless).
+      firmId: await resolveFirmId(db, userId),
       log,
       caller: 'slack',
       onBehalfOf: args.onBehalfOf,

@@ -17,6 +17,7 @@ import {
   type SearchResults,
 } from '../../mcp/tools/search'
 import type { getDb } from '../../db'
+import { resolveFirmId } from '../../shared/resolve-firm'
 import { bold, bullet, escapeMrkdwn, link } from '../format-mrkdwn'
 
 export interface HandleSlackSearchArgs {
@@ -33,7 +34,11 @@ export async function handleSlackSearch(
   if (!trimmed) {
     return `Usage: ${bold('/cyggie search <name or email>')}\n\nTry ${bold('/cyggie search Acme')} or ${bold('/cyggie search jane@example.com')}.`
   }
-  const results = await runCyggieSearch({ db, userId, query: trimmed, limit: 5 })
+  // Firm scope so firm-shared (tagged, non-private) teammate notes surface in
+  // the results; null = firmless user (owner-only). This output renders to a
+  // human in Slack — not an LLM — so no injection fence is needed here.
+  const firmId = await resolveFirmId(db, userId)
+  const results = await runCyggieSearch({ db, userId, firmId, query: trimmed, limit: 5 })
   return formatSearchAsMrkdwn(results)
 }
 
@@ -111,9 +116,10 @@ function renderMeeting(m: MeetingHit): string {
 
 function renderNote(n: NoteHit): string {
   const title = n.title ?? '(untitled note)'
+  const byline = n.authorName ? `by ${n.authorName}` : null
   const attached = [n.companyName, n.contactName].filter(Boolean).join(' / ')
   const rel = formatRecency(n.updatedAt)
-  const tail = [attached, rel].filter(Boolean).join(' · ')
+  const tail = [attached, byline, rel].filter(Boolean).join(' · ')
   const tailStr = tail ? ` — ${escapeMrkdwn(tail)}` : ''
   // Notes get a second line with a preview, indented under the bullet.
   return (

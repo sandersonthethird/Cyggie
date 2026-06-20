@@ -87,6 +87,7 @@ export function buildMcpServer(ctx: BuildMcpServerArgs): McpServer {
         cyggieSearch({
           db: ctx.db,
           userId: ctx.userId,
+          firmId: ctx.firmId,
           query: input.query,
           limit: input.limit,
         }),
@@ -244,6 +245,7 @@ export function buildMcpServer(ctx: BuildMcpServerArgs): McpServer {
         cyggieGetNotes({
           db: ctx.db,
           userId: ctx.userId,
+          firmId: ctx.firmId,
           companyId: input.companyId,
           contactId: input.contactId,
           meetingId: input.meetingId,
