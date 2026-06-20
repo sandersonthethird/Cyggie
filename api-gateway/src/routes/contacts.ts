@@ -8,6 +8,7 @@ import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
+import { entityVisibilityFilter } from '../sync/visibility'
 import { sanitizeContactRow } from '../shared/sanitize-row'
 
 /** Normalized name for dedup (matches desktop's contact.repo.ts pattern):
@@ -105,7 +106,9 @@ export async function registerContactRoutes(
       const db = getDb(env.GATEWAY_DATABASE_URL)
       const { q, limit, offset } = req.query
 
-      const whereClauses = [eq(schema.contacts.userId, user.sub)]
+      // Firm-shared + owner-aware privacy (was user_id-only) — teammates' shared
+      // contacts are now visible; private contacts stay owner-only.
+      const whereClauses = [entityVisibilityFilter('contacts', user)]
       if (q) {
         whereClauses.push(
           or(
@@ -141,14 +144,14 @@ export async function registerContactRoutes(
             SELECT mscl.contact_id AS contact_id, max(m.date) AS last_at
             FROM meeting_speaker_contact_links mscl
             JOIN meetings m ON m.id = mscl.meeting_id
-            WHERE m.user_id = ${user.sub}
+            WHERE m.firm_id = ${user.firm_id} AND (m.user_id = ${user.sub} OR m.is_private = false)
             GROUP BY mscl.contact_id
             UNION ALL
             SELECT ce.contact_id AS contact_id, max(m.date) AS last_at
             FROM meetings m
             CROSS JOIN LATERAL jsonb_array_elements_text(m.attendee_emails) AS ae(email)
             JOIN contact_emails ce ON lower(ce.email) = lower(ae.email)
-            WHERE m.user_id = ${user.sub}
+            WHERE m.firm_id = ${user.firm_id} AND (m.user_id = ${user.sub} OR m.is_private = false)
             GROUP BY ce.contact_id
           ) s GROUP BY contact_id
         )
@@ -161,7 +164,7 @@ export async function registerContactRoutes(
         FROM contacts c
         LEFT JOIN org_companies oc ON c.primary_company_id = oc.id
         LEFT JOIN lt ON lt.contact_id = c.id
-        WHERE c.user_id = ${user.sub} ${qCond}
+        WHERE c.firm_id = ${user.firm_id} AND (c.user_id = ${user.sub} OR c.is_private = false) ${qCond}
         ORDER BY lt.last_at DESC NULLS LAST, c.full_name ASC
         LIMIT ${limit} OFFSET ${offset}
       `)
@@ -229,7 +232,7 @@ export async function registerContactRoutes(
       // Full contact row (for guarded passthrough) + the joined company
       // name/domain via a small lookup. Mirrors the companies/:id pattern.
       const contact = await db.query.contacts.findFirst({
-        where: and(eq(schema.contacts.id, id), eq(schema.contacts.userId, user.sub)),
+        where: and(eq(schema.contacts.id, id), entityVisibilityFilter('contacts', user)),
       })
       if (!contact) {
         throw new GatewayError({
@@ -266,7 +269,7 @@ export async function registerContactRoutes(
         .where(
           and(
             eq(schema.meetingSpeakerContactLinks.contactId, id),
-            eq(schema.meetings.userId, user.sub),
+            entityVisibilityFilter('meetings', user), // firm-visible meetings, not just own
           ),
         )
         .orderBy(desc(schema.meetings.date))

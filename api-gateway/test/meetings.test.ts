@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'vitest'
+import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,24 +27,46 @@ const db = getDb(env.GATEWAY_DATABASE_URL)
 const TEST_PREFIX = `test-mtg-${Date.now().toString(36)}-`
 const cleanup = makeDbCleanup(db)
 
+// WS1 — meetings are firm-shared (firm_id + is_private opt-out) and the read
+// paths filter by firm_id. Give each test its OWN firm (beforeEach) so
+// firm-scoped reads stay test-isolated; all users created within a test share
+// that firm, so same-firm-sharing assertions work. Mirrors contacts.test.ts.
+let CURRENT_FIRM_ID = TEST_PREFIX + 'firm'
+
+async function insertFirm(): Promise<string> {
+  const id = TEST_PREFIX + 'firm-' + createId().slice(0, 8)
+  await db.insert(schema.firms).values({ id, name: 'Meetings Test Firm', slug: id })
+  cleanup.track(schema.firms, schema.firms.id, id)
+  return id
+}
+
+beforeEach(async () => {
+  CURRENT_FIRM_ID = await insertFirm()
+})
+
 afterAll(async () => {
   await cleanup.cleanup()
   await app.close()
 })
 
-async function insertTestUser(): Promise<string> {
+async function insertTestUser(firmId: string = CURRENT_FIRM_ID): Promise<string> {
   const id = TEST_PREFIX + createId().slice(0, 8)
   await db.insert(schema.users).values({
     id,
     googleSub: 'sub-' + id,
     email: `${id}@example.com`,
     displayName: id,
+    firmId,
   })
   cleanup.track(schema.users, schema.users.id, id)
   return id
 }
 
-async function insertCompany(userId: string, name: string): Promise<string> {
+async function insertCompany(
+  userId: string,
+  name: string,
+  firmId: string = CURRENT_FIRM_ID,
+): Promise<string> {
   const id = TEST_PREFIX + 'co-' + createId().slice(0, 8)
   await db.insert(schema.orgCompanies).values({
     id,
@@ -52,6 +74,7 @@ async function insertCompany(userId: string, name: string): Promise<string> {
     canonicalName: name,
     normalizedName: name.toLowerCase(),
     status: 'active',
+    firmId,
   })
   cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
@@ -62,6 +85,7 @@ async function insertContact(opts: {
   fullName: string
   companyId?: string
   email?: string
+  firmId?: string
 }): Promise<string> {
   const id = TEST_PREFIX + 'ct-' + createId().slice(0, 8)
   await db.insert(schema.contacts).values({
@@ -71,6 +95,7 @@ async function insertContact(opts: {
     normalizedName: opts.fullName.toLowerCase(),
     primaryCompanyId: opts.companyId ?? null,
     email: opts.email ?? null,
+    firmId: opts.firmId ?? CURRENT_FIRM_ID,
   })
   cleanup.track(schema.contacts, schema.contacts.id, id)
   return id
@@ -97,6 +122,8 @@ async function insertMeeting(opts: {
   wasImpromptu?: boolean
   attendees?: string[] | null
   attendeeEmails?: string[] | null
+  firmId?: string
+  isPrivate?: boolean
 }): Promise<string> {
   const id = TEST_PREFIX + 'mtg-' + createId().slice(0, 8)
   await db.insert(schema.meetings).values({
@@ -119,18 +146,20 @@ async function insertMeeting(opts: {
       ? ['alice@example.com', 'bob@example.com']
       : opts.attendeeEmails) as never,
     speakerCount: 2,
+    firmId: opts.firmId ?? CURRENT_FIRM_ID,
+    isPrivate: opts.isPrivate ?? false,
   })
   cleanup.track(schema.meetings, schema.meetings.id, id)
   return id
 }
 
-async function mintJwt(userId: string): Promise<string> {
+async function mintJwt(userId: string, firmId: string = CURRENT_FIRM_ID): Promise<string> {
   return signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'session-' + userId,
     device: TEST_PREFIX + 'device',
     scope: ['user'],
-    firm_id: TEST_PREFIX + 'firm',
+    firm_id: firmId,
     role: 'member',
   })
 }
@@ -313,20 +342,49 @@ describe('GET /meetings/:id', () => {
     expect(body.summary).toBeNull()
   })
 
-  test('404 when meeting belongs to a different user', async () => {
-    const owner = await insertTestUser()
-    const intruder = await insertTestUser()
-    const meetingId = await insertMeeting({ userId: owner })
+  test('404 for a different-FIRM meeting; 200 for a same-firm teammate meeting; 404 when teammate meeting is private', async () => {
+    // WS1 widened meeting visibility from user to firm, with an is_private
+    // opt-out: firm_id = me.firm AND (user_id = me OR is_private = false).
 
-    const jwt = await mintJwt(intruder)
-    const res = await app.inject({
-      method: 'GET',
-      url: `/meetings/${meetingId}`,
-      headers: { authorization: `Bearer ${jwt}` },
+    // ── different firm: never visible ──────────────────────────────────────
+    const otherFirm = await insertFirm()
+    const otherOwner = await insertTestUser(otherFirm)
+    const otherFirmMeeting = await insertMeeting({
+      userId: otherOwner,
+      firmId: otherFirm,
     })
+    const intruder = await insertTestUser() // CURRENT_FIRM_ID
+    const intruderJwt = await mintJwt(intruder)
+    const otherFirmRes = await app.inject({
+      method: 'GET',
+      url: `/meetings/${otherFirmMeeting}`,
+      headers: { authorization: `Bearer ${intruderJwt}` },
+    })
+    expect(otherFirmRes.statusCode).toBe(404)
+    expect(otherFirmRes.json()).toMatchObject({ error: { code: 'MEETING_NOT_FOUND' } })
 
-    expect(res.statusCode).toBe(404)
-    expect(res.json()).toMatchObject({ error: { code: 'MEETING_NOT_FOUND' } })
+    // ── same firm, non-private: shared with teammates ──────────────────────
+    const teammate = await insertTestUser() // same CURRENT_FIRM_ID
+    const caller = await insertTestUser() // different user, same firm
+    const callerJwt = await mintJwt(caller)
+    const sharedMeeting = await insertMeeting({ userId: teammate })
+    const sharedRes = await app.inject({
+      method: 'GET',
+      url: `/meetings/${sharedMeeting}`,
+      headers: { authorization: `Bearer ${callerJwt}` },
+    })
+    expect(sharedRes.statusCode).toBe(200)
+    expect((sharedRes.json() as { id: string }).id).toBe(sharedMeeting)
+
+    // ── same firm, private: NOT visible to teammates ───────────────────────
+    const privateMeeting = await insertMeeting({ userId: teammate, isPrivate: true })
+    const privateRes = await app.inject({
+      method: 'GET',
+      url: `/meetings/${privateMeeting}`,
+      headers: { authorization: `Bearer ${callerJwt}` },
+    })
+    expect(privateRes.statusCode).toBe(404)
+    expect(privateRes.json()).toMatchObject({ error: { code: 'MEETING_NOT_FOUND' } })
   })
 
   test('404 for non-existent id', async () => {

@@ -51,3 +51,29 @@ export function entityVisibilityFilter(table: VisibilityTable, viewer: EntityVie
     ),
   ) as SQL
 }
+
+/**
+ * Companies are FULLY firm-shared (no is_private opt-out) — visibility is just
+ * the firm guard on the denormalized firm_id. Separate from
+ * entityVisibilityFilter (which has the privacy branch) by design: explicit >
+ * clever, and org_companies isn't in VisibilityTable.
+ */
+export function companyVisibilityFilter(viewer: EntityViewer): SQL {
+  return eq(schema.orgCompanies.firmId, viewer.firm_id) as SQL
+}
+
+// =============================================================================
+// EMAIL is the carve-out: a user's inbox/correspondence (email_messages +
+// email_company_links + email_contact_links) is STRICTLY owner-only and NEVER
+// firm-shared — even when the surrounding contact/company/meeting widens to firm
+// scope. (The contact's email ADDRESS — contacts.email / contact_emails — is a
+// shared CRM attribute and rides the contact's visibility; that is NOT this.)
+//
+// Every inbox-email read MUST scope `email_messages.user_id = viewer.sub`. Use
+// `emailOwnerOnly(viewer)` for drizzle queries; in raw-SQL CTEs keep
+// `em.user_id = ${viewer.sub}` with an `-- EMAIL OWNER-ONLY` marker comment so
+// the invariant stays greppable. Each inbox path has a two-user leak test (1A).
+// =============================================================================
+export function emailOwnerOnly(viewer: EntityViewer): SQL {
+  return eq(schema.emailMessages.userId, viewer.sub) as SQL
+}

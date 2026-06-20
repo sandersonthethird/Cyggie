@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'vitest'
+import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,18 +30,36 @@ const cleanup = makeDbCleanup(db)
 // Kept for in-test result filtering only — cleanup is routed through the helper.
 const createdCompanyIds: string[] = []
 
+// WS1 — companies are FULLY firm-shared (firm_id, no is_private opt-out) and the
+// read paths filter by firm_id. Give each test its OWN firm (beforeEach) so
+// firm-scoped reads stay test-isolated; all users created within a test share
+// that firm, so same-firm-sharing assertions work. Mirrors contacts.test.ts.
+let CURRENT_FIRM_ID = TEST_PREFIX + 'firm'
+
+async function insertFirm(): Promise<string> {
+  const id = TEST_PREFIX + 'firm-' + createId().slice(0, 8)
+  await db.insert(schema.firms).values({ id, name: 'Companies Test Firm', slug: id })
+  cleanup.track(schema.firms, schema.firms.id, id)
+  return id
+}
+
+beforeEach(async () => {
+  CURRENT_FIRM_ID = await insertFirm()
+})
+
 afterAll(async () => {
   await cleanup.cleanup()
   await app.close()
 })
 
-async function insertTestUser(): Promise<string> {
+async function insertTestUser(firmId: string = CURRENT_FIRM_ID): Promise<string> {
   const id = TEST_PREFIX + createId().slice(0, 8)
   await db.insert(schema.users).values({
     id,
     googleSub: 'sub-' + id,
     email: `${id}@example.com`,
     displayName: id,
+    firmId,
   })
   cleanup.track(schema.users, schema.users.id, id)
   return id
@@ -53,6 +71,7 @@ async function insertTestCompany(opts: {
   industry?: string
   pipelineStage?: string
   primaryDomain?: string | null
+  firmId?: string
   // Explicit created_at lets sort tests control the meeting-less tail order
   // (which now orders by created_at DESC). Omitted → DB defaultNow().
   createdAt?: Date
@@ -67,6 +86,7 @@ async function insertTestCompany(opts: {
     pipelineStage: opts.pipelineStage ?? null,
     primaryDomain: opts.primaryDomain ?? null,
     status: 'active',
+    firmId: opts.firmId ?? CURRENT_FIRM_ID,
     ...(opts.createdAt ? { createdAt: opts.createdAt } : {}),
   })
   cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
@@ -80,6 +100,7 @@ async function insertTestMeeting(opts: {
   date: Date
   title?: string
   durationSeconds?: number
+  firmId?: string
 }): Promise<string> {
   const id = TEST_PREFIX + 'mtg-' + createId().slice(0, 8)
   await db.insert(schema.meetings).values({
@@ -89,6 +110,7 @@ async function insertTestMeeting(opts: {
     date: opts.date,
     durationSeconds: opts.durationSeconds ?? 1800,
     status: 'completed',
+    firmId: opts.firmId ?? CURRENT_FIRM_ID,
   })
   cleanup.track(schema.meetings, schema.meetings.id, id)
   await db.insert(schema.meetingCompanyLinks).values({
@@ -105,6 +127,7 @@ async function insertTestContact(opts: {
   companyId: string
   fullName: string
   title?: string
+  firmId?: string
 }): Promise<string> {
   const id = TEST_PREFIX + 'ct-' + createId().slice(0, 8)
   await db.insert(schema.contacts).values({
@@ -114,18 +137,19 @@ async function insertTestContact(opts: {
     normalizedName: opts.fullName.toLowerCase(),
     primaryCompanyId: opts.companyId,
     title: opts.title ?? null,
+    firmId: opts.firmId ?? CURRENT_FIRM_ID,
   })
   cleanup.track(schema.contacts, schema.contacts.id, id)
   return id
 }
 
-async function mintJwt(userId: string): Promise<string> {
+async function mintJwt(userId: string, firmId: string = CURRENT_FIRM_ID): Promise<string> {
   return signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'session-' + userId,
     device: TEST_PREFIX + 'device',
     scope: ['user'],
-    firm_id: TEST_PREFIX + 'firm',
+    firm_id: firmId,
     role: 'member',
   })
 }
@@ -268,12 +292,22 @@ describe('GET /companies', () => {
     expect(touchedPos).toBeLessThan(untouchedPos)
   })
 
-  test('user isolation: caller A cannot see caller B companies', async () => {
+  test('firm isolation: caller cannot see another FIRM companies, but sees same-firm teammate companies', async () => {
+    // WS1 widened company visibility from user to firm — and companies are
+    // FULLY firm-shared (no is_private opt-out). So a teammate's company in the
+    // same firm IS visible; only a company owned by a DIFFERENT firm stays hidden.
+    const otherFirm = await insertFirm()
     const userA = await insertTestUser()
-    const userB = await insertTestUser()
+    const teammate = await insertTestUser() // same CURRENT_FIRM_ID
+    const userB = await insertTestUser(otherFirm)
 
     const coA = await insertTestCompany({ userId: userA, name: 'Acme A ' + TEST_PREFIX })
-    const coB = await insertTestCompany({ userId: userB, name: 'Acme B ' + TEST_PREFIX })
+    const coTeam = await insertTestCompany({ userId: teammate, name: 'Acme Team ' + TEST_PREFIX })
+    const coB = await insertTestCompany({
+      userId: userB,
+      name: 'Acme B ' + TEST_PREFIX,
+      firmId: otherFirm,
+    })
 
     const jwtA = await mintJwt(userA)
     const res = await app.inject({
@@ -286,6 +320,7 @@ describe('GET /companies', () => {
     const body = res.json() as { companies: Array<{ id: string }> }
     const ids = body.companies.map((c) => c.id)
     expect(ids).toContain(coA)
+    expect(ids).toContain(coTeam)
     expect(ids).not.toContain(coB)
   })
 
@@ -436,23 +471,41 @@ describe('GET /companies/:id', () => {
     expect(body.people[0]?.fullName).toBe('Alice Founder')
   })
 
-  test('404 when company belongs to a different user', async () => {
-    const owner = await insertTestUser()
-    const intruder = await insertTestUser()
-    const coId = await insertTestCompany({
+  test('404 when company belongs to a different FIRM; 200 for a same-firm teammate company', async () => {
+    // Companies are fully firm-shared: an intruder from another firm gets 404,
+    // but a same-firm teammate's company is visible (200).
+    const otherFirm = await insertFirm()
+    const owner = await insertTestUser(otherFirm)
+    const intruder = await insertTestUser() // CURRENT_FIRM_ID
+    const otherFirmCoId = await insertTestCompany({
       userId: owner,
-      name: 'Private Co ' + TEST_PREFIX,
+      name: 'Other-Firm Co ' + TEST_PREFIX,
+      firmId: otherFirm,
     })
 
     const intruderJwt = await mintJwt(intruder)
     const res = await app.inject({
       method: 'GET',
-      url: `/companies/${coId}`,
+      url: `/companies/${otherFirmCoId}`,
       headers: { authorization: `Bearer ${intruderJwt}` },
     })
 
     expect(res.statusCode).toBe(404)
     expect(res.json()).toMatchObject({ error: { code: 'COMPANY_NOT_FOUND' } })
+
+    // Same-firm teammate company → visible.
+    const teammate = await insertTestUser() // CURRENT_FIRM_ID
+    const teammateCoId = await insertTestCompany({
+      userId: teammate,
+      name: 'Teammate Co ' + TEST_PREFIX,
+    })
+    const teammateRes = await app.inject({
+      method: 'GET',
+      url: `/companies/${teammateCoId}`,
+      headers: { authorization: `Bearer ${intruderJwt}` },
+    })
+    expect(teammateRes.statusCode).toBe(200)
+    expect((teammateRes.json() as { id: string }).id).toBe(teammateCoId)
   })
 
   test('404 for non-existent id', async () => {
@@ -487,6 +540,7 @@ describe('GET /companies/:id — guarded passthrough', () => {
       canonicalName: 'Amma Test ' + TEST_PREFIX,
       normalizedName: ('amma test ' + TEST_PREFIX).toLowerCase(),
       status: 'active',
+      firmId: CURRENT_FIRM_ID,
       industry: 'AI Infra, Dev Tools',
       portfolioFund: 'fund_iv',
       investmentSize: '500000',
