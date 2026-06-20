@@ -10,6 +10,7 @@ import type { GatewayEnv } from '../env'
 import { insertImpromptuMeeting } from '../recording/insert-impromptu-meeting'
 import { isUniqueViolation } from '../pg-errors'
 import { validateClientLamport } from '../sync/validate-lamport'
+import { entityVisibilityFilter } from '../sync/visibility'
 import Anthropic from '@anthropic-ai/sdk'
 import { resolveAnthropicKey, toGatewayErrorIfAnthropic } from '../llm/resolve-key'
 import { resolveUserModel } from '../llm/resolve-user-model'
@@ -444,7 +445,7 @@ export async function registerMeetingRoutes(
         .from(schema.meetings)
         .where(
           and(
-            eq(schema.meetings.userId, user.sub),
+            entityVisibilityFilter('meetings', user), // firm-visible (was user_id-only)
             sql`${schema.meetings.calendarEventId} IS NULL`,
             sql`${schema.meetings.status} NOT IN ('error', 'empty')`,
             sql`${schema.meetings.date} >= now() - (${days} || ' days')::interval`,
@@ -476,7 +477,7 @@ export async function registerMeetingRoutes(
       const { id } = req.params
 
       const meeting = await db.query.meetings.findFirst({
-        where: and(eq(schema.meetings.id, id), eq(schema.meetings.userId, user.sub)),
+        where: and(eq(schema.meetings.id, id), entityVisibilityFilter('meetings', user)),
       })
       if (!meeting) {
         throw new GatewayError({

@@ -9,6 +9,7 @@ import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
+import { companyVisibilityFilter } from '../sync/visibility'
 import { sanitizeCompanyRow } from '../shared/sanitize-row'
 
 /** Normalized canonical name — lowercase + accents stripped + whitespace
@@ -138,7 +139,8 @@ export async function registerCompanyRoutes(
 
       // Main query: companies filtered by user + optional name match, joined
       // to the subquery for last-touch + count.
-      const whereClauses = [eq(schema.orgCompanies.userId, user.sub)]
+      // Companies are fully firm-shared (no is_private) — firm-scope, not user.
+      const whereClauses = [companyVisibilityFilter(user)]
       if (q) whereClauses.push(ilike(schema.orgCompanies.canonicalName, `%${q}%`))
 
       const rows = await db
@@ -215,7 +217,7 @@ export async function registerCompanyRoutes(
       const { id } = req.params
 
       const company = await db.query.orgCompanies.findFirst({
-        where: and(eq(schema.orgCompanies.id, id), eq(schema.orgCompanies.userId, user.sub)),
+        where: and(eq(schema.orgCompanies.id, id), companyVisibilityFilter(user)),
       })
       if (!company) {
         throw new GatewayError({

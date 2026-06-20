@@ -144,14 +144,14 @@ export async function registerContactRoutes(
             SELECT mscl.contact_id AS contact_id, max(m.date) AS last_at
             FROM meeting_speaker_contact_links mscl
             JOIN meetings m ON m.id = mscl.meeting_id
-            WHERE m.user_id = ${user.sub}
+            WHERE m.firm_id = ${user.firm_id} AND (m.user_id = ${user.sub} OR m.is_private = false)
             GROUP BY mscl.contact_id
             UNION ALL
             SELECT ce.contact_id AS contact_id, max(m.date) AS last_at
             FROM meetings m
             CROSS JOIN LATERAL jsonb_array_elements_text(m.attendee_emails) AS ae(email)
             JOIN contact_emails ce ON lower(ce.email) = lower(ae.email)
-            WHERE m.user_id = ${user.sub}
+            WHERE m.firm_id = ${user.firm_id} AND (m.user_id = ${user.sub} OR m.is_private = false)
             GROUP BY ce.contact_id
           ) s GROUP BY contact_id
         )
@@ -164,7 +164,7 @@ export async function registerContactRoutes(
         FROM contacts c
         LEFT JOIN org_companies oc ON c.primary_company_id = oc.id
         LEFT JOIN lt ON lt.contact_id = c.id
-        WHERE c.user_id = ${user.sub} ${qCond}
+        WHERE c.firm_id = ${user.firm_id} AND (c.user_id = ${user.sub} OR c.is_private = false) ${qCond}
         ORDER BY lt.last_at DESC NULLS LAST, c.full_name ASC
         LIMIT ${limit} OFFSET ${offset}
       `)

@@ -5,6 +5,11 @@ import { and, desc, eq, ilike, or, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import type { GatewayEnv } from '../env'
+import {
+  entityVisibilityFilter,
+  companyVisibilityFilter,
+  noteVisibilityFilter,
+} from '../sync/visibility'
 
 // =============================================================================
 // /search — universal search across companies, contacts, meetings, notes.
@@ -104,7 +109,7 @@ export async function registerSearchRoutes(
       // -------- Companies: ilike on canonical_name. --------
       const companiesPromise = (async () => {
         const where = and(
-          eq(schema.orgCompanies.userId, user.sub),
+          companyVisibilityFilter(user),
           ilike(schema.orgCompanies.canonicalName, `%${q}%`),
         )
         const [items, countRow] = await Promise.all([
@@ -131,7 +136,7 @@ export async function registerSearchRoutes(
       // -------- Contacts: ilike on full_name OR email. --------
       const contactsPromise = (async () => {
         const where = and(
-          eq(schema.contacts.userId, user.sub),
+          entityVisibilityFilter('contacts', user),
           or(
             ilike(schema.contacts.fullName, `%${q}%`),
             ilike(schema.contacts.email, `%${q}%`),
@@ -166,7 +171,7 @@ export async function registerSearchRoutes(
       // -------- Meetings: ilike on title. --------
       const meetingsPromise = (async () => {
         const where = and(
-          eq(schema.meetings.userId, user.sub),
+          entityVisibilityFilter('meetings', user),
           ilike(schema.meetings.title, `%${q}%`),
         )
         const [rows, countRow] = await Promise.all([
@@ -199,8 +204,10 @@ export async function registerSearchRoutes(
 
       // -------- Notes: FTS via the GIN expression index. --------
       const notesPromise = (async () => {
+        // noteVisibilityFilter needs users.firm_id → the queries below INNER JOIN
+        // users on notes.user_id.
         const where = and(
-          eq(schema.notes.userId, user.sub),
+          noteVisibilityFilter(user),
           sql`to_tsvector('english', coalesce(${schema.notes.title}, '') || ' ' || substring(${schema.notes.content} from 1 for 500000)) @@ plainto_tsquery('english', ${q})`,
         )
         const [rows, countRow] = await Promise.all([
@@ -214,6 +221,7 @@ export async function registerSearchRoutes(
               updatedAt: schema.notes.updatedAt,
             })
             .from(schema.notes)
+            .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
             .leftJoin(
               schema.orgCompanies,
               eq(schema.notes.companyId, schema.orgCompanies.id),
@@ -228,6 +236,7 @@ export async function registerSearchRoutes(
           db
             .select({ n: sql<number>`count(*)::int` })
             .from(schema.notes)
+            .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
             .where(where),
         ])
         return {
