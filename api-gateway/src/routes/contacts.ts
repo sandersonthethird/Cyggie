@@ -8,6 +8,7 @@ import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
+import { entityVisibilityFilter } from '../sync/visibility'
 import { sanitizeContactRow } from '../shared/sanitize-row'
 
 /** Normalized name for dedup (matches desktop's contact.repo.ts pattern):
@@ -105,7 +106,9 @@ export async function registerContactRoutes(
       const db = getDb(env.GATEWAY_DATABASE_URL)
       const { q, limit, offset } = req.query
 
-      const whereClauses = [eq(schema.contacts.userId, user.sub)]
+      // Firm-shared + owner-aware privacy (was user_id-only) — teammates' shared
+      // contacts are now visible; private contacts stay owner-only.
+      const whereClauses = [entityVisibilityFilter('contacts', user)]
       if (q) {
         whereClauses.push(
           or(
@@ -229,7 +232,7 @@ export async function registerContactRoutes(
       // Full contact row (for guarded passthrough) + the joined company
       // name/domain via a small lookup. Mirrors the companies/:id pattern.
       const contact = await db.query.contacts.findFirst({
-        where: and(eq(schema.contacts.id, id), eq(schema.contacts.userId, user.sub)),
+        where: and(eq(schema.contacts.id, id), entityVisibilityFilter('contacts', user)),
       })
       if (!contact) {
         throw new GatewayError({
@@ -266,7 +269,7 @@ export async function registerContactRoutes(
         .where(
           and(
             eq(schema.meetingSpeakerContactLinks.contactId, id),
-            eq(schema.meetings.userId, user.sub),
+            entityVisibilityFilter('meetings', user), // firm-visible meetings, not just own
           ),
         )
         .orderBy(desc(schema.meetings.date))
