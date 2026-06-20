@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'vitest'
+import { afterAll, beforeEach, describe, expect, test } from 'vitest'
 import { config as loadDotenv } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,18 +30,36 @@ const cleanup = makeDbCleanup(db)
 // Kept for in-test result filtering only — cleanup is routed through the helper.
 const createdContactIds: string[] = []
 
+// WS1 — contacts are firm-shared (firm_id + is_private opt-out) and the read
+// paths filter by firm_id. Give each test its OWN firm (beforeEach) so
+// firm-scoped reads stay test-isolated; all users created within a test share
+// that firm, so same-firm-sharing assertions work. Mirrors sync-pull.test.ts.
+let CURRENT_FIRM_ID = TEST_PREFIX + 'firm'
+
+async function insertFirm(): Promise<string> {
+  const id = TEST_PREFIX + 'firm-' + createId().slice(0, 8)
+  await db.insert(schema.firms).values({ id, name: 'Contacts Test Firm', slug: id })
+  cleanup.track(schema.firms, schema.firms.id, id)
+  return id
+}
+
+beforeEach(async () => {
+  CURRENT_FIRM_ID = await insertFirm()
+})
+
 afterAll(async () => {
   await cleanup.cleanup()
   await app.close()
 })
 
-async function insertTestUser(): Promise<string> {
+async function insertTestUser(firmId: string = CURRENT_FIRM_ID): Promise<string> {
   const id = TEST_PREFIX + createId().slice(0, 8)
   await db.insert(schema.users).values({
     id,
     googleSub: 'sub-' + id,
     email: `${id}@example.com`,
     displayName: id,
+    firmId,
   })
   cleanup.track(schema.users, schema.users.id, id)
   return id
@@ -51,6 +69,7 @@ async function insertTestCompany(opts: {
   userId: string
   name: string
   primaryDomain?: string | null
+  firmId?: string
 }): Promise<string> {
   const id = TEST_PREFIX + 'co-' + createId().slice(0, 8)
   await db.insert(schema.orgCompanies).values({
@@ -60,6 +79,7 @@ async function insertTestCompany(opts: {
     normalizedName: opts.name.toLowerCase(),
     primaryDomain: opts.primaryDomain ?? null,
     status: 'active',
+    firmId: opts.firmId ?? CURRENT_FIRM_ID,
   })
   cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   return id
@@ -72,6 +92,8 @@ async function insertTestContact(opts: {
   title?: string
   companyId?: string
   contactType?: string
+  firmId?: string
+  isPrivate?: boolean
 }): Promise<string> {
   const id = TEST_PREFIX + 'ct-' + createId().slice(0, 8)
   await db.insert(schema.contacts).values({
@@ -83,6 +105,8 @@ async function insertTestContact(opts: {
     title: opts.title ?? null,
     primaryCompanyId: opts.companyId ?? null,
     contactType: opts.contactType ?? null,
+    firmId: opts.firmId ?? CURRENT_FIRM_ID,
+    isPrivate: opts.isPrivate ?? false,
   })
   cleanup.track(schema.contacts, schema.contacts.id, id)
   createdContactIds.push(id)
@@ -94,6 +118,8 @@ async function insertMeetingWithSpeakerLink(opts: {
   contactId: string
   date: Date
   title?: string
+  firmId?: string
+  isPrivate?: boolean
 }): Promise<string> {
   const meetingId = TEST_PREFIX + 'mtg-' + createId().slice(0, 8)
   await db.insert(schema.meetings).values({
@@ -103,6 +129,8 @@ async function insertMeetingWithSpeakerLink(opts: {
     date: opts.date,
     durationSeconds: 1800,
     status: 'completed',
+    firmId: opts.firmId ?? CURRENT_FIRM_ID,
+    isPrivate: opts.isPrivate ?? false,
   })
   cleanup.track(schema.meetings, schema.meetings.id, meetingId)
   // Tie the meeting to the contact via speaker_contact_links.
@@ -115,13 +143,13 @@ async function insertMeetingWithSpeakerLink(opts: {
   return meetingId
 }
 
-async function mintJwt(userId: string): Promise<string> {
+async function mintJwt(userId: string, firmId: string = CURRENT_FIRM_ID): Promise<string> {
   return signAccessToken(env.JWT_SIGNING_SECRET, {
     sub: userId,
     sid: TEST_PREFIX + 'session-' + userId,
     device: TEST_PREFIX + 'device',
     scope: ['user'],
-    firm_id: TEST_PREFIX + 'firm',
+    firm_id: firmId,
     role: 'member',
   })
 }
@@ -203,12 +231,20 @@ describe('GET /contacts', () => {
     expect(ours.find((c) => c.id === untouchedId)?.primaryCompanyDomain).toBeNull()
   })
 
-  test('user isolation: caller cannot see another user contacts', async () => {
+  test('firm isolation: caller cannot see another FIRM contacts', async () => {
+    // WS1 widened visibility from user to firm — so the isolation boundary is
+    // now the firm, not the user. A contact owned by a user in a DIFFERENT firm
+    // must stay invisible.
+    const otherFirm = await insertFirm()
     const userA = await insertTestUser()
-    const userB = await insertTestUser()
+    const userB = await insertTestUser(otherFirm)
 
     const ctA = await insertTestContact({ userId: userA, fullName: 'A Person ' + TEST_PREFIX })
-    const ctB = await insertTestContact({ userId: userB, fullName: 'B Person ' + TEST_PREFIX })
+    const ctB = await insertTestContact({
+      userId: userB,
+      fullName: 'B Person ' + TEST_PREFIX,
+      firmId: otherFirm,
+    })
 
     const jwtA = await mintJwt(userA)
     const res = await app.inject({
@@ -222,6 +258,34 @@ describe('GET /contacts', () => {
     const ids = body.contacts.map((c) => c.id)
     expect(ids).toContain(ctA)
     expect(ids).not.toContain(ctB)
+  })
+
+  test('firm-shared: caller sees a teammate non-private contact but NOT a private one', async () => {
+    // The core WS1 behavior: same-firm contacts are shared unless is_private.
+    const me = await insertTestUser()
+    const teammate = await insertTestUser() // same CURRENT_FIRM_ID
+    const shared = await insertTestContact({
+      userId: teammate,
+      fullName: 'Shared Teammate Contact ' + TEST_PREFIX,
+    })
+    const priv = await insertTestContact({
+      userId: teammate,
+      fullName: 'Private Teammate Contact ' + TEST_PREFIX,
+      isPrivate: true,
+    })
+
+    const jwt = await mintJwt(me)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/contacts?limit=100',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { contacts: Array<{ id: string }> }
+    const ids = body.contacts.map((c) => c.id)
+    expect(ids).toContain(shared)
+    expect(ids).not.toContain(priv)
   })
 
   test('?q= matches full_name OR email', async () => {
@@ -331,12 +395,14 @@ describe('GET /contacts/:id', () => {
     expect(body.recentMeetings[1]?.id).toBe(m1)
   })
 
-  test('404 when contact belongs to a different user', async () => {
-    const owner = await insertTestUser()
+  test('404 when contact belongs to a different FIRM', async () => {
+    const otherFirm = await insertFirm()
+    const owner = await insertTestUser(otherFirm)
     const intruder = await insertTestUser()
     const contactId = await insertTestContact({
       userId: owner,
-      fullName: 'Private Person ' + TEST_PREFIX,
+      fullName: 'Other-Firm Person ' + TEST_PREFIX,
+      firmId: otherFirm,
     })
 
     const jwt = await mintJwt(intruder)
@@ -348,6 +414,37 @@ describe('GET /contacts/:id', () => {
 
     expect(res.statusCode).toBe(404)
     expect(res.json()).toMatchObject({ error: { code: 'CONTACT_NOT_FOUND' } })
+  })
+
+  test('200 for a teammate non-private contact; 404 when it is private', async () => {
+    const teammate = await insertTestUser()
+    const me = await insertTestUser() // same firm
+    const sharedId = await insertTestContact({
+      userId: teammate,
+      fullName: 'Shared Detail ' + TEST_PREFIX,
+    })
+    const privId = await insertTestContact({
+      userId: teammate,
+      fullName: 'Private Detail ' + TEST_PREFIX,
+      isPrivate: true,
+    })
+
+    const jwt = await mintJwt(me)
+    const sharedRes = await app.inject({
+      method: 'GET',
+      url: `/contacts/${sharedId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(sharedRes.statusCode).toBe(200)
+    expect((sharedRes.json() as { id: string }).id).toBe(sharedId)
+
+    const privRes = await app.inject({
+      method: 'GET',
+      url: `/contacts/${privId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(privRes.statusCode).toBe(404)
+    expect(privRes.json()).toMatchObject({ error: { code: 'CONTACT_NOT_FOUND' } })
   })
 
   test('404 for non-existent id', async () => {
@@ -378,6 +475,7 @@ describe('GET /contacts/:id — guarded passthrough', () => {
       userId,
       fullName: 'Iris Investor ' + TEST_PREFIX,
       normalizedName: ('iris investor ' + TEST_PREFIX).toLowerCase(),
+      firmId: CURRENT_FIRM_ID,
       contactType: 'investor',
       relationshipStrength: 'strong',
       fundSize: 50_000_000,
