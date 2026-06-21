@@ -163,6 +163,31 @@ describe('useNoteEditor', () => {
     })
   })
 
+  it('read-only (teammate) note: exposes readOnly + never auto-saves or deletes', async () => {
+    // A firm-shared note owned by a teammate lands read-only (stamped by main).
+    const note = makeNote({ readOnly: true, createdByUserId: 'teammate', title: 'Shared' })
+    vi.mocked(api.invoke).mockResolvedValueOnce(note) // NOTES_GET only
+
+    const { result } = renderHook(() => useNoteEditor('note-1'))
+    await waitFor(() => expect(result.current.loadState).toBe('loaded'))
+    expect(result.current.readOnly).toBe(true)
+
+    // Editing the title must NOT trigger a save (the note is read-only).
+    await act(async () => {
+      result.current.setTitleDraft('Hijacked Title')
+      await Promise.resolve()
+    })
+    expect(api.invoke).not.toHaveBeenCalledWith(
+      IPC_CHANNELS.NOTES_UPDATE,
+      expect.anything(),
+      expect.anything(),
+    )
+
+    // deleteNote is a no-op for read-only notes.
+    await act(async () => { await result.current.deleteNote() })
+    expect(api.invoke).not.toHaveBeenCalledWith(IPC_CHANNELS.NOTES_DELETE, expect.anything())
+  })
+
   it('calls onNoteUpdated callback after successful NOTES_UPDATE', async () => {
     const note = makeNote()
     const updatedNote = makeNote({ title: 'Updated' })

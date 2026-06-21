@@ -84,6 +84,24 @@
   white-space: nowrap;
 }
 
+/* Read-only banner for firm-shared notes owned by a teammate. */
+.readOnlyBadge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #5B6675);
+  background: var(--color-surface-2, rgba(120, 130, 150, 0.10));
+  border: 1px solid var(--color-border, rgba(120, 130, 150, 0.20));
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: default;
+}
+
 .popoutBtn {
   background: none;
   border: none;

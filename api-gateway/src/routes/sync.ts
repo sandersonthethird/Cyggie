@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
-import { sql } from 'drizzle-orm'
+import { sql, eq, getTableColumns } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { OWNED_TABLES_BY_NAME } from '@cyggie/db/sync/owned-tables'
 import { decodeRowId } from '@cyggie/db/sync/encode-row-id'
@@ -15,7 +15,7 @@ import {
 import { getDb, getPool } from '../db'
 import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
-import { entityVisibilityFilter } from '../sync/visibility'
+import { entityVisibilityFilter, noteVisibilityFilter } from '../sync/visibility'
 
 // L2 — pull pagination. Cap each owned table to this many rows per page so a
 // firm-scoped cold start (since=0) can't return the whole firm dataset in one
@@ -802,11 +802,17 @@ export async function registerSyncRoutes(
                 AND CAST(${schema.meetings.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.meetings.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
+        // notes are FIRM-SHARED (desktop parity with mobile): a teammate's
+        // tagged, non-private notes pull read-only alongside the caller's own.
+        // Unlike contacts/meetings (denormalized firm_id), notes gate on the
+        // OWNER's users.firm_id, so noteVisibilityFilter needs the users JOIN;
+        // getTableColumns keeps the SELECT flat (same row shape as before).
         db
-          .select()
+          .select(getTableColumns(schema.notes))
           .from(schema.notes)
+          .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
           .where(
-            sql`${schema.notes.userId} = ${user.sub}
+            sql`${noteVisibilityFilter(user)}
                 AND CAST(${schema.notes.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.notes.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),

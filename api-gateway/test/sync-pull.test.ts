@@ -552,3 +552,111 @@ describe('GET /sync/pull', () => {
     expect(row?.transcriptSegments).toEqual(sampleSegments)
   })
 })
+
+// Desktop parity for firm-shared notes: /sync/pull now returns a teammate's
+// tagged, non-private notes (read-only on the desktop) — closing the asymmetry
+// where mobile saw the firm's notes but desktop saw only the caller's own.
+describe('GET /sync/pull — firm-shared notes', () => {
+  async function insertCompanyFor(userId: string): Promise<string> {
+    const id = TEST_PREFIX + 'co-' + createId().slice(0, 8)
+    await db.insert(schema.orgCompanies).values({
+      id,
+      userId,
+      firmId: TEST_FIRM_ID,
+      canonicalName: 'NoteCo ' + id,
+      normalizedName: 'noteco-' + id,
+      lamport: '1',
+      createdByUserId: userId,
+    })
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
+    return id
+  }
+
+  async function insertNote(opts: {
+    userId: string
+    lamport: string
+    companyId?: string | null
+    isPrivate?: boolean
+  }): Promise<string> {
+    const id = TEST_PREFIX + 'nt-' + createId().slice(0, 8)
+    await db.insert(schema.notes).values({
+      id,
+      userId: opts.userId,
+      content: `note ${id}`,
+      companyId: opts.companyId ?? null,
+      isPrivate: opts.isPrivate ?? false,
+      lamport: opts.lamport,
+      createdByUserId: opts.userId,
+    })
+    cleanup.track(schema.notes, schema.notes.id, id)
+    return id
+  }
+
+  async function pulledNoteIds(jwt: string): Promise<string[]> {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    return (res.json() as { notes: Array<{ id: string }> }).notes.map((n) => n.id)
+  }
+
+  test('teammate pulls a shared (tagged, non-private) note but NOT private/untagged', async () => {
+    const owner = await setupUser()
+    const teammate = await setupUser() // same TEST_FIRM_ID
+    const companyId = await insertCompanyFor(owner.userId)
+
+    const shared = await insertNote({ userId: owner.userId, lamport: '30', companyId })
+    const priv = await insertNote({
+      userId: owner.userId,
+      lamport: '31',
+      companyId,
+      isPrivate: true,
+    })
+    const untagged = await insertNote({ userId: owner.userId, lamport: '32' })
+
+    const teammateIds = await pulledNoteIds(teammate.jwt)
+    expect(teammateIds).toContain(shared)
+    expect(teammateIds).not.toContain(priv)
+    expect(teammateIds).not.toContain(untagged)
+
+    // The owner still pulls all three of their own.
+    const ownerIds = await pulledNoteIds(owner.jwt)
+    expect(ownerIds).toEqual(expect.arrayContaining([shared, priv, untagged]))
+  })
+
+  test('a different-firm user does not pull the firm1 shared note', async () => {
+    const owner = await setupUser()
+    const companyId = await insertCompanyFor(owner.userId)
+    const shared = await insertNote({ userId: owner.userId, lamport: '40', companyId })
+
+    // A user in a brand-new firm.
+    const otherFirmId = TEST_PREFIX + 'firm2-' + createId().slice(0, 8)
+    await db.insert(schema.firms).values({
+      id: otherFirmId,
+      name: 'Other Firm',
+      slug: otherFirmId,
+    })
+    cleanup.track(schema.firms, schema.firms.id, otherFirmId)
+    const outsiderId = TEST_PREFIX + 'u2-' + createId().slice(0, 8)
+    await db.insert(schema.users).values({
+      id: outsiderId,
+      googleSub: 'sub-' + outsiderId,
+      email: `${outsiderId}@example.com`,
+      firmId: otherFirmId,
+    })
+    cleanup.track(schema.users, schema.users.id, outsiderId)
+    const outsiderJwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
+      sub: outsiderId,
+      sid: TEST_PREFIX + 'sess-' + outsiderId,
+      device: 'test-device',
+      scope: ['user'],
+      firm_id: otherFirmId,
+      role: 'member',
+    })
+
+    const ids = await pulledNoteIds(outsiderJwt)
+    expect(ids).not.toContain(shared)
+  })
+})
