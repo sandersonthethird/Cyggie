@@ -3204,11 +3204,14 @@ tests: `api-gateway/test/mcp-notes-firm-shared.test.ts` (+ unit coverage of the
 boundary in `mcp-unit.test.ts`). No MCP tool name/schema/error-code changed —
 output-additive only.
 
-**Follow-up (separate workstream):** the `cyggie_search` MCP tool still scopes
-**companies / contacts / meetings** to `user_id = me` (only its notes path is
-firm-scoped here). WS1 made the REST search firm-scoped; bringing the other
-three MCP-search entity types to firm scope (with their own leak tests) is a
-clean next slice — "MCP read paths → firm scope (parity with REST WS1)".
+**Follow-up — ✅ SHIPPED:** `cyggie_search`'s companies / contacts / meetings
+buckets are now firm-scoped too (parity with REST WS1): companies fully
+firm-shared via `companyVisibilityFilter`, contacts/meetings via
+`entityVisibilityFilter` (shared unless `is_private`), null firm → owner-only.
+Leak tests in `api-gateway/test/mcp-search-firm-scope.test.ts`. The MCP
+`cyggie_get_company` / `_get_contact` / `_get_meeting` single-entity tools were
+NOT touched and remain owner-only — a small further slice if firm-wide
+single-entity lookups are wanted.
 
 **What (original):** Route the AI/RAG context builder and the `cyggie_get_notes`
 MCP tool through `noteVisibilityFilter` so they surface firm-shared
