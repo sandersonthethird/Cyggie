@@ -138,6 +138,9 @@ import { runOrgCompaniesFieldLwwMigration } from '@cyggie/db/sqlite/migrations/1
 import { runTasksFieldLwwMigration } from '@cyggie/db/sqlite/migrations/125-tasks-field-lww'
 import { runTombstonesMigration } from '@cyggie/db/sqlite/migrations/126-tombstones'
 import { runContactsMeetingsFirmSharedMigration } from '@cyggie/db/sqlite/migrations/129-contacts-meetings-firm-shared'
+// Notes soft-delete (deleted_at / deleted_by_user_id). Required now that the
+// live note reads filter deleted_at IS NULL.
+import { runNotesSoftDeleteMigration } from '@cyggie/db/sqlite/migrations/130-notes-soft-delete'
 
 type MigrationFn = (db: Database.Database) => void
 
@@ -250,6 +253,7 @@ const ALL_MIGRATIONS: MigrationFn[] = [
   // is_private on notes (per-note firm-visibility override). Idempotent ALTER;
   // safe to run after the unified notes table exists.
   runNotesIsPrivateMigration,
+  runNotesSoftDeleteMigration,
   runOrgCompaniesFieldLwwMigration,
   runTasksFieldLwwMigration,
   runTombstonesMigration,

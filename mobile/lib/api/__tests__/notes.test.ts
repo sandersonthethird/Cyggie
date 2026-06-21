@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // notes.ts transitively imports the api client (expo/RN modules). Mock the
 // client so we can assert the PATCH path + body shape without a real fetch.
 const apiPatchMock = vi.fn()
+const apiPostMock = vi.fn()
+const apiDeleteMock = vi.fn()
 vi.mock('../client', () => ({
-  api: { get: vi.fn(), post: vi.fn(), patch: apiPatchMock, delete: vi.fn() },
+  api: { get: vi.fn(), post: apiPostMock, patch: apiPatchMock, delete: apiDeleteMock },
   ApiError: class ApiError extends Error {},
 }))
 
-const { updateNote } = await import('../notes')
+const { updateNote, createNote, deleteNote } = await import('../notes')
 
 describe('api/notes updateNote', () => {
   beforeEach(() => {
@@ -51,10 +53,63 @@ describe('api/notes updateNote', () => {
     expect(result).toMatchObject({ id: 'n1', lamport: '123', content: 'body' })
   })
 
+  it('forwards company/contact tags in the PATCH body', async () => {
+    await updateNote('n1', { companyId: 'c1', contactId: null }, '125')
+    expect(apiPatchMock).toHaveBeenCalledWith('/notes/n1', {
+      companyId: 'c1',
+      contactId: null,
+      lamport: '125',
+    })
+  })
+
   it('propagates a 409 ApiError so the editor can reconcile', async () => {
     const { ApiError } = await import('../client')
     const conflict = new ApiError({ status: 409, code: 'HTTP_409', message: 'conflict' })
     apiPatchMock.mockRejectedValueOnce(conflict)
     await expect(updateNote('n1', { content: 'x' }, '1')).rejects.toBe(conflict)
+  })
+})
+
+describe('api/notes createNote', () => {
+  beforeEach(() => {
+    apiPostMock.mockReset()
+    apiPostMock.mockResolvedValue({ id: 'new1', title: null, content: '' })
+  })
+
+  it('POSTs /notes with the input + lamport merged into the body', async () => {
+    await createNote({ content: '', title: null, folderPath: 'F' }, '900')
+    expect(apiPostMock).toHaveBeenCalledWith('/notes', {
+      content: '',
+      title: null,
+      folderPath: 'F',
+      lamport: '900',
+    })
+  })
+
+  it('returns the created NoteDetail', async () => {
+    const note = await createNote({ content: 'x' }, '901')
+    expect(note).toMatchObject({ id: 'new1' })
+  })
+})
+
+describe('api/notes deleteNote', () => {
+  beforeEach(() => {
+    apiDeleteMock.mockReset()
+    apiDeleteMock.mockResolvedValue({ ok: true })
+  })
+
+  it('soft delete (default) hits DELETE /notes/:id with no query', async () => {
+    await deleteNote('n1')
+    expect(apiDeleteMock).toHaveBeenCalledWith('/notes/n1')
+  })
+
+  it('hard delete appends ?hard=true (orphan cleanup)', async () => {
+    await deleteNote('n1', { hard: true })
+    expect(apiDeleteMock).toHaveBeenCalledWith('/notes/n1?hard=true')
+  })
+
+  it('url-encodes the note id', async () => {
+    await deleteNote('a/b')
+    expect(apiDeleteMock.mock.calls[0]?.[0]).toBe('/notes/a%2Fb')
   })
 })

@@ -16,6 +16,13 @@ export interface Note {
   updatedByUserId: string | null
   createdAt: string
   updatedAt: string
+  // Soft-delete (cross-device delete replication). Set by softDeleteNote (an
+  // UPDATE that syncs like an edit); all reads filter deleted_at IS NULL, so a
+  // Note handed to the UI always has deletedAt == null. Carried on the type so
+  // the soft-delete's outbox payload reaches the gateway. Hard delete (orphan/
+  // admin) doesn't use these.
+  deletedAt: string | null
+  deletedByUserId: string | null
   folderPath: string | null
   importSource: string | null
   // Denormalized from JOIN, only present on list queries

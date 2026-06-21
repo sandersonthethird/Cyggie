@@ -309,6 +309,13 @@
       "when": 1781796798748,
       "tag": "0043_cool_micromacro",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1782045771070,
+      "tag": "0044_careful_gambit",
+      "breakpoints": true
     }
   ]
 }

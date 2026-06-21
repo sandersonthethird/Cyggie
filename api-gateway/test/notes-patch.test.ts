@@ -95,10 +95,11 @@ describe('PATCH /notes/:id', () => {
     })
 
     expect(res.statusCode).toBe(200)
-    const body = res.json() as { title: string; content: string; lamport: string }
+    // PATCH now returns the full NoteDetail (decision 4A) — no `lamport` field;
+    // the lamport advance is asserted on the DB row below.
+    const body = res.json() as { title: string; content: string }
     expect(body.title).toBe('new title')
     expect(body.content).toBe('new body')
-    expect(body.lamport).toBe('6')
 
     const row = await db.query.notes.findFirst({ where: eq(schema.notes.id, noteId) })
     expect(row?.content).toBe('new body')

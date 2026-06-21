@@ -68,6 +68,17 @@ export const notes = pgTable(
     // Audit + sync
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    // Soft-delete (cross-device delete replication). A user "delete" becomes an
+    // UPDATE setting these two + bumping lamport — it then rides the normal
+    // owned-table push/pull like any edit, so the deletion replicates to every
+    // device (a hard delete can't be pulled). Every READ surface filters
+    // `deleted_at IS NULL`. Whole-row LWW (notes are not field-LWW), so a
+    // concurrent higher-lamport edit can resurrect a deleted note — accepted
+    // (owner-only edits, sub-second window). Hard purge / recycle bin is a
+    // separate, deferred path (needs firm_id denormalization). Mirrors
+    // org_companies / tasks (see companies.ts).
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedByUserId: text('deleted_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     lamport: text('lamport').notNull().default('0'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

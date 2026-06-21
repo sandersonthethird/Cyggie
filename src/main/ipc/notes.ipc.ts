@@ -253,12 +253,13 @@ export function registerNotesHandlers(): void {
     if (existing && isForeignNote(existing, userId)) {
       throw new Error('This note is owned by a teammate and is read-only.')
     }
-    const deleted = notesRepo.deleteNote(noteId)
+    // Soft delete (sets deleted_at + bumps lamport) so the deletion replicates
+    // cross-device via the normal sync-pull. Asset cleanup is intentionally
+    // deferred — a soft-deleted note may be restored later (recycle bin TODO);
+    // the hard-purge sweep will reclaim assets when it lands.
+    const deleted = !!notesRepo.softDeleteNote(noteId, userId)
     if (deleted) {
       logAudit(userId, 'note', noteId, 'delete', null)
-      // Clean up extracted images for this note
-      const assetsDir = path.join(getStoragePath(), 'note-assets', noteId)
-      try { fs.rmSync(assetsDir, { recursive: true, force: true }) } catch { /* non-fatal */ }
     }
     return deleted
   })
