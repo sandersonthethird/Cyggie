@@ -55,6 +55,8 @@ interface UseNoteEditorResult {
   tagSuggestion: TagSuggestion | null
   dismissSuggestion: () => void
   deleteNote: () => Promise<void>
+  // True when the loaded note is owned by a teammate (firm-shared, read-only).
+  readOnly: boolean
 }
 
 export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNoteEditorResult {
@@ -67,6 +69,9 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
   const [tagSuggestion, setTagSuggestion] = useState<TagSuggestion | null>(null)
   const [suggestionDismissed, setSuggestionDismissed] = useState(false)
+
+  // Firm-shared notes from a teammate pull in read-only (stamped by main).
+  const readOnly = note?.readOnly === true
 
   const savedNoteRef = useRef<Note | null>(null)
   const justLoadedRef = useRef(false)
@@ -86,7 +91,7 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
         Image,
         ...TABLE_EXTENSIONS,
       ],
-      editable: loadState === 'loaded',  // hook's useEffect calls setEditable reactively
+      editable: loadState === 'loaded' && !readOnly,  // hook's useEffect calls setEditable reactively
       onUpdate: ({ editor: ed }) => {
         const mkd = ed.getMarkdown?.()
         const normalized = mkd ?? ed.getText()
@@ -134,6 +139,7 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
     const saved = savedNoteRef.current
     if (!saved) return
     if (loadState !== 'loaded') return
+    if (saved.readOnly) return  // never auto-save a teammate's read-only note
 
     const titleChanged = debouncedTitle !== (saved.title ?? '')
     const contentChanged = debouncedContent !== saved.content
@@ -188,6 +194,7 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
   const deleteNote = useCallback(async () => {
     const saved = savedNoteRef.current
     if (!saved) return
+    if (saved.readOnly) return  // read-only teammate note — not deletable locally
     await api.invoke(IPC_CHANNELS.NOTES_DELETE, saved.id)
     optsRef.current?.onNoteDeleted?.(saved.id)
   }, [])
@@ -197,6 +204,7 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
     return () => {
       const saved = savedNoteRef.current
       if (!saved) return
+      if (saved.readOnly) return  // never flush/delete a read-only teammate note
       const draftTitle = titleDraftRef.current
       const draftContent = contentDraftRef.current
       const hasDraft = draftTitle.trim().length > 0 || draftContent.trim().length > 0
@@ -239,5 +247,6 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
     tagSuggestion,
     dismissSuggestion,
     deleteNote,
+    readOnly,
   }
 }

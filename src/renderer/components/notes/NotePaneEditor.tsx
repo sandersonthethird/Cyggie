@@ -72,6 +72,7 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
     tagSuggestion,
     dismissSuggestion,
     deleteNote,
+    readOnly,
   } = useNoteEditor(noteId, { onNoteUpdated, onNoteDeleted })
 
   const [findOpen, setFindOpen] = useState(false)
@@ -215,7 +216,7 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
     <div className={styles.container}>
       {/* Header: title + meta row */}
       <div className={styles.header}>
-        {editingTitle ? (
+        {editingTitle && !readOnly ? (
           <input
             ref={titleRef}
             className={styles.titleInput}
@@ -229,11 +230,17 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
         ) : (
           <h2
             className={styles.title}
-            onClick={handleTitleClick}
-            title="Click to rename"
+            onClick={readOnly ? undefined : handleTitleClick}
+            title={readOnly ? undefined : 'Click to rename'}
           >
             {titleDraft || <span className={styles.titlePlaceholder}>Untitled</span>}
           </h2>
+        )}
+
+        {readOnly && (
+          <div className={styles.readOnlyBadge} title="This note is owned by a teammate and shared with your firm. You can read it but not edit it.">
+            🔗 Shared by a teammate · read-only
+          </div>
         )}
 
         {localNote && (
@@ -268,8 +275,9 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
             <div className={styles.folderPickerWrapper} ref={folderPickerRef}>
               <button
                 className={styles.folderPickerTrigger}
-                onClick={() => folderPickerOpen ? setFolderPickerOpen(false) : void openFolderPicker()}
-                title={localNote.folderPath ?? 'No folder assigned'}
+                onClick={readOnly ? undefined : () => folderPickerOpen ? setFolderPickerOpen(false) : void openFolderPicker()}
+                disabled={readOnly}
+                title={readOnly ? (localNote.folderPath ?? 'No folder') : (localNote.folderPath ?? 'No folder assigned')}
               >
                 {localNote.folderPath ? localNote.folderPath.split('/').pop() : 'No folder'}
               </button>
@@ -394,25 +402,27 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
         <span className={`${styles.saveStatus} ${saveStatus === 'error' ? styles.saveStatusError : ''}`}>
           {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'error' ? 'Save failed' : ''}
         </span>
-        <div className={styles.footerActions}>
-          <button
-            className={`${styles.pinBtn} ${isPinned ? styles.pinBtnActive : ''}`}
-            onClick={handlePinToggle}
-            title={isPinned ? 'Unpin note' : 'Pin note'}
-          >
-            {isPinned ? '📌' : '📍'}
-          </button>
-          <button
-            className={`${styles.pinBtn} ${isPrivate ? styles.pinBtnActive : ''}`}
-            onClick={handlePrivateToggle}
-            title={isPrivate ? 'Private — only you can see this. Click to share with your firm.' : 'Visible to your firm when tagged. Click to make private.'}
-          >
-            {isPrivate ? '🔒' : '🔓'}
-          </button>
-          <button className={styles.deleteBtn} onClick={handleDelete} title="Delete note">
-            🗑
-          </button>
-        </div>
+        {!readOnly && (
+          <div className={styles.footerActions}>
+            <button
+              className={`${styles.pinBtn} ${isPinned ? styles.pinBtnActive : ''}`}
+              onClick={handlePinToggle}
+              title={isPinned ? 'Unpin note' : 'Pin note'}
+            >
+              {isPinned ? '📌' : '📍'}
+            </button>
+            <button
+              className={`${styles.pinBtn} ${isPrivate ? styles.pinBtnActive : ''}`}
+              onClick={handlePrivateToggle}
+              title={isPrivate ? 'Private — only you can see this. Click to share with your firm.' : 'Visible to your firm when tagged. Click to make private.'}
+            >
+              {isPrivate ? '🔒' : '🔓'}
+            </button>
+            <button className={styles.deleteBtn} onClick={handleDelete} title="Delete note">
+              🗑
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -22,6 +22,10 @@ export interface Note {
   companyName?: string | null
   contactName?: string | null
   meetingTitle?: string | null
+  // Stamped by the main process (NOT stored): true when this note is owned by a
+  // teammate (firm-shared, pulled read-only) rather than the current user. The
+  // renderer disables editing; the gateway would reject a foreign write anyway.
+  readOnly?: boolean
 }
 
 export type NoteFilterView = 'all' | 'untagged' | 'tagged' | 'unfoldered'
