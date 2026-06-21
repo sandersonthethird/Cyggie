@@ -17,6 +17,8 @@ interface NoteRow {
   updated_by_user_id: string | null
   created_at: string
   updated_at: string
+  deleted_at: string | null
+  deleted_by_user_id: string | null
   folder_path: string | null
   import_source: string | null
   company_name?: string | null
@@ -39,6 +41,8 @@ function rowToNote(row: NoteRow): Note {
     updatedByUserId: row.updated_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    deletedAt: row.deleted_at ?? null,
+    deletedByUserId: row.deleted_by_user_id ?? null,
     folderPath: row.folder_path ?? null,
     importSource: row.import_source ?? null,
     companyName: row.company_name ?? null,
@@ -62,6 +66,8 @@ const BASE_SELECT = `
     n.updated_by_user_id,
     n.created_at,
     n.updated_at,
+    n.deleted_at,
+    n.deleted_by_user_id,
     n.folder_path,
     n.import_source,
     c.canonical_name AS company_name,
@@ -93,6 +99,7 @@ const DEDUP_FILTER = `
     OR n.id = (
       SELECT id FROM notes
       WHERE source_meeting_id = n.source_meeting_id
+        AND deleted_at IS NULL
       ORDER BY created_at ASC
       LIMIT 1
     )
@@ -110,6 +117,12 @@ const DEDUP_FILTER = `
 const CLAIMED_MEETING_FILTER = `
   AND (n.source_meeting_id IS NULL OR n.company_id IS NULL)
 `
+
+// Soft-delete read guard. A user "delete" sets deleted_at (an UPDATE that syncs
+// like any edit — see softDeleteNote); every list/detail/count read filters it
+// out. Centralized here so no read path forgets it. Assumes the `n` alias used
+// by BASE_SELECT; queries without that alias inline `deleted_at IS NULL`.
+const NOT_DELETED = 'AND n.deleted_at IS NULL'
 
 export function listNotes(
   filter: NoteFilterView = 'all',
@@ -132,8 +145,8 @@ export function listNotes(
 
   // Combine filter clause, folder clause, dedup filter, and optional meeting filter
   const combined = whereClause
-    ? `${whereClause} ${folderClause} ${DEDUP_FILTER} ${meetingClause}`
-    : `WHERE 1=1 ${folderClause} ${DEDUP_FILTER} ${meetingClause}`
+    ? `${whereClause} ${NOT_DELETED} ${folderClause} ${DEDUP_FILTER} ${meetingClause}`
+    : `WHERE 1=1 ${NOT_DELETED} ${folderClause} ${DEDUP_FILTER} ${meetingClause}`
 
   const rows = db
     .prepare(`${BASE_SELECT} ${combined} ORDER BY n.is_pinned DESC, datetime(n.updated_at) DESC`)
@@ -159,6 +172,7 @@ export function searchNotes(
         ${BASE_SELECT}
         JOIN notes_fts nf ON nf.id = n.id
         WHERE notes_fts MATCH ?
+        ${NOT_DELETED}
         ${folderClause}
         ${DEDUP_FILTER}
         ${meetingClause}
@@ -174,7 +188,7 @@ export function searchNotes(
 export function getNote(noteId: string): Note | null {
   const db = getDatabase()
   const row = db
-    .prepare(`${BASE_SELECT} WHERE n.id = ?`)
+    .prepare(`${BASE_SELECT} WHERE n.id = ? ${NOT_DELETED}`)
     .get(noteId) as NoteRow | undefined
   return row ? rowToNote(row) : null
 }
@@ -287,10 +301,45 @@ export function updateNote(
   return getNote(noteId)
 }
 
+// Hard delete — kept for the orphan-cleanup / admin-purge path only. Most user
+// deletes go through softDeleteNote so the deletion can replicate cross-device.
 export function deleteNote(noteId: string): boolean {
   const db = getDatabase()
   const result = db.prepare('DELETE FROM notes WHERE id = ?').run(noteId)
   return result.changes > 0
+}
+
+// Soft delete (cross-device delete replication). Mirrors softDeleteCompany: an
+// UPDATE that sets deleted_at + deleted_by_user_id and bumps updated_at. The
+// barrel wraps this as op:'update' so the sync wrapper stamps lamport and emits
+// an UPDATE outbox entry — the deletion then rides the normal owned-table pull
+// to every device (a hard delete can't be pulled). All reads filter
+// `deleted_at IS NULL` (see NOT_DELETED).
+//
+//   create ──▶ edit? ──▶ save ──▶ (live note)
+//                  └──▶ delete ─▶ deleted_at set ─▶ syncs ─▶ hidden everywhere
+//
+// Whole-row LWW (notes are not field-LWW): a concurrent higher-lamport edit
+// carries deleted_at=NULL and can resurrect the note. Accepted — owner-only
+// edits, sub-second cross-device window. (See plan 1A.)
+export function softDeleteNote(noteId: string, userId: string | null = null): Note | null {
+  const db = getDatabase()
+  const result = db
+    .prepare(
+      `UPDATE notes
+       SET deleted_at = datetime('now'), deleted_by_user_id = ?, updated_at = datetime('now')
+       WHERE id = ? AND deleted_at IS NULL`,
+    )
+    .run(userId, noteId)
+  // No-op (already deleted / missing) → return null so the wrapper emits nothing
+  // (no spurious re-sync). On a real delete, return the post-delete row WITHOUT
+  // the NOT_DELETED guard so the wrapper emits a full-row UPDATE carrying
+  // deleted_at to the gateway (getNote would return null — it filters deleted).
+  if (result.changes === 0) return null
+  const row = db
+    .prepare(`${BASE_SELECT} WHERE n.id = ?`)
+    .get(noteId) as NoteRow | undefined
+  return row ? rowToNote(row) : null
 }
 
 export function listFolders(): string[] {
@@ -300,7 +349,7 @@ export function listFolders(): string[] {
     .prepare(`
       SELECT DISTINCT path FROM (
         SELECT folder_path AS path FROM notes
-        WHERE folder_path IS NOT NULL AND folder_path != ''
+        WHERE folder_path IS NOT NULL AND folder_path != '' AND deleted_at IS NULL
         UNION
         SELECT path FROM note_folders
       )
@@ -402,6 +451,7 @@ export function getFolderCounts(
       SELECT n.folder_path AS folderPath, COUNT(*) as count
       FROM notes n
       WHERE 1=1
+      ${NOT_DELETED}
       ${DEDUP_FILTER}
       ${meetingClause}
       GROUP BY n.folder_path
@@ -415,7 +465,7 @@ export function listImportSources(): string[] {
     .prepare(`
       SELECT DISTINCT import_source
       FROM notes
-      WHERE import_source IS NOT NULL
+      WHERE import_source IS NOT NULL AND deleted_at IS NULL
       ORDER BY import_source ASC
     `)
     .all() as { import_source: string }[]

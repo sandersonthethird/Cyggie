@@ -34,6 +34,8 @@ interface NoteBaseRow {
   updated_by_user_id: string | null
   created_at: string
   updated_at: string
+  deleted_at: string | null
+  deleted_by_user_id: string | null
   folder_path: string | null
   import_source: string | null
 }
@@ -41,7 +43,7 @@ interface NoteBaseRow {
 const SELECT_COLS = `
   id, contact_id, company_id, theme_id, title, content,
   is_pinned, is_private, source_meeting_id, created_by_user_id, updated_by_user_id,
-  created_at, updated_at, folder_path, import_source
+  created_at, updated_at, deleted_at, deleted_by_user_id, folder_path, import_source
 `
 
 function rowToNote(row: NoteBaseRow): Note {
@@ -59,6 +61,8 @@ function rowToNote(row: NoteBaseRow): Note {
     updatedByUserId: row.updated_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    deletedAt: row.deleted_at ?? null,
+    deletedByUserId: row.deleted_by_user_id ?? null,
     folderPath: row.folder_path ?? null,
     importSource: row.import_source ?? null,
   }
@@ -96,7 +100,7 @@ export function makeEntityNotesRepo(entityFkCol: EntityFkCol): EntityNotesRepo {
   function get(noteId: string): Note | null {
     const db = getDatabase()
     const row = db
-      .prepare(`SELECT ${SELECT_COLS} FROM notes WHERE id = ?`)
+      .prepare(`SELECT ${SELECT_COLS} FROM notes WHERE id = ? AND deleted_at IS NULL`)
       .get(noteId) as NoteBaseRow | undefined
     return row ? rowToNote(row) : null
   }
@@ -107,7 +111,7 @@ export function makeEntityNotesRepo(entityFkCol: EntityFkCol): EntityNotesRepo {
       .prepare(`
         SELECT ${SELECT_COLS}
         FROM notes
-        WHERE ${entityFkCol} = ?
+        WHERE ${entityFkCol} = ? AND deleted_at IS NULL
         ORDER BY is_pinned DESC, datetime(updated_at) DESC
       `)
       .all(entityId) as NoteBaseRow[]
@@ -122,7 +126,7 @@ export function makeEntityNotesRepo(entityFkCol: EntityFkCol): EntityNotesRepo {
       .prepare(`
         SELECT ${SELECT_COLS}
         FROM notes
-        WHERE ${entityFkCol} IN (${placeholders})
+        WHERE ${entityFkCol} IN (${placeholders}) AND deleted_at IS NULL
         ORDER BY is_pinned DESC, datetime(updated_at) DESC
       `)
       .all(...entityIds) as NoteBaseRow[]

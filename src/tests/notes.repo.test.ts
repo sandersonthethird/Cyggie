@@ -11,6 +11,7 @@ import { runUnifiedNotesMigration } from '@cyggie/db/sqlite/migrations/052-unifi
 import { runNotesFolderPathMigration } from '@cyggie/db/sqlite/migrations/057-notes-folder-path'
 import { runNoteFoldersMigration } from '@cyggie/db/sqlite/migrations/058-note-folders'
 import { runNotesIsPrivateMigration } from '@cyggie/db/sqlite/migrations/121-notes-is-private'
+import { runNotesSoftDeleteMigration } from '@cyggie/db/sqlite/migrations/130-notes-soft-delete'
 
 let testDb: Database.Database
 
@@ -45,6 +46,7 @@ function buildDb(): Database.Database {
   runNotesFolderPathMigration(db)
   runNoteFoldersMigration(db)
   runNotesIsPrivateMigration(db)
+  runNotesSoftDeleteMigration(db)
   return db
 }
 

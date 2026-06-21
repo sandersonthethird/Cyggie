@@ -53,6 +53,8 @@ function makeDb(): Database.Database {
       updated_by_user_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      deleted_at TEXT,
+      deleted_by_user_id TEXT,
       folder_path TEXT,
       import_source TEXT
     );

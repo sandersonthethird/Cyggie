@@ -3558,3 +3558,49 @@ table → needs a full re-test of all of them, for a symptom that self-heals. Su
 the `fix/company-notes-draft-and-sync` review; deliberately deferred there (parity-only fix).
 
 **Depends on / blocked by:** None.
+
+---
+
+## Notes — hard-purge / tombstone / recycle bin
+
+**What:** Make note deletes a first-class cross-device *purge* (not just soft-delete). Add
+`notes` to `TOMBSTONE_ENTITY_TYPE` ([api-gateway/src/routes/sync.ts](api-gateway/src/routes/sync.ts)),
+extend `purgeEntity` + `/admin/recycle/sweep`, add the `'note'` cases to
+`applyRemoteTombstones` / `isTombstoned`
+([src/main/services/sync-remote-apply.ts](src/main/services/sync-remote-apply.ts)), and build a
+recycle-bin restore UI.
+
+**Why:** The mobile create/tag/delete feature (`feat/desktop-firm-shared-notes`) shipped
+notes as **soft-delete only** — cross-device delete works (a `deleted_at` write replicates via
+the owned-table pull and every read filters it out), but the rows linger in Neon forever and
+there is no permanent-purge, no resurrection guard, and no restore/recycle UI for notes.
+
+**Pros:** bounded Neon growth; resurrection-guarded deletes; user-recoverable notes at parity
+with companies/tasks. **Cons:** ~19 files and an **open design question** — `purgeEntity` is
+firm-scoped but `notes` has no `firm_id` column, so this is *blocked on* denormalizing `firm_id`
+onto notes (schema + backfill + gateway push-stamp + `owned-tables firmScoped:true`).
+
+**Context/where to start:** full file-by-file checklist was produced in the create-notes plan
+review (2026-06-20). `softDeleteCompany`/`org_companies` is the working precedent for every
+piece. Start with the `firm_id`-on-notes migration, then mirror the company tombstone path.
+**Depends on / blocked by:** `firm_id`-on-notes denormalization.
+
+---
+
+## Notes — partial active-set indexes for the deleted_at read filter
+
+**What:** Add partial indexes (`CREATE INDEX … ON notes (…) WHERE deleted_at IS NULL`) on the
+hot note read paths, mirroring the `org_companies` recycle/active-set index precedent.
+
+**Why:** With soft-delete (`feat/desktop-firm-shared-notes`), every note read now appends
+`AND deleted_at IS NULL`, but `notes_visibility_idx` and the FTS index don't cover `deleted_at`,
+and soft-deleted rows accumulate indefinitely (purge deferred — see the tombstone TODO above).
+At single-firm beta scale this is negligible, so it was deliberately deferred; revisit when note
+volume grows.
+
+**Pros:** keeps hot reads fast as soft-deletes pile up. **Cons:** premature at current scale;
+extra migration + index-upkeep surface.
+
+**Context/where to start:** the read surfaces filtered in `notes.repo.ts` + the gateway
+`noteVisibilityFilter`; mirror the `org_companies` partial-index migration.
+**Depends on / blocked by:** None (independent migration); trigger = note-volume growth.

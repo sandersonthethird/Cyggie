@@ -15,10 +15,11 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
-import { fetchNote, updateNote, type NoteDetail } from '../../lib/api/notes'
+import { deleteNote, fetchNote, updateNote, type NoteDetail } from '../../lib/api/notes'
 import { useAuthStore } from '../../lib/auth/store'
 import { RichMarkdown } from '../../lib/markdown'
 import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
+import { NoteTagger } from '../../components/NoteTagger'
 import { colors, radii, spacing, type } from '../../theme'
 
 // Note detail — single screen because notes don't have enough cardinality to
@@ -29,8 +30,11 @@ import { colors, radii, spacing, type } from '../../theme'
 // the three primary entities.
 
 export default function NoteDetailScreen() {
-  const params = useLocalSearchParams<{ id: string }>()
+  const params = useLocalSearchParams<{ id: string; new?: string }>()
   const id = typeof params.id === 'string' ? params.id : ''
+  // ?new=1 — this note was just created via the Notes-tab + button. Auto-enter
+  // edit mode (once) and, if it's abandoned empty, hard-delete it on unmount.
+  const isNew = params.new === '1'
   const signOut = useAuthStore((s) => s.signOut)
   const myUserId = useAuthStore((s) => s.userId)
   const queryClient = useQueryClient()
@@ -64,6 +68,12 @@ export default function NoteDetailScreen() {
   const [draftTitle, setDraftTitle] = useState('')
   const [draftContent, setDraftContent] = useState('')
   const [draftPrivate, setDraftPrivate] = useState(false)
+  // Entity tags being edited. Names are kept alongside ids so the chip renders
+  // immediately from the picker selection (server-truth on the next save).
+  const [draftCompanyId, setDraftCompanyId] = useState<string | null>(null)
+  const [draftCompanyName, setDraftCompanyName] = useState<string | null>(null)
+  const [draftContactId, setDraftContactId] = useState<string | null>(null)
+  const [draftContactName, setDraftContactName] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const contentRef = useRef<TextInput>(null)
@@ -73,6 +83,10 @@ export default function NoteDetailScreen() {
     setDraftTitle(note.title ?? '')
     setDraftContent(note.content)
     setDraftPrivate(note.isPrivate)
+    setDraftCompanyId(note.companyId)
+    setDraftCompanyName(note.companyName)
+    setDraftContactId(note.contactId)
+    setDraftContactName(note.contactName)
     setEditError(null)
     setEditing(true)
     setTimeout(() => contentRef.current?.focus(), 50)
@@ -90,21 +104,18 @@ export default function NoteDetailScreen() {
     try {
       const result = await updateNote(
         note.id,
-        { title: draftTitle.trim() || null, content: draftContent, isPrivate: draftPrivate },
+        {
+          title: draftTitle.trim() || null,
+          content: draftContent,
+          isPrivate: draftPrivate,
+          companyId: draftCompanyId,
+          contactId: draftContactId,
+        },
         Date.now().toString(),
       )
-      queryClient.setQueryData<NoteDetail>(['notes', 'detail', note.id], (prev) =>
-        prev
-          ? {
-              ...prev,
-              title: result.title,
-              content: result.content,
-              isPinned: result.isPinned,
-              isPrivate: result.isPrivate,
-              updatedAt: result.updatedAt,
-            }
-          : prev,
-      )
+      // PATCH returns the full server-truth NoteDetail (joined company/contact
+      // names), so seed the cache with it directly — no client-side merging.
+      queryClient.setQueryData<NoteDetail>(['notes', 'detail', note.id], result)
       // Refresh the Notes tab list so the preview/title/ordering update too.
       void queryClient.invalidateQueries({ queryKey: ['notes', 'list'] })
       setEditing(false)
@@ -117,6 +128,10 @@ export default function NoteDetailScreen() {
         if (fresh.data) {
           setDraftTitle(fresh.data.title ?? '')
           setDraftContent(fresh.data.content)
+          setDraftCompanyId(fresh.data.companyId)
+          setDraftCompanyName(fresh.data.companyName)
+          setDraftContactId(fresh.data.contactId)
+          setDraftContactName(fresh.data.contactName)
         }
       } else {
         setEditError(err instanceof Error ? err.message : 'Save failed — please try again')
@@ -125,6 +140,45 @@ export default function NoteDetailScreen() {
       setSaving(false)
     }
   }
+
+  // Auto-enter edit mode once for a freshly created note (?new=1). The detail
+  // cache was seeded by handleNewNote, so `note` is present on first render and
+  // the editor opens with no loading spinner.
+  const autoEditedRef = useRef(false)
+  useEffect(() => {
+    if (isNew && note && isOwner && !editing && !autoEditedRef.current) {
+      autoEditedRef.current = true
+      startEditing()
+    }
+    // startEditing is stable for this screen instance; guarded by the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, note, isOwner, editing])
+
+  // Abandoned-empty-note cleanup. On unmount, if this was a fresh note (?new=1)
+  // that was never given any content/title/tag (a successful Save updates the
+  // cache, so a real note is skipped), hard-delete it so a fat-finger
+  // "+ then back out" doesn't leave a permanent empty note.
+  //
+  //   create ─▶ ?new=1 editor ─┬─ Save (cache has content) ─▶ keep
+  //                            └─ back out (cache still empty) ─▶ hard delete
+  useEffect(() => {
+    return () => {
+      if (!isNew) return
+      const cached = queryClient.getQueryData<NoteDetail>(['notes', 'detail', id])
+      const hasContent =
+        !!cached &&
+        ((cached.title?.trim().length ?? 0) > 0 ||
+          cached.content.trim().length > 0 ||
+          cached.companyId != null ||
+          cached.contactId != null)
+      if (cached && !hasContent) {
+        void deleteNote(id, { hard: true }).catch(() => {})
+        void queryClient.invalidateQueries({ queryKey: ['notes', 'list'] })
+      }
+    }
+    // Run only on unmount; id/isNew are fixed for this screen instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <KeyboardAvoidingScreen style={styles.root}>
@@ -243,7 +297,7 @@ export default function NoteDetailScreen() {
                 <Text style={styles.privacyHint}>
                   {draftPrivate
                     ? 'Only you can see this note.'
-                    : note.companyId || note.contactId
+                    : draftCompanyId || draftContactId
                       ? 'Visible to your firm because it’s tagged.'
                       : 'Only you — tag a company or contact to share it.'}
                 </Text>
@@ -255,6 +309,22 @@ export default function NoteDetailScreen() {
                 trackColor={{ true: colors.crimson, false: colors.surface3 }}
               />
             </View>
+
+            <NoteTagger
+              companyId={draftCompanyId}
+              companyName={draftCompanyName}
+              contactId={draftContactId}
+              contactName={draftContactName}
+              disabled={saving}
+              onTagCompany={(cid, cname) => {
+                setDraftCompanyId(cid)
+                setDraftCompanyName(cname)
+              }}
+              onTagContact={(ctid, ctname) => {
+                setDraftContactId(ctid)
+                setDraftContactName(ctname)
+              }}
+            />
 
             <View style={{ height: spacing.xxl }} />
           </>

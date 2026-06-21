@@ -807,12 +807,15 @@ export async function registerSyncRoutes(
         // Unlike contacts/meetings (denormalized firm_id), notes gate on the
         // OWNER's users.firm_id, so noteVisibilityFilter needs the users JOIN;
         // getTableColumns keeps the SELECT flat (same row shape as before).
+        // includeDeleted: soft-deleted notes ARE sent (deleted_at set) so a
+        // delete replicates to every device — the renderer/repo reads filter
+        // deleted_at IS NULL. Without this the delete would never propagate.
         db
           .select(getTableColumns(schema.notes))
           .from(schema.notes)
           .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
           .where(
-            sql`${noteVisibilityFilter(user)}
+            sql`${noteVisibilityFilter(user, { includeDeleted: true })}
                 AND CAST(${schema.notes.lamport} AS numeric) > CAST(${sinceParam} AS numeric)`,
           )
           .orderBy(sql`CAST(${schema.notes.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),

@@ -455,6 +455,10 @@ export interface PulledNoteRow extends PulledRow {
   sourceDigestId: string | null
   createdByUserId: string | null
   updatedByUserId: string | null
+  // Soft-delete columns — carried so a remote delete (an UPDATE setting
+  // deleted_at) lands locally and the note disappears from every read.
+  deletedAt: string | Date | null
+  deletedByUserId: string | null
   lamport: string
   createdAt: string | Date
   updatedAt: string | Date
@@ -532,12 +536,14 @@ function upsertNoteRow(db: Database.Database, row: PulledNoteRow): void {
        company_id, contact_id, source_meeting_id, theme_id,
        is_pinned, is_private, folder_path, import_source, source_digest_id,
        created_by_user_id, updated_by_user_id,
+       deleted_at, deleted_by_user_id,
        created_at, updated_at, lamport
      ) VALUES (
        @id, @title, @content,
        @companyId, @contactId, @sourceMeetingId, @themeId,
        @isPinned, @isPrivate, @folderPath, @importSource, @sourceDigestId,
        @createdByUserId, @updatedByUserId,
+       @deletedAt, @deletedByUserId,
        @createdAt, @updatedAt, @lamport
      )
      ON CONFLICT(id) DO UPDATE SET
@@ -554,6 +560,8 @@ function upsertNoteRow(db: Database.Database, row: PulledNoteRow): void {
        source_digest_id = excluded.source_digest_id,
        created_by_user_id = excluded.created_by_user_id,
        updated_by_user_id = excluded.updated_by_user_id,
+       deleted_at = excluded.deleted_at,
+       deleted_by_user_id = excluded.deleted_by_user_id,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        lamport = excluded.lamport`,
@@ -572,6 +580,8 @@ function upsertNoteRow(db: Database.Database, row: PulledNoteRow): void {
     sourceDigestId: row.sourceDigestId,
     createdByUserId: row.createdByUserId,
     updatedByUserId: row.updatedByUserId,
+    deletedAt: row.deletedAt != null ? toIso(row.deletedAt) : null,
+    deletedByUserId: row.deletedByUserId,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
     lamport: row.lamport,

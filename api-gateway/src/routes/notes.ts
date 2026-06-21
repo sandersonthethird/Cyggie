@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
@@ -66,6 +67,95 @@ function buildPreview(content: string): string {
   const flat = content.replace(/\s+/g, ' ').trim()
   if (flat.length <= 200) return flat
   return flat.slice(0, 197) + '…'
+}
+
+// The joined-row shape every NoteDetail response is built from. GET /notes/:id,
+// POST /notes, and PATCH /notes/:id all select these columns (same joins) and
+// map through `toNoteDetail`, so the response shape can never drift between the
+// read and write surfaces.
+interface NoteDetailRow {
+  id: string
+  title: string | null
+  content: string | null
+  isPinned: boolean
+  isPrivate: boolean
+  authorUserId: string
+  authorName: string | null
+  companyId: string | null
+  companyName: string | null
+  contactId: string | null
+  contactName: string | null
+  sourceMeetingId: string | null
+  sourceMeetingTitle: string | null
+  folderPath: string | null
+  importSource: string | null
+  createdAt: Date | string
+  updatedAt: Date | string
+}
+
+function toNoteDetail(row: NoteDetailRow): z.infer<typeof NoteDetailSchema> {
+  const content = row.content ?? ''
+  return {
+    id: row.id,
+    title: row.title,
+    content,
+    contentPreview: buildPreview(content),
+    isPinned: row.isPinned,
+    isPrivate: row.isPrivate,
+    authorUserId: row.authorUserId,
+    authorName: row.authorName ?? null,
+    companyId: row.companyId,
+    companyName: row.companyName,
+    contactId: row.contactId,
+    contactName: row.contactName,
+    sourceMeetingId: row.sourceMeetingId,
+    sourceMeetingTitle: row.sourceMeetingTitle,
+    folderPath: row.folderPath,
+    importSource: row.importSource,
+    createdAt: new Date(row.createdAt).toISOString(),
+    updatedAt: new Date(row.updatedAt).toISOString(),
+  }
+}
+
+type Db = ReturnType<typeof getDb>
+
+// Loads one note as a full NoteDetail row (with author/company/contact/meeting
+// joins), scoped by id only — callers that use this after a write (POST/PATCH)
+// have ALREADY enforced ownership, so no visibility filter is applied here.
+// Returns null if the id doesn't exist. Reused so the write endpoints return
+// the exact same shape as GET /notes/:id (decision 4A).
+async function loadNoteDetailById(
+  db: Db,
+  id: string,
+): Promise<z.infer<typeof NoteDetailSchema> | null> {
+  const [row] = await db
+    .select({
+      id: schema.notes.id,
+      title: schema.notes.title,
+      content: schema.notes.content,
+      isPinned: schema.notes.isPinned,
+      isPrivate: schema.notes.isPrivate,
+      authorUserId: schema.notes.userId,
+      authorName: schema.users.displayName,
+      companyId: schema.notes.companyId,
+      companyName: schema.orgCompanies.canonicalName,
+      contactId: schema.notes.contactId,
+      contactName: schema.contacts.fullName,
+      sourceMeetingId: schema.notes.sourceMeetingId,
+      sourceMeetingTitle: schema.meetings.title,
+      folderPath: schema.notes.folderPath,
+      importSource: schema.notes.importSource,
+      createdAt: schema.notes.createdAt,
+      updatedAt: schema.notes.updatedAt,
+    })
+    .from(schema.notes)
+    .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
+    .leftJoin(schema.orgCompanies, eq(schema.notes.companyId, schema.orgCompanies.id))
+    .leftJoin(schema.contacts, eq(schema.notes.contactId, schema.contacts.id))
+    .leftJoin(schema.meetings, eq(schema.notes.sourceMeetingId, schema.meetings.id))
+    .where(eq(schema.notes.id, id))
+    .limit(1)
+  return row ? toNoteDetail(row) : null
 }
 
 export async function registerNoteRoutes(
@@ -274,27 +364,7 @@ export async function registerNoteRoutes(
         })
       }
 
-      const content = row.content ?? ''
-      return {
-        id: row.id,
-        title: row.title,
-        content,
-        contentPreview: buildPreview(content),
-        isPinned: row.isPinned,
-        isPrivate: row.isPrivate,
-        authorUserId: row.authorUserId,
-        authorName: row.authorName ?? null,
-        companyId: row.companyId,
-        companyName: row.companyName,
-        contactId: row.contactId,
-        contactName: row.contactName,
-        sourceMeetingId: row.sourceMeetingId,
-        sourceMeetingTitle: row.sourceMeetingTitle,
-        folderPath: row.folderPath,
-        importSource: row.importSource,
-        createdAt: new Date(row.createdAt).toISOString(),
-        updatedAt: new Date(row.updatedAt).toISOString(),
-      }
+      return toNoteDetail(row)
     },
   })
 
@@ -323,6 +393,11 @@ export async function registerNoteRoutes(
         // Privacy toggle. Additive + optional — old clients omit it. Owner-only:
         // the (id, userId) scope below means only the note's owner can flip it.
         isPrivate: z.boolean().optional(),
+        // Entity tags. Additive + optional + nullable (null clears the tag).
+        // Tagging a note to a company/contact is what makes it firm-visible
+        // (see noteVisibilityFilter). Owner-only via the (id, userId) scope.
+        companyId: z.string().max(64).nullable().optional(),
+        contactId: z.string().max(64).nullable().optional(),
         lamport: z.string().min(1).max(40),
       }),
     },
@@ -408,11 +483,20 @@ export async function registerNoteRoutes(
         updates.isPrivate = body.isPrivate
         hasField = true
       }
+      if (body.companyId !== undefined) {
+        updates.companyId = body.companyId
+        hasField = true
+      }
+      if (body.contactId !== undefined) {
+        updates.contactId = body.contactId
+        hasField = true
+      }
       if (!hasField) {
         throw new GatewayError({
           statusCode: 400,
           code: 'NOTE_PATCH_EMPTY',
-          message: 'PATCH must include at least one of: title, content, isPrivate.',
+          message:
+            'PATCH must include at least one of: title, content, isPrivate, companyId, contactId.',
         })
       }
 
@@ -435,15 +519,172 @@ export async function registerNoteRoutes(
         'note patched',
       )
 
-      return {
-        id: updated.id,
-        title: updated.title,
-        content: updated.content ?? '',
-        isPinned: updated.isPinned,
-        isPrivate: updated.isPrivate,
-        lamport: updated.lamport,
-        updatedAt: new Date(updated.updatedAt).toISOString(),
+      // Decision 4A: return the full NoteDetail (joined company/contact/meeting
+      // names) via the shared loader, so PATCH and POST hand the client the same
+      // server-truth shape GET returns — no client-side name merging.
+      const detail = await loadNoteDetailById(db, id)
+      if (!detail) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'NOTE_NOT_FOUND',
+          message: 'Note not found',
+        })
       }
+      return detail
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // POST /notes — create a note (mobile create-parity with desktop). Mirrors
+  // the PATCH lamport discipline: the write lands directly in Neon with the
+  // caller as owner, and the notes table being an owned, synced table means
+  // the desktop's sync-pull carries the new row back to SQLite — no extra
+  // plumbing. Returns the full NoteDetail (decision 4A) so the client can seed
+  // its cache without a follow-up GET. companyId/contactId are optional — the
+  // mobile create flow leaves them null and tags later via PATCH.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/notes',
+    schema: {
+      body: z.object({
+        title: z.string().max(500).nullable().optional(),
+        content: z.string().max(100_000).optional(),
+        folderPath: z.string().max(512).nullable().optional(),
+        isPrivate: z.boolean().optional(),
+        companyId: z.string().max(64).nullable().optional(),
+        contactId: z.string().max(64).nullable().optional(),
+        lamport: z.string().min(1).max(40),
+      }),
+      response: { 201: NoteDetailSchema },
+    },
+    handler: async (req, reply) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const body = req.body
+
+      const lamportCheck = validateClientLamport(body.lamport)
+      if (!lamportCheck.valid) {
+        req.log.warn(
+          {
+            userId: user.sub,
+            incoming: body.lamport,
+            reason: lamportCheck.reason,
+            metric: 'notes.create.lamport_rejected',
+          },
+          'create rejected: lamport out of range',
+        )
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'LAMPORT_OUT_OF_RANGE',
+          message:
+            lamportCheck.reason === 'unparseable'
+              ? 'lamport is not a valid integer'
+              : 'lamport is too far in the future',
+        })
+      }
+
+      const id = randomUUID()
+      const title = body.title?.trim()
+      const now = new Date()
+      await db.insert(schema.notes).values({
+        id,
+        userId: user.sub,
+        title: title ? title.slice(0, 500) : null,
+        content: (body.content ?? '').slice(0, 100_000),
+        folderPath: body.folderPath || null,
+        isPrivate: body.isPrivate ?? false,
+        companyId: body.companyId || null,
+        contactId: body.contactId || null,
+        lamport: body.lamport,
+        createdByUserId: user.sub,
+        updatedByUserId: user.sub,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      const detail = await loadNoteDetailById(db, id)
+      if (!detail) {
+        // Unreachable in practice (we just inserted it) — defensive.
+        throw new GatewayError({
+          statusCode: 500,
+          code: 'NOTE_CREATE_FAILED',
+          message: 'Note created but could not be loaded',
+        })
+      }
+
+      req.log.info(
+        {
+          noteId: id,
+          userId: user.sub,
+          metric: 'notes.create.success',
+          tagged: Boolean(body.companyId || body.contactId),
+        },
+        'note created',
+      )
+
+      return reply.code(201).send(detail)
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
+  // DELETE /notes/:id — owner-scoped delete.
+  //
+  //   • default → SOFT delete: an UPDATE setting deleted_at + bumping lamport.
+  //     Because notes is an owned, synced table, this replicates to every
+  //     device via the normal sync-pull (a hard delete can't be pulled). Every
+  //     READ surface filters deleted_at IS NULL.
+  //   • ?hard=true → HARD delete (orphan cleanup): the mobile editor calls this
+  //     when an instant-created note is abandoned empty. The row is seconds old
+  //     and was never meaningfully synced, so a hard delete avoids leaving a
+  //     permanent soft-deleted junk row in Neon.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'DELETE',
+    url: '/notes/:id',
+    schema: {
+      params: z.object({ id: z.string().min(1).max(64) }),
+      querystring: z.object({ hard: z.coerce.boolean().optional() }),
+      response: { 200: z.object({ ok: z.literal(true) }) },
+    },
+    handler: async (req) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { id } = req.params
+      const { hard } = req.query
+
+      const existing = await db.query.notes.findFirst({
+        where: and(eq(schema.notes.id, id), eq(schema.notes.userId, user.sub)),
+        columns: { id: true },
+      })
+      if (!existing) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'NOTE_NOT_FOUND',
+          message: 'Note not found',
+        })
+      }
+
+      if (hard) {
+        await db.delete(schema.notes).where(eq(schema.notes.id, id))
+      } else {
+        await db
+          .update(schema.notes)
+          .set({
+            deletedAt: new Date(),
+            deletedByUserId: user.sub,
+            updatedAt: new Date(),
+            // Server-stamped lamport so the pull window carries the delete.
+            lamport: String(Date.now()),
+          })
+          .where(and(eq(schema.notes.id, id), isNull(schema.notes.deletedAt)))
+      }
+
+      req.log.info(
+        { noteId: id, userId: user.sub, hard: Boolean(hard), metric: 'notes.delete.success' },
+        'note deleted',
+      )
+      return { ok: true as const }
     },
   })
 
@@ -489,6 +730,7 @@ export async function registerNoteRoutes(
         .where(
           and(
             eq(schema.notes.userId, user.sub),
+            isNull(schema.notes.deletedAt),
             sql`${schema.notes.folderPath} IS NOT NULL`,
           ),
         )
@@ -507,6 +749,7 @@ export async function registerNoteRoutes(
         .where(
           and(
             eq(schema.notes.userId, user.sub),
+            isNull(schema.notes.deletedAt),
             isNull(schema.notes.folderPath),
           ),
         )
@@ -514,7 +757,7 @@ export async function registerNoteRoutes(
       const [totalRow] = await db
         .select({ n: sql<number>`count(*)::int` })
         .from(schema.notes)
-        .where(eq(schema.notes.userId, user.sub))
+        .where(and(eq(schema.notes.userId, user.sub), isNull(schema.notes.deletedAt)))
 
       const countByPath = new Map<string, number>()
       for (const r of folderCounts) {

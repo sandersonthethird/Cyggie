@@ -83,16 +83,10 @@ export interface UpdateNotePatch {
   content?: string
   /** Privacy toggle. Owner-only on the server (scoped by note owner). */
   isPrivate?: boolean
-}
-
-export interface UpdateNoteResult {
-  id: string
-  title: string | null
-  content: string
-  isPinned: boolean
-  isPrivate: boolean
-  lamport: string
-  updatedAt: string
+  /** Company tag. Null clears it. Tagging makes a non-private note firm-visible. */
+  companyId?: string | null
+  /** Contact tag. Null clears it. */
+  contactId?: string | null
 }
 
 /**
@@ -100,16 +94,54 @@ export interface UpdateNoteResult {
  * string (typically `Date.now().toString()`). On a stale lamport the gateway
  * responds 409 → `api.patch` throws an `ApiError` with `status === 409`, which
  * the editor surfaces as "note changed elsewhere, refresh and retry".
+ *
+ * Returns the full NoteDetail (server-truth company/contact names) so the caller
+ * can seed its cache directly — no client-side name merging.
  */
 export async function updateNote(
   id: string,
   patch: UpdateNotePatch,
   lamport: string,
-): Promise<UpdateNoteResult> {
-  return api.patch<UpdateNoteResult>(`/notes/${encodeURIComponent(id)}`, {
+): Promise<NoteDetail> {
+  return api.patch<NoteDetail>(`/notes/${encodeURIComponent(id)}`, {
     ...patch,
     lamport,
   })
+}
+
+export interface CreateNoteInput {
+  title?: string | null
+  content?: string
+  folderPath?: string | null
+  isPrivate?: boolean
+  companyId?: string | null
+  contactId?: string | null
+}
+
+/**
+ * POST /notes — create a note. Caller supplies a lamport (typically
+ * `Date.now().toString()`). Returns the full NoteDetail so the caller can seed
+ * the detail cache and open the editor without a follow-up GET.
+ */
+export async function createNote(
+  input: CreateNoteInput,
+  lamport: string,
+): Promise<NoteDetail> {
+  return api.post<NoteDetail>('/notes', { ...input, lamport })
+}
+
+/**
+ * DELETE /notes/:id. Default = soft delete (sets deleted_at, replicates the
+ * deletion cross-device). `hard: true` hard-deletes — used only to clean up an
+ * abandoned empty note the editor just created (no replication needed, avoids a
+ * permanent soft-deleted junk row).
+ */
+export async function deleteNote(
+  id: string,
+  opts: { hard?: boolean } = {},
+): Promise<void> {
+  const qs = opts.hard ? '?hard=true' : ''
+  await api.delete<{ ok: true }>(`/notes/${encodeURIComponent(id)}${qs}`)
 }
 
 export interface NoteFolder {

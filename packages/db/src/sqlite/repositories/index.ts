@@ -459,6 +459,15 @@ export const deleteNote = withSync(rawNotes.deleteNote, {
     rawNotes.getNote(noteId) as unknown as Record<string, unknown> | null,
 })
 
+// Soft delete — op:'update' (NOT 'delete'): the raw fn sets deleted_at and
+// returns the full post-delete Note, which the wrapper emits as an UPDATE
+// outbox row so the deletion replicates cross-device (a hard delete can't be
+// pulled). Emitting op:'delete' here would hard-delete the Neon row firm-wide.
+export const softDeleteNote = withSync(rawNotes.softDeleteNote, {
+  table: 'notes',
+  op: 'update',
+})
+
 export const createFolder = withSync(rawNotes.createFolder, {
   table: 'note_folders',
   op: 'insert',

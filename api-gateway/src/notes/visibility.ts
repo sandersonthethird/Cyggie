@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, or, type SQL } from 'drizzle-orm'
+import { and, eq, isNotNull, isNull, or, type SQL } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 
 // =============================================================================
@@ -46,12 +46,31 @@ export interface NoteViewer {
   firm_id: string
 }
 
+export interface NoteVisibilityOpts {
+  /**
+   * Include soft-deleted rows (deleted_at IS NOT NULL). Default false — every
+   * READ path excludes them. The ONE exception is `/sync/pull`, which MUST send
+   * soft-deleted rows so a delete (an UPDATE setting deleted_at) replicates to
+   * teammates' devices; it passes `includeDeleted: true`. Keeping this in the
+   * single visibility contract (rather than scattering `isNull(deletedAt)`
+   * across every read site) preserves the "one place" guarantee in the header.
+   */
+  includeDeleted?: boolean
+}
+
 /**
  * WHERE predicate enforcing note visibility for `viewer`. Requires the query to
  * inner-join `schema.users` onto `schema.notes.userId` (see module header).
+ *
+ * By default it also excludes soft-deleted notes (`deleted_at IS NULL`) so no
+ * read path leaks a deleted note. `/sync/pull` opts back in via
+ * `{ includeDeleted: true }` (it needs the deleted row to replicate the delete).
  */
-export function noteVisibilityFilter(viewer: NoteViewer): SQL {
-  return and(
+export function noteVisibilityFilter(
+  viewer: NoteViewer,
+  opts: NoteVisibilityOpts = {},
+): SQL {
+  const visibility = and(
     // OUTER firm guard — every row's owner must be in the viewer's firm.
     eq(schema.users.firmId, viewer.firm_id),
     or(
@@ -66,5 +85,10 @@ export function noteVisibilityFilter(viewer: NoteViewer): SQL {
         eq(schema.notes.isPrivate, false),
       ),
     ),
+  )
+  return (
+    opts.includeDeleted
+      ? visibility
+      : and(visibility, isNull(schema.notes.deletedAt))
   ) as SQL
 }
