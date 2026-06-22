@@ -191,7 +191,6 @@ function buildEnrichDb(): Database.Database {
     ALTER TABLE org_companies ADD COLUMN last_funding_date TEXT;
     ALTER TABLE org_companies ADD COLUMN total_funding_raised REAL;
     ALTER TABLE org_companies ADD COLUMN lead_investor TEXT;
-    ALTER TABLE org_companies ADD COLUMN co_investors TEXT;
     ALTER TABLE org_companies ADD COLUMN source_type TEXT;
     ALTER TABLE org_companies ADD COLUMN source_entity_type TEXT;
     ALTER TABLE org_companies ADD COLUMN source_entity_id TEXT;

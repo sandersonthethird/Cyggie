@@ -78,7 +78,6 @@ function buildDb(): Database.Database {
       total_funding_raised REAL,
       lead_investor TEXT,
       lead_investor_company_id TEXT,
-      co_investors TEXT,
       relationship_owner TEXT,
       deal_source TEXT,
       warm_intro_source TEXT,

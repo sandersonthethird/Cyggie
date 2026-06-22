@@ -195,7 +195,7 @@ function orgCompanies(userId: string): Migrator {
         city, state, hq_address, founding_year, employee_count_range,
         target_customer, business_model, product_stage, revenue_model,
         arr, burn_rate, runway_months, last_funding_date, total_funding_raised,
-        lead_investor, lead_investor_company_id, co_investors,
+        lead_investor, lead_investor_company_id,
         round, raise_size, post_money_valuation,
         relationship_owner, deal_source, warm_intro_source, referral_contact_id,
         next_followup_date, investment_size, ownership_pct, followon_investment_size,
@@ -208,7 +208,7 @@ function orgCompanies(userId: string): Migrator {
         $16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,
         $31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,
         $46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,
-        $61,$62,$63,$64,$65,$66,$67,$68,$69)
+        $61,$62,$63,$64,$65,$66,$67,$68)
       ON CONFLICT (id) DO NOTHING`,
     transform: (r) => [
       r.id,
@@ -249,7 +249,6 @@ function orgCompanies(userId: string): Migrator {
       nullableNumber(r.total_funding_raised),
       nullableText(r.lead_investor),
       nullableText(r.lead_investor_company_id),
-      jsonbParam(r.co_investors, 'org_companies.co_investors'),
       nullableText(r.round),
       nullableNumber(r.raise_size),
       nullableNumber(r.post_money_valuation),

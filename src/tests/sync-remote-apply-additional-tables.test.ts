@@ -88,7 +88,6 @@ function freshDb(): Database.Database {
       total_funding_raised REAL,
       lead_investor TEXT,
       lead_investor_company_id TEXT,
-      co_investors TEXT,
       round TEXT,
       raise_size REAL,
       post_money_valuation REAL,
@@ -302,7 +301,6 @@ function makeCompanyRow(
     totalFundingRaised: null,
     leadInvestor: null,
     leadInvestorCompanyId: null,
-    coInvestors: null,
     round: null,
     raiseSize: null,
     postMoneyValuation: null,
@@ -444,20 +442,17 @@ describe('applyRemoteOrgCompanies', () => {
     expect(row.canonical_name).toBe('New Name')
   })
 
-  it('serialises JSON fields (coInvestors, fieldSources)', () => {
+  it('serialises JSON fields (fieldSources)', () => {
     applyRemoteOrgCompanies(db, DEVICE_ID, USER_ID, [
       makeCompanyRow({
         id: 'co-1',
         lamport: '1',
-        coInvestors: ['Sequoia', 'A16Z'],
         fieldSources: { description: 'manual' },
       }),
     ])
-    const row = db.prepare('SELECT co_investors, field_sources FROM org_companies WHERE id = ?').get('co-1') as {
-      co_investors: string
+    const row = db.prepare('SELECT field_sources FROM org_companies WHERE id = ?').get('co-1') as {
       field_sources: string
     }
-    expect(JSON.parse(row.co_investors)).toEqual(['Sequoia', 'A16Z'])
     expect(JSON.parse(row.field_sources)).toEqual({ description: 'manual' })
   })
 })

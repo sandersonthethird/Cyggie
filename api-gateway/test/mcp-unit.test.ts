@@ -222,13 +222,14 @@ describe('format: formatFundingLine', () => {
     })
     expect(line).toBeNull()
   })
-  test('coInvestors filters non-strings (jsonb resilience)', () => {
+  test('coInvestors filters non-strings (defensive against malformed join data)', () => {
     const line = formatFundingLine({
       raiseSize: 5_000_000,
       round: 'Series A',
       lastFundingDate: null,
       leadInvestor: null,
-      coInvestors: ['Valid', 42, null, 'Also valid'],
+      // The join yields string[], but keep the inner filter as belt-and-suspenders.
+      coInvestors: ['Valid', 42, null, 'Also valid'] as unknown as string[],
     })
     expect(line).toBe('$5.0M Series A — with Valid, Also valid')
   })

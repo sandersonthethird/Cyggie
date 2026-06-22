@@ -85,7 +85,7 @@ function buildDb(): Database.Database {
       linkedin_company_url TEXT, twitter_handle TEXT, crunchbase_url TEXT, angellist_url TEXT,
       industry TEXT, target_customer TEXT, business_model TEXT, product_stage TEXT, revenue_model TEXT,
       arr REAL, burn_rate REAL, runway_months REAL,
-      last_funding_date TEXT, total_funding_raised REAL, lead_investor TEXT, co_investors TEXT,
+      last_funding_date TEXT, total_funding_raised REAL, lead_investor TEXT,
       source_type TEXT, source_entity_type TEXT, source_entity_id TEXT,
       relationship_owner TEXT, deal_source TEXT, warm_intro_source TEXT,
       referral_contact_id TEXT, next_followup_date TEXT,
