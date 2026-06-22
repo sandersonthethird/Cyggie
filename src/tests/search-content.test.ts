@@ -40,7 +40,6 @@ function buildDb(): Database.Database {
       business_model TEXT,
       key_takeaways TEXT,
       lead_investor TEXT,
-      co_investors TEXT,
       status TEXT DEFAULT 'active',
       updated_at TEXT DEFAULT (datetime('now'))
     );

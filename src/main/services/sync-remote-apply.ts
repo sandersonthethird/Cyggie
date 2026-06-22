@@ -636,7 +636,6 @@ export interface PulledOrgCompanyRow extends PulledRow {
   totalFundingRaised: number | null
   leadInvestor: string | null
   leadInvestorCompanyId: string | null
-  coInvestors: unknown
   round: string | null
   raiseSize: number | null
   postMoneyValuation: number | null
@@ -717,7 +716,7 @@ const ORG_COMPANY_COL_MAP: ReadonlyArray<readonly [snake: string, camel: string]
   ['burn_rate', 'burnRate'], ['runway_months', 'runwayMonths'],
   ['last_funding_date', 'lastFundingDate'], ['total_funding_raised', 'totalFundingRaised'],
   ['lead_investor', 'leadInvestor'], ['lead_investor_company_id', 'leadInvestorCompanyId'],
-  ['co_investors', 'coInvestors'], ['round', 'round'], ['raise_size', 'raiseSize'],
+  ['round', 'round'], ['raise_size', 'raiseSize'],
   ['post_money_valuation', 'postMoneyValuation'], ['relationship_owner', 'relationshipOwner'],
   ['deal_source', 'dealSource'], ['warm_intro_source', 'warmIntroSource'],
   ['referral_contact_id', 'referralContactId'], ['next_followup_date', 'nextFollowupDate'],
@@ -892,7 +891,6 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
     totalFundingRaised: row.totalFundingRaised,
     leadInvestor: row.leadInvestor,
     leadInvestorCompanyId: row.leadInvestorCompanyId,
-    coInvestors: stringify(row.coInvestors),
     round: row.round,
     raiseSize: row.raiseSize,
     postMoneyValuation: row.postMoneyValuation,
@@ -951,7 +949,7 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        target_customer, business_model, product_stage, revenue_model,
        target_investment_stage, target_investment_sector,
        arr, burn_rate, runway_months, last_funding_date, total_funding_raised,
-       lead_investor, lead_investor_company_id, co_investors,
+       lead_investor, lead_investor_company_id,
        round, raise_size, post_money_valuation,
        relationship_owner, deal_source, warm_intro_source, referral_contact_id, next_followup_date,
        investment_size, ownership_pct, followon_investment_size, total_invested,
@@ -974,7 +972,7 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        @targetCustomer, @businessModel, @productStage, @revenueModel,
        @targetInvestmentStage, @targetInvestmentSector,
        @arr, @burnRate, @runwayMonths, @lastFundingDate, @totalFundingRaised,
-       @leadInvestor, @leadInvestorCompanyId, @coInvestors,
+       @leadInvestor, @leadInvestorCompanyId,
        @round, @raiseSize, @postMoneyValuation,
        @relationshipOwner, @dealSource, @warmIntroSource, @referralContactId, @nextFollowupDate,
        @investmentSize, @ownershipPct, @followonInvestmentSize, @totalInvested,
@@ -1025,7 +1023,6 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        total_funding_raised = excluded.total_funding_raised,
        lead_investor = excluded.lead_investor,
        lead_investor_company_id = excluded.lead_investor_company_id,
-       co_investors = excluded.co_investors,
        round = excluded.round,
        raise_size = excluded.raise_size,
        post_money_valuation = excluded.post_money_valuation,

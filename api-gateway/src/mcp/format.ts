@@ -78,7 +78,7 @@ export function formatFundingLine(args: {
   raiseSize?: number | null
   lastFundingDate?: Date | string | null
   leadInvestor?: string | null
-  coInvestors?: unknown // jsonb — string[] in practice
+  coInvestors?: string[] | null // names from the company_investors join
 }): string | null {
   const parts: string[] = []
   const sizeStr = formatUSD(args.raiseSize) ?? formatUSD(args.totalFundingRaised)

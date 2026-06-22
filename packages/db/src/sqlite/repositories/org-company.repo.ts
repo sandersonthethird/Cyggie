@@ -90,7 +90,6 @@ interface CompanyRow {
   last_funding_date: string | null
   total_funding_raised: number | null
   lead_investor: string | null
-  co_investors: string | null  // legacy column kept in DB, not surfaced in TypeScript types
   source_type: string | null
   source_entity_type: string | null
   source_entity_id: string | null
@@ -580,7 +579,6 @@ function baseCompanySelect(whereClause = '', opts?: BaseSelectOpts): string {
       c.lead_investor_company_id,
       lead_inv.canonical_name AS lead_investor_company_name,
       lead_inv.primary_domain AS lead_investor_company_domain,
-      c.co_investors,
       c.source_type,
       c.source_entity_type,
       c.source_entity_id,
@@ -2465,7 +2463,7 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
     'linkedin_company_url', 'twitter_handle', 'crunchbase_url', 'sector',
     'target_customer', 'business_model', 'product_stage', 'revenue_model',
     'target_investment_stage', 'target_investment_sector',
-    'lead_investor', 'co_investors', 'round', 'key_takeaways', 'key_takeaways_user_note'
+    'lead_investor', 'round', 'key_takeaways', 'key_takeaways_user_note'
   ]
   const NUMERIC_RICHNESS_COLUMNS = ['founding_year', 'post_money_valuation', 'raise_size']
   const existingColumns = new Set(

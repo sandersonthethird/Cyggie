@@ -948,10 +948,9 @@ export function getContentMatchPreviews(query: string, limit = 5): ContentMatchP
            OR lower(COALESCE(business_model, '')) LIKE ?
            OR lower(COALESCE(key_takeaways, '')) LIKE ?
            OR lower(COALESCE(lead_investor, '')) LIKE ?
-           OR lower(COALESCE(co_investors, '')) LIKE ?
         LIMIT 2
       `)
-      .all(lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike) as Array<{
+      .all(lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike) as Array<{
       id: string; canonical_name: string; snippet: string
     }>
     rows.forEach((row) => {
@@ -1356,11 +1355,10 @@ export function searchUnified(query: string, limit = 40): UnifiedSearchResponse 
          OR lower(COALESCE(business_model, '')) LIKE ?
          OR lower(COALESCE(key_takeaways, '')) LIKE ?
          OR lower(COALESCE(lead_investor, '')) LIKE ?
-         OR lower(COALESCE(co_investors, '')) LIKE ?
       ORDER BY datetime(updated_at) DESC
       LIMIT ?
     `)
-    .all(lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike,
+    .all(lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike, lowerLike,
       Math.max(6, Math.ceil(limit * 0.15))) as Array<{
     id: string
     canonical_name: string

@@ -1,0 +1,1 @@
+ALTER TABLE "org_companies" DROP COLUMN "co_investors";
