@@ -4,7 +4,7 @@ import { usePreferencesStore } from '../stores/preferences.store'
 type SidebarMode = 'expanded' | 'collapsed'
 
 const PREF_KEY = 'cyggie:sidebar-mode'
-const BREAKPOINT = 1024
+const BREAKPOINT = 768
 
 /**
  * Manages sidebar collapse/expand state with persistence and keyboard shortcut.
@@ -16,7 +16,7 @@ const BREAKPOINT = 1024
  *   │                                   │
  *   └─ COLLAPSED (56px, icons only) ────┘
  *
- * Below 1024px viewport: force collapsed, toggle is a no-op.
+ * Below 768px viewport: force collapsed, toggle is a no-op.
  * Persists to user_preferences via Zustand store.
  */
 export function useSidebarMode(): {

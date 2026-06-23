@@ -6,6 +6,7 @@
 }
 
 .titlebar {
+  position: relative;
   height: var(--titlebar-height);
   -webkit-app-region: drag;
   flex-shrink: 0;
@@ -15,6 +16,17 @@
   align-items: center;
   padding-left: var(--sidebar-width);
   padding-right: 10px;
+}
+
+.titlebarBrand {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text);
+  pointer-events: none;
 }
 
 .titlebarControls {

@@ -250,6 +250,7 @@ export default function Layout() {
       } as React.CSSProperties}
     >
       <div className={styles.titlebar}>
+        <div className={styles.titlebarBrand}>Cyggie</div>
         <div className={styles.titlebarControls}>
           <TitlebarDateChip />
           <div className={styles.titlebarNewDropdown} ref={newMenuRef}>
