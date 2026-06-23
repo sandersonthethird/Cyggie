@@ -41,11 +41,16 @@ afterAll(async () => {
 // up the user's firm so the JWT firm_id matches the DB row the join tests.
 const userFirms = new Map<string, string>()
 
-async function insertUser(): Promise<string> {
+// Pass `sharedFirmId` (read from userFirms) to put a second user in the SAME
+// firm — needed to exercise the firm-visibility branch (teammate's shared
+// notes). Omit it for the default one-user-per-firm isolation.
+async function insertUser(sharedFirmId?: string): Promise<string> {
   const id = TEST_PREFIX + createId().slice(0, 8)
-  const firmId = TEST_PREFIX + 'firm-' + createId().slice(0, 8)
-  await db.insert(schema.firms).values({ id: firmId, name: firmId, slug: firmId })
-  cleanup.track(schema.firms, schema.firms.id, firmId)
+  const firmId = sharedFirmId ?? TEST_PREFIX + 'firm-' + createId().slice(0, 8)
+  if (!sharedFirmId) {
+    await db.insert(schema.firms).values({ id: firmId, name: firmId, slug: firmId })
+    cleanup.track(schema.firms, schema.firms.id, firmId)
+  }
   await db.insert(schema.users).values({
     id,
     googleSub: 'sub-' + id,
@@ -105,6 +110,7 @@ async function insertNote(opts: {
   contactId?: string
   meetingId?: string
   isPinned?: boolean
+  isPrivate?: boolean
   folderPath?: string | null
   updatedAt?: Date
 }): Promise<string> {
@@ -120,6 +126,7 @@ async function insertNote(opts: {
     sourceMeetingId: opts.meetingId ?? null,
     // is_pinned flipped from integer (0/1) to real boolean in migration 0012.
     isPinned: opts.isPinned ?? false,
+    isPrivate: opts.isPrivate ?? false,
     folderPath: opts.folderPath ?? null,
     createdAt: now,
     updatedAt: now,
@@ -476,6 +483,69 @@ describe('GET /notes — folder filter', () => {
 
 })
 
+describe('GET /notes — visibility filter', () => {
+  // private = my own owner-only notes; shared = firm-visible (tagged & not
+  // private), including teammates'. userA and userB share a firm.
+  async function seedFirm() {
+    const userA = await insertUser()
+    const userB = await insertUser(userFirms.get(userA))
+    // Unique per call — normalized_name carries a unique index, and seedFirm
+    // runs once per test.
+    const tag = createId().slice(0, 6)
+    const coA = await insertCompany(userA, `VisA ${tag} ${TEST_PREFIX}`)
+    const coB = await insertCompany(userB, `VisB ${tag} ${TEST_PREFIX}`)
+
+    const myPrivate = await insertNote({
+      userId: userA,
+      content: 'my private',
+      companyId: coA,
+      isPrivate: true,
+    })
+    const myShared = await insertNote({
+      userId: userA,
+      content: 'my shared',
+      companyId: coA,
+    })
+    const myUntagged = await insertNote({ userId: userA, content: 'my untagged' })
+    const teammateShared = await insertNote({
+      userId: userB,
+      content: 'teammate shared',
+      companyId: coB,
+    })
+    return { userA, ids: { myPrivate, myShared, myUntagged, teammateShared } }
+  }
+
+  async function listIds(userId: string, query: string): Promise<Set<string>> {
+    const jwt = await mintJwt(userId)
+    const res = await app.inject({
+      method: 'GET',
+      url: `/notes?limit=100&${query}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { notes: Array<{ id: string }> }
+    return new Set(body.notes.map((n) => n.id))
+  }
+
+  test('visibility=private returns only my own private notes', async () => {
+    const { userA, ids } = await seedFirm()
+    const got = await listIds(userA, 'visibility=private')
+    expect(got.has(ids.myPrivate)).toBe(true)
+    expect(got.has(ids.myShared)).toBe(false)
+    expect(got.has(ids.myUntagged)).toBe(false)
+    expect(got.has(ids.teammateShared)).toBe(false)
+  })
+
+  test('visibility=shared returns firm-visible notes, mine and teammates’', async () => {
+    const { userA, ids } = await seedFirm()
+    const got = await listIds(userA, 'visibility=shared')
+    expect(got.has(ids.myShared)).toBe(true)
+    expect(got.has(ids.teammateShared)).toBe(true)
+    expect(got.has(ids.myPrivate)).toBe(false)
+    expect(got.has(ids.myUntagged)).toBe(false)
+  })
+})
+
 describe('GET /note-folders', () => {
   test('returns folders with counts, inboxCount, and totalCount', async () => {
     const userId = await insertUser()
@@ -532,6 +602,59 @@ describe('GET /note-folders', () => {
     const paths = body.folders.map((f) => f.path)
     expect(paths).toContain(folderA)
     expect(paths).not.toContain(folderB)
+  })
+
+  // Regression for the zero-count bug: the counts MUST reflect the same
+  // firm-visibility set GET /notes returns, not just rows owned by user.sub.
+  // The default one-user-per-firm tests above can't catch this — they isolate
+  // each user in its own firm, so own-only and visibility-filtered counts are
+  // identical. Here userA and userB share a firm.
+  test('counts include a teammate’s shared notes, exclude their private ones', async () => {
+    const userA = await insertUser()
+    const userB = await insertUser(userFirms.get(userA))
+    const sharedFolder = 'TeamShared-' + TEST_PREFIX
+    const company = await insertCompany(userB, 'SharedCo ' + TEST_PREFIX)
+
+    // userB: a tagged, non-private note in a folder + a tagged, non-private
+    // unfoldered (inbox) note → both visible to userA. Plus a private note and
+    // an untagged note → NOT visible to userA.
+    await insertNote({
+      userId: userB,
+      content: 'team folder note',
+      companyId: company,
+      folderPath: sharedFolder,
+    })
+    await insertNote({ userId: userB, content: 'team inbox note', companyId: company })
+    await insertNote({
+      userId: userB,
+      content: 'b private',
+      companyId: company,
+      isPrivate: true,
+      folderPath: sharedFolder,
+    })
+    await insertNote({ userId: userB, content: 'b untagged', folderPath: sharedFolder })
+
+    const jwt = await mintJwt(userA)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/note-folders',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      folders: Array<{ path: string; count: number }>
+      inboxCount: number
+      totalCount: number
+    }
+
+    // Per-folder count surfaces the teammate's folder with exactly the ONE
+    // shared note (private + untagged in the same folder are excluded).
+    const shared = body.folders.find((f) => f.path === sharedFolder)
+    expect(shared?.count).toBe(1)
+    // Inbox + total include the teammate's unfoldered shared note. Before the
+    // fix all of these read 0 for userA (it owns none of the notes).
+    expect(body.inboxCount).toBeGreaterThanOrEqual(1)
+    expect(body.totalCount).toBeGreaterThanOrEqual(2)
   })
 
   test('401 without auth', async () => {
