@@ -5,4 +5,5 @@
 // Repositories land in Phase 0.4a.
 export * as schema from './schema'
 export { deriveCalendarMeetingId } from './meeting-id'
+export { extractCitations, type Citation, type CitationType } from './citation'
 

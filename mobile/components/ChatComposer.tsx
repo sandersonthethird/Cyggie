@@ -34,6 +34,7 @@ import {
 } from '../lib/api/chat'
 import { colors, radii, spacing, type } from '../theme'
 import { useClearOnSessionSwap } from './useClearOnSessionSwap'
+import { CitationChipRow } from './CitationChipRow'
 
 // =============================================================================
 // ChatComposer — shared composer used by both the global chat screen
@@ -494,6 +495,8 @@ function MessageBubble({
 }): React.JSX.Element {
   const isUser = message.role === 'user'
   const pending = isPending(message) ? message.pending === true : false
+  // Citations only exist on a persisted assistant ChatMessage (not pending).
+  const citations = !isUser && !isPending(message) ? message.citations : null
   return (
     <View
       style={[
@@ -501,17 +504,20 @@ function MessageBubble({
         isUser ? styles.bubbleRowRight : styles.bubbleRowLeft,
       ]}
     >
-      <View style={[styles.bubble, isUser ? styles.user : styles.assistant]}>
-        {pending && !message.content ? (
-          <View style={styles.thinkingRow}>
-            <ActivityIndicator size="small" color={colors.text3} />
-            <Text style={styles.thinkingText}>Thinking…</Text>
-          </View>
-        ) : isUser ? (
-          <Text style={[styles.bubbleText, styles.bubbleTextUser]}>{message.content}</Text>
-        ) : (
-          <RichMarkdown style={chatMarkdownStyles}>{message.content}</RichMarkdown>
-        )}
+      <View style={[styles.bubbleCol, isUser ? styles.bubbleColRight : styles.bubbleColLeft]}>
+        <View style={[styles.bubble, isUser ? styles.user : styles.assistant]}>
+          {pending && !message.content ? (
+            <View style={styles.thinkingRow}>
+              <ActivityIndicator size="small" color={colors.text3} />
+              <Text style={styles.thinkingText}>Thinking…</Text>
+            </View>
+          ) : isUser ? (
+            <Text style={[styles.bubbleText, styles.bubbleTextUser]}>{message.content}</Text>
+          ) : (
+            <RichMarkdown style={chatMarkdownStyles}>{message.content}</RichMarkdown>
+          )}
+        </View>
+        <CitationChipRow citations={citations} />
       </View>
     </View>
   )
@@ -567,8 +573,10 @@ const styles = StyleSheet.create({
   bubbleRow: { flexDirection: 'row' },
   bubbleRowLeft: { justifyContent: 'flex-start' },
   bubbleRowRight: { justifyContent: 'flex-end' },
+  bubbleCol: { maxWidth: '88%' },
+  bubbleColLeft: { alignItems: 'flex-start' },
+  bubbleColRight: { alignItems: 'flex-end' },
   bubble: {
-    maxWidth: '88%',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 2,
     borderRadius: radii.xl,

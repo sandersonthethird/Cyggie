@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { and, asc, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import Anthropic from '@anthropic-ai/sdk'
 import { createId } from '@paralleldrive/cuid2'
-import { schema } from '@cyggie/db'
+import { schema, extractCitations, type Citation } from '@cyggie/db'
 import { stripContextIdPrefix } from '@cyggie/shared'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
@@ -26,6 +26,7 @@ import {
   runAgentTurn,
   createAgentStream,
   buildContextForSession,
+  collectContextEntities,
   buildChatSessionSystemSegments,
   // Re-exported below for backwards compatibility with existing test
   // imports (api-gateway/test/chat-selected-companies.test.ts).
@@ -62,12 +63,20 @@ const ChatSessionListItemSchema = z.object({
   cacheEnabled: z.boolean().default(true),
 })
 
+// M5 citations — sources the assistant answer drew on (context-attributed).
+const CitationSchema = z.object({
+  type: z.enum(['meeting', 'company', 'contact', 'note']),
+  id: z.string(),
+  label: z.string(),
+  timestamp: z.number().optional(),
+})
+
 const ChatMessageSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
   role: z.enum(['user', 'assistant', 'system']),
   content: z.string(),
-  citations: z.unknown().nullable(),
+  citations: z.array(CitationSchema).nullable(),
   attachmentsJson: z.unknown().nullable(),
   createdAt: z.string(),
   lamport: z.string(),
@@ -130,7 +139,7 @@ function serializeMessage(row: MessageRow): z.infer<typeof ChatMessageSchema> {
     sessionId: row.sessionId,
     role: row.role as 'user' | 'assistant' | 'system',
     content: row.content,
-    citations: row.citations ?? null,
+    citations: (row.citations as Citation[] | null) ?? null,
     attachmentsJson: row.attachmentsJson ?? null,
     createdAt: row.createdAt.toISOString(),
     lamport: row.lamport,
@@ -729,6 +738,18 @@ export async function registerChatRoutes(
       // crm) — the conversation itself + session.contextLabel provide
       // enough grounding for those flavors.
       const contextBlock = await buildContextForSession(db, session, req.log)
+      // M5 citations — the candidate entities injected into context. Cited
+      // post-hoc by extractCitations (the answer must NAME them). Collected
+      // best-effort: a failure here must never break the chat turn.
+      let citationCandidates: Citation[] = []
+      try {
+        citationCandidates = await collectContextEntities(db, session)
+      } catch (err) {
+        req.log.warn(
+          { err, sessionId: id, userId: user.sub, metric: 'chat.citations.collect_error' },
+          'chat: collectContextEntities failed (non-fatal)',
+        )
+      }
       // Phase 2.5: segmented system prompt — base + (optional) context
       // segment. cache_control applied only when session.cacheEnabled.
       const systemPrompt = buildChatSessionSystemSegments(
@@ -870,12 +891,22 @@ export async function registerChatRoutes(
         // blocking-path behavior where messages.create returning empty text
         // would produce an empty assistant row.
         const replyText = assembledText.trim()
+        let streamCitations: Citation[] = []
+        try {
+          streamCitations = extractCitations(replyText, citationCandidates)
+        } catch (err) {
+          req.log.warn(
+            { err, sessionId: id, metric: 'chat.citations.extract_error' },
+            'chat: citation extract failed (stream, non-fatal)',
+          )
+        }
         const persisted = await persistMessagePair({
           db,
           session,
           userId: user.sub,
           content,
           replyText,
+          citations: streamCitations,
           clientLamport,
           incomingLamport,
           historyLength: historyRows.length,
@@ -978,12 +1009,22 @@ export async function registerChatRoutes(
         })
       }
 
+      let blockingCitations: Citation[] = []
+      try {
+        blockingCitations = extractCitations(replyText, citationCandidates)
+      } catch (err) {
+        req.log.warn(
+          { err, sessionId: id, metric: 'chat.citations.extract_error' },
+          'chat: citation extract failed (blocking, non-fatal)',
+        )
+      }
       const persisted = await persistMessagePair({
         db,
         session,
         userId: user.sub,
         content,
         replyText,
+        citations: blockingCitations,
         clientLamport,
         incomingLamport,
         historyLength: historyRows.length,
@@ -1041,6 +1082,7 @@ async function persistMessagePair(args: {
   userId: string
   content: string
   replyText: string
+  citations: Citation[]
   clientLamport: string
   incomingLamport: bigint
   historyLength: number
@@ -1049,7 +1091,10 @@ async function persistMessagePair(args: {
   userMessage: z.infer<typeof ChatMessageSchema>
   assistantMessage: z.infer<typeof ChatMessageSchema>
 }> {
-  const { db, session, userId, content, replyText, clientLamport, incomingLamport, historyLength } = args
+  const { db, session, userId, content, replyText, citations, clientLamport, incomingLamport, historyLength } = args
+  // Defensive cap — our own data, but never let a runaway candidate set bloat
+  // the jsonb column or the wire payload.
+  const safeCitations = citations.slice(0, 10)
 
   // Server-mint lamport for assistant message + session bump.
   const wallLamport = BigInt(Date.now())
@@ -1075,6 +1120,7 @@ async function persistMessagePair(args: {
         sessionId: session.id,
         role: 'assistant',
         content: replyText,
+        citations: safeCitations.length > 0 ? safeCitations : null,
         lamport: assistantLamport,
       },
     ])
@@ -1130,7 +1176,7 @@ async function persistMessagePair(args: {
       sessionId: session.id,
       role: 'assistant' as const,
       content: replyText,
-      citations: null,
+      citations: safeCitations.length > 0 ? safeCitations : null,
       attachmentsJson: null,
       createdAt: nowDate.toISOString(),
       lamport: assistantLamport,
