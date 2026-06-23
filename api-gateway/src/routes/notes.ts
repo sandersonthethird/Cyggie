@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
-import { and, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
@@ -177,6 +177,11 @@ export async function registerNoteRoutes(
         contactId: z.string().max(64).optional(),
         meetingId: z.string().max(64).optional(),
         untagged: z.coerce.boolean().optional(),
+        // 'private' = the viewer's own owner-only notes (is_private = true).
+        // 'shared'  = firm-visible notes (tagged AND not private), incl.
+        // teammates'. Absent = no visibility narrowing. Optional + additive so
+        // existing clients are unaffected.
+        visibility: z.enum(['private', 'shared']).optional(),
         folderPath: z.string().max(512).optional(),
         limit: z.coerce.number().int().min(1).max(100).default(50),
         offset: z.coerce.number().int().min(0).default(0),
@@ -197,6 +202,7 @@ export async function registerNoteRoutes(
         contactId,
         meetingId,
         untagged,
+        visibility,
         folderPath,
         limit,
         offset,
@@ -213,6 +219,22 @@ export async function registerNoteRoutes(
       if (untagged) {
         whereClauses.push(isNull(schema.notes.companyId))
         whereClauses.push(isNull(schema.notes.contactId))
+      }
+      // Visibility narrowing layered on top of noteVisibilityFilter:
+      //   private → only the viewer's own private notes (the lock-icon ones).
+      //             The base filter already restricts private rows to the owner,
+      //             so is_private = true alone yields exactly "my private notes".
+      //   shared  → firm-visible notes = tagged AND not private (own + teammate).
+      if (visibility === 'private') {
+        whereClauses.push(eq(schema.notes.isPrivate, true))
+      } else if (visibility === 'shared') {
+        whereClauses.push(eq(schema.notes.isPrivate, false))
+        whereClauses.push(
+          or(
+            isNotNull(schema.notes.companyId),
+            isNotNull(schema.notes.contactId),
+          )!,
+        )
       }
       if (folderPath === INBOX_SENTINEL) {
         whereClauses.push(isNull(schema.notes.folderPath))
@@ -720,44 +742,50 @@ export async function registerNoteRoutes(
       const user = req.requireFirm()
       const db = getDb(env.GATEWAY_DATABASE_URL)
 
-      // Counts per non-null folder path. GROUP BY on the indexed column.
+      // All three counts MUST reuse the same firm-visibility contract as
+      // GET /notes (noteVisibilityFilter + inner-join on users) — otherwise the
+      // picker badges count only rows literally owned by user.sub while the list
+      // shows the wider visible set, and the badges read 0. The filter already
+      // excludes soft-deleted rows, so no separate isNull(deletedAt) is needed.
+      //
+      //   folder badges  ─┐
+      //   inbox badge    ─┼─►  count over { own notes ∪ teammates' tagged,
+      //   total badge    ─┘     non-private notes }  ==  what GET /notes returns
+      //
+      // NOTE (intentional): folderCounts groups across ALL visible notes, so a
+      // folder path that exists only on a shared/teammate note surfaces here,
+      // and totalCount can exceed inboxCount + Σ(your declared folders). That is
+      // by design — the badges must match the list. Do not "fix" it back to
+      // user.sub-only.
       const folderCounts = await db
         .select({
           path: schema.notes.folderPath,
           count: sql<number>`count(*)::int`,
         })
         .from(schema.notes)
-        .where(
-          and(
-            eq(schema.notes.userId, user.sub),
-            isNull(schema.notes.deletedAt),
-            sql`${schema.notes.folderPath} IS NOT NULL`,
-          ),
-        )
+        .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
+        .where(and(noteVisibilityFilter(user), isNotNull(schema.notes.folderPath)))
         .groupBy(schema.notes.folderPath)
 
-      // Explicitly created folders (may have count 0).
+      // Explicitly created folders (may have count 0). Per-user metadata —
+      // intentionally scoped to the viewer; we only widen the note *counts*.
       const declaredFolders = await db
         .select({ path: schema.noteFolders.path })
         .from(schema.noteFolders)
         .where(eq(schema.noteFolders.userId, user.sub))
 
-      // Inbox = unfoldered notes count.
+      // Inbox = unfoldered visible notes count.
       const [inboxRow] = await db
         .select({ n: sql<number>`count(*)::int` })
         .from(schema.notes)
-        .where(
-          and(
-            eq(schema.notes.userId, user.sub),
-            isNull(schema.notes.deletedAt),
-            isNull(schema.notes.folderPath),
-          ),
-        )
+        .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
+        .where(and(noteVisibilityFilter(user), isNull(schema.notes.folderPath)))
 
       const [totalRow] = await db
         .select({ n: sql<number>`count(*)::int` })
         .from(schema.notes)
-        .where(and(eq(schema.notes.userId, user.sub), isNull(schema.notes.deletedAt)))
+        .innerJoin(schema.users, eq(schema.users.id, schema.notes.userId))
+        .where(noteVisibilityFilter(user))
 
       const countByPath = new Map<string, number>()
       for (const r of folderCounts) {

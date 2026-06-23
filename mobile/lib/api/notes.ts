@@ -39,6 +39,11 @@ interface FetchNotesOpts {
   contactId?: string
   meetingId?: string
   untagged?: boolean
+  /**
+   * Narrow by visibility. 'private' = my own owner-only notes (is_private);
+   * 'shared' = firm-visible notes (tagged & not private), incl. teammates'.
+   */
+  visibility?: 'private' | 'shared'
   folderPath?: string
   limit?: number
   offset?: number
@@ -59,6 +64,7 @@ export async function fetchNotes(
   if (opts.contactId) params.set('contactId', opts.contactId)
   if (opts.meetingId) params.set('meetingId', opts.meetingId)
   if (opts.untagged) params.set('untagged', 'true')
+  if (opts.visibility) params.set('visibility', opts.visibility)
   if (opts.folderPath) params.set('folderPath', opts.folderPath)
   if (opts.limit !== undefined) params.set('limit', String(opts.limit))
   if (opts.offset !== undefined) params.set('offset', String(opts.offset))

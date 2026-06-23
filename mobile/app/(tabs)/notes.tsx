@@ -37,7 +37,9 @@ import { ScreenHeader, HeaderIconButton } from '../../components/ScreenHeader'
 const PAGE_LIMIT = 100
 const SEARCH_DEBOUNCE_MS = 250
 
-type FilterMode = 'all' | 'untagged'
+// 'private' = my own owner-only notes; 'public' = firm-shared (tagged & not
+// private), incl. teammates'. Mutually exclusive with 'all'/'untagged'.
+type FilterMode = 'all' | 'untagged' | 'private' | 'public'
 
 export default function NotesTab() {
   const signOut = useAuthStore((s) => s.signOut)
@@ -63,6 +65,12 @@ export default function NotesTab() {
       fetchNotes({
         q: debouncedQ || undefined,
         untagged: filterMode === 'untagged' ? true : undefined,
+        visibility:
+          filterMode === 'private'
+            ? 'private'
+            : filterMode === 'public'
+              ? 'shared'
+              : undefined,
         folderPath: folderSelection ?? undefined,
         limit: PAGE_LIMIT,
         signal,
@@ -177,6 +185,16 @@ export default function NotesTab() {
             active={filterMode === 'untagged'}
             onPress={() => setFilterMode('untagged')}
           />
+          <FilterChip
+            label="Private"
+            active={filterMode === 'private'}
+            onPress={() => setFilterMode('private')}
+          />
+          <FilterChip
+            label="Public"
+            active={filterMode === 'public'}
+            onPress={() => setFilterMode('public')}
+          />
         </View>
       </SafeAreaView>
 
@@ -190,7 +208,7 @@ export default function NotesTab() {
         <EmptyState
           filtered={
             debouncedQ.length > 0 ||
-            filterMode === 'untagged' ||
+            filterMode !== 'all' ||
             folderSelection !== null
           }
         />
@@ -438,6 +456,10 @@ const styles = StyleSheet.create({
 
   filterRow: {
     flexDirection: 'row',
+    // Wrap rather than clip: with Folders + All/Untagged/Private/Public (and a
+    // potentially long folder name) the row can exceed a narrow phone's width.
+    flexWrap: 'wrap',
+    rowGap: 8,
     gap: 8,
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
