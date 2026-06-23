@@ -40,7 +40,6 @@ function makeTestDb(): Database.Database {
       product_stage TEXT,
       revenue_model TEXT,
       lead_investor TEXT,
-      co_investors TEXT,
       post_money_valuation INTEGER,
       raise_size INTEGER,
       round TEXT,

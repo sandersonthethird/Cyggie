@@ -1,5 +1,5 @@
 {
-  "id": "33828afc-f709-460f-9aa7-84c42c76a7c6",
+  "id": "f16916db-8fb2-4be7-9135-1d06e4aabbcf",
   "prevId": "a58213d8-235c-402c-92e4-a3229a12e7b6",
   "version": "7",
   "dialect": "postgresql",
@@ -425,30 +425,6 @@
         },
         "display_name": {
           "name": "display_name",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "first_name": {
-          "name": "first_name",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_name": {
-          "name": "last_name",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "title": {
-          "name": "title",
-          "type": "varchar(200)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "job_function": {
-          "name": "job_function",
           "type": "varchar(200)",
           "primaryKey": false,
           "notNull": false
@@ -2306,12 +2282,6 @@
         "lead_investor_company_id": {
           "name": "lead_investor_company_id",
           "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "co_investors": {
-          "name": "co_investors",
-          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },

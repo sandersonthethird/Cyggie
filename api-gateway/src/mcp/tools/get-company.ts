@@ -3,6 +3,7 @@
 // activity recency.
 
 import { and, eq } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import { schema } from '@cyggie/db'
 import type { getDb } from '../../db'
 import { err, ok, ERROR_CODE, type ToolResult } from '../../shared/error-envelope'
@@ -62,7 +63,29 @@ export async function cyggieGetCompany(args: CyggieGetCompanyArgs): Promise<Tool
     return err(ERROR_CODE.NOT_FOUND, `Company "${query}" was just deleted.`)
   }
 
-  return ok(renderCompanyMarkdown(c), cyggieUrl('company', c.id))
+  // Co-investors: names from the synced company_investors join (the legacy
+  // org_companies.co_investors column was dropped). Ordered by position.
+  // Mirrors the GET /companies/:id detail handler in routes/companies.ts.
+  const investorCompany = alias(schema.orgCompanies, 'investor_company')
+  const coInvestorRows = await db
+    .select({ name: investorCompany.canonicalName })
+    .from(schema.companyInvestors)
+    .innerJoin(
+      investorCompany,
+      eq(investorCompany.id, schema.companyInvestors.investorCompanyId),
+    )
+    .where(
+      and(
+        eq(schema.companyInvestors.companyId, id),
+        eq(schema.companyInvestors.investorType, 'co_investor'),
+      ),
+    )
+    .orderBy(schema.companyInvestors.position)
+  const coInvestors = coInvestorRows.length
+    ? coInvestorRows.map((r) => r.name).filter((n): n is string => Boolean(n))
+    : null
+
+  return ok(renderCompanyMarkdown(c, coInvestors), cyggieUrl('company', c.id))
 }
 
 function toCandidateDetail(c: CompanyCandidate): {
@@ -81,7 +104,10 @@ function toCandidateDetail(c: CompanyCandidate): {
   }
 }
 
-function renderCompanyMarkdown(c: typeof schema.orgCompanies.$inferSelect): string {
+function renderCompanyMarkdown(
+  c: typeof schema.orgCompanies.$inferSelect,
+  coInvestors: string[] | null,
+): string {
   const sections: string[] = []
 
   // Header
@@ -109,7 +135,7 @@ function renderCompanyMarkdown(c: typeof schema.orgCompanies.$inferSelect): stri
     raiseSize: c.raiseSize,
     lastFundingDate: c.lastFundingDate,
     leadInvestor: c.leadInvestor,
-    coInvestors: c.coInvestors,
+    coInvestors,
   })
   const totalRaised = formatUSD(c.totalFundingRaised)
   const arr = formatUSD(c.arr)

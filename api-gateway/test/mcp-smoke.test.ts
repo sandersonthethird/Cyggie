@@ -325,6 +325,24 @@ describe('POST /mcp — per-tool smoke (seed-backed: OK / AMBIGUOUS)', () => {
     cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
   }
 
+  async function insertCompanyInvestor(
+    id: string,
+    companyId: string,
+    investorCompanyId: string,
+    investorType: 'co_investor' | 'prior_investor' | 'lead_investor' | 'subsequent_investor',
+    position: number,
+  ): Promise<void> {
+    await db.insert(schema.companyInvestors).values({
+      id,
+      companyId,
+      investorCompanyId,
+      investorType,
+      position,
+      lamport: '1',
+    })
+    cleanup.track(schema.companyInvestors, schema.companyInvestors.id, id)
+  }
+
   async function insertContact(id: string, fullName: string): Promise<void> {
     await db.insert(schema.contacts).values({
       id,
@@ -349,6 +367,40 @@ describe('POST /mcp — per-tool smoke (seed-backed: OK / AMBIGUOUS)', () => {
     const r = await callTool(app, token, 'cyggie_get_company', { query: 'Acme' })
     expect(r.isError).toBe(true)
     expect(r._meta?.code).toBe('AMBIGUOUS')
+  })
+
+  test('cyggie_get_company renders co-investors from the join, ordered, co_investor-only', async () => {
+    // PR2: co-investors were repointed from the dead org_companies.co_investors
+    // column to the synced company_investors join. Guards the three silent-failure
+    // modes of the new query: wrong investorType filter, missing ORDER BY position,
+    // and userId scoping (the company is fetched under this user's id).
+    const suffix = createId().slice(0, 8)
+    const targetId = `co-coinv-${suffix}`
+    const seqId = `co-seq-${suffix}`
+    const a16zId = `co-a16z-${suffix}`
+    const priorId = `co-prior-${suffix}`
+    const seqName = `Sequoia ${suffix}`
+    const a16zName = `a16z ${suffix}`
+    const priorName = `OldFund ${suffix}`
+    await insertCompany(targetId, `Coinv Target ${suffix}`)
+    await insertCompany(seqId, seqName)
+    await insertCompany(a16zId, a16zName)
+    await insertCompany(priorId, priorName)
+    // Out-of-array-order positions (a16z=1 inserted before seq=0) prove ORDER BY.
+    await insertCompanyInvestor(`ci-a-${suffix}`, targetId, a16zId, 'co_investor', 1)
+    await insertCompanyInvestor(`ci-s-${suffix}`, targetId, seqId, 'co_investor', 0)
+    // A prior_investor must NOT bleed into the co-investor list.
+    await insertCompanyInvestor(`ci-p-${suffix}`, targetId, priorId, 'prior_investor', 0)
+
+    const r = await callTool(app, token, 'cyggie_get_company', { query: `Coinv Target ${suffix}` })
+    expect(r.isError).toBeFalsy()
+    const text = r.content?.[0]?.text ?? ''
+    // Both co-investors present, Sequoia (position 0) before a16z (position 1).
+    expect(text).toContain(seqName)
+    expect(text).toContain(a16zName)
+    expect(text.indexOf(seqName)).toBeLessThan(text.indexOf(a16zName))
+    // The prior_investor company name must be absent.
+    expect(text).not.toContain(priorName)
   })
 
   test('cyggie_get_contact returns an OK block for a unique name', async () => {
