@@ -1,7 +1,9 @@
+import { useCallback, useState } from 'react'
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router } from 'expo-router'
+import { useFocusEffect } from '@react-navigation/native'
 import Constants from 'expo-constants'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../lib/auth/store'
@@ -14,6 +16,8 @@ import {
   EMAIL_THREADS_PREF_KEY,
   EMAIL_THREADS_DEFAULT,
 } from '../lib/api/preferences'
+import { Section, Row, RowAction, settingsRowStyles } from '../components/settings-rows'
+import { dlqCount } from '../lib/sync/outbox'
 import { colors, radii, spacing, type } from '../theme'
 
 // M6-light: account + diagnostics in one place. Today's reachability is via
@@ -26,6 +30,12 @@ export default function SettingsScreen() {
   const signOut = useAuthStore((s) => s.signOut)
   const dismissedCount = useCalendarStore((s) => s.dismissedIds.size)
   const undismissAll = useCalendarStore((s) => s.undismissAll)
+
+  // DLQ count for the Developer row. Read once on mount + on focus (cheap, but
+  // not on every render — decision 4B) so it reflects changes made on the
+  // dead-letter screen after navigating back.
+  const [dlqLen, setDlqLen] = useState(() => dlqCount())
+  useFocusEffect(useCallback(() => setDlqLen(dlqCount()), []))
 
   const meQuery = useQuery({
     queryKey: ['auth', 'me'],
@@ -87,7 +97,7 @@ export default function SettingsScreen() {
               router.canGoBack() ? router.back() : router.replace('/(tabs)/calendar')
             }
             hitSlop={8}
-            style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.backBtn, pressed && settingsRowStyles.pressed]}
             accessibilityLabel="Back"
             accessibilityRole="button"
           >
@@ -128,6 +138,14 @@ export default function SettingsScreen() {
             <Row label="Gateway" value={gatewayUrl} mono />
           </Section>
 
+          <Section title="Developer">
+            <RowAction
+              icon="bug-outline"
+              label={`Outbox dead-letter queue (${dlqLen})`}
+              onPress={() => router.push('/dev-tools/outbox-dlq')}
+            />
+          </Section>
+
           {dismissedCount > 0 && (
             <Section title="Calendar">
               <RowAction
@@ -166,64 +184,6 @@ function accountValue(email: string | null, userId: string | null, isLoading: bo
   return truncateUserId(userId)
 }
 
-interface SectionProps {
-  title: string
-  children: React.ReactNode
-}
-
-function Section({ title, children }: SectionProps): React.JSX.Element {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
-      <View style={styles.card}>{children}</View>
-    </View>
-  )
-}
-
-interface RowProps {
-  label: string
-  value: string
-  mono?: boolean
-}
-
-function Row({ label, value, mono }: RowProps): React.JSX.Element {
-  return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={[styles.rowValue, mono && styles.rowValueMono]} numberOfLines={1}>
-        {value}
-      </Text>
-    </View>
-  )
-}
-
-interface RowActionProps {
-  icon: keyof typeof Ionicons.glyphMap
-  label: string
-  onPress: () => void
-  destructive?: boolean
-}
-
-function RowAction({ icon, label, onPress, destructive }: RowActionProps): React.JSX.Element {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-    >
-      <View style={styles.rowActionInner}>
-        <Ionicons
-          name={icon}
-          size={18}
-          color={destructive ? colors.crimson : colors.text2}
-        />
-        <Text style={[styles.rowActionLabel, destructive && styles.destructive]}>{label}</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={16} color={colors.text4} />
-    </Pressable>
-  )
-}
-
 interface RowStepperProps {
   label: string
   value: number
@@ -240,8 +200,8 @@ function RowStepper({
   onIncrement,
 }: RowStepperProps): React.JSX.Element {
   return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
+    <View style={settingsRowStyles.row}>
+      <Text style={settingsRowStyles.rowLabel}>{label}</Text>
       <View style={styles.stepper}>
         <Pressable
           accessibilityRole="button"
@@ -249,7 +209,7 @@ function RowStepper({
           disabled={disabled}
           onPress={onDecrement}
           hitSlop={8}
-          style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed, disabled && styles.stepperDisabled]}
+          style={({ pressed }) => [styles.stepperBtn, pressed && settingsRowStyles.pressed, disabled && styles.stepperDisabled]}
         >
           <Ionicons name="remove" size={18} color={colors.text} />
         </Pressable>
@@ -260,7 +220,7 @@ function RowStepper({
           disabled={disabled}
           onPress={onIncrement}
           hitSlop={8}
-          style={({ pressed }) => [styles.stepperBtn, pressed && styles.pressed, disabled && styles.stepperDisabled]}
+          style={({ pressed }) => [styles.stepperBtn, pressed && settingsRowStyles.pressed, disabled && styles.stepperDisabled]}
         >
           <Ionicons name="add" size={18} color={colors.text} />
         </Pressable>
@@ -313,45 +273,6 @@ const styles = StyleSheet.create({
   },
 
   scroll: { padding: spacing.lg, gap: spacing.lg },
-
-  section: { gap: spacing.sm },
-  sectionTitle: {
-    fontSize: type.label,
-    color: colors.text3,
-    letterSpacing: 0.6,
-    paddingHorizontal: spacing.sm,
-  },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-  },
-
-  row: {
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-  },
-  rowLabel: { color: colors.text2, fontSize: type.body },
-  rowValue: { color: colors.text, fontSize: type.body, flex: 1, textAlign: 'right' },
-  rowValueMono: { fontSize: type.bodyTight, fontFamily: 'Menlo' },
-
-  rowActionInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    flex: 1,
-  },
-  rowActionLabel: { color: colors.text, fontSize: type.body },
-  destructive: { color: colors.crimson, fontWeight: '600' },
-  pressed: { backgroundColor: colors.surface3 },
 
   footer: {
     color: colors.text4,

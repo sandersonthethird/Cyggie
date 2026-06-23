@@ -1,5 +1,25 @@
 # TODOS
 
+## ✅ Recently shipped — reconciled in the 2026-06-22 roadmap audit
+
+A code-verified audit found these items shipped but still marked ⏳ pending. Their
+in-place table rows below are updated to ✅; this is the changelog + evidence.
+
+- **M2 — APNs push** — `api-gateway/src/push/apns.ts` + `POST /devices/register-push`; finalize sends push + 410 cleanup; `recordings-finalize.test.ts`.
+- **M3 — Recording happy path** — shipped under a **pivot** to upload-then-batch (NOT the Opus/WS/live-transcript design the old line described): `mobile/lib/recording/*` (expo-av AAC/M4A) → `POST /recordings/upload` → Deepgram **batch** → `deepgram-webhook` persist + APNs → poll/display; summary via manual `POST /meetings/:id/enhance`. Live partials deliberately dropped (`mobile/app/record.tsx`).
+- **Phase 1.5b — Mobile→Neon writes** (core PATCH/outbox/pull) — now ⚠️ PARTIAL (remaining-repos sub-scope open).
+- **T8–T14** — sync follow-ups: lamport-forgery guard, multi-day calendar, offset datetime, hide-empty-stats, `scheduled_end_at`, non-401 error banner, pull extended to all owned tables (`6a8e702`).
+- **T18** (chat SSE) + **T23** (chat route tests, inline `FakeStream`) — `api-gateway/test/chat-sessions-stream.test.ts`.
+- **T38a + T38b** — SyncAgent adaptive batching on 413 (`sync-agent.ts`, migration 100 `safe_batch_size`) + outbox `trimUnchangedLargeColumns()` (`_sync.ts`).
+- **NoteTagger** — mobile read-only tag chips (`dcf4fee`).
+- **Notes — desktop parity for firm-shared reads (§"Notes — desktop parity for firm-shared reads")** — shipped `ad80e44` (PR #58): `src/main/ipc/note-ownership.ts` `isForeignNote` + firm-shared `/sync/pull`.
+- **Resize cyggie-gateway Fly VM → 2x/1GB** — `fly.toml` `shared-cpu-2x` / `1gb` / `cpus = 2`.
+
+Stale descriptions also corrected: the orphaned M3 test rows (Opus / WS-frame /
+two-stage finalize) reference the abandoned design; the T38 body-limit note (10 MB
+steady state, the 50 MB attempt OOM'd); ScreenHeader migration is PARTIAL (4 screens
+left); notes hard-purge's soft-delete half shipped (migration 130).
+
 ## Memo — accept/reject diff preview before persisting ("living memo")
 
 **What:** When incorporating new material (calls/notes/emails) into an existing memo,
@@ -337,7 +357,7 @@ real meetings.
 
 ---
 
-## AssemblyAI stereo / per-channel transcription parity
+## AssemblyAI stereo / per-channel transcription parity ⚠️ PARTIAL
 
 **What:** Provide a per-channel (mic + system separate) transcription
 mode on AssemblyAI to match the Deepgram multichannel path shipped
@@ -567,7 +587,12 @@ use jsdom — they need a real React-Native renderer. Look at
 All 16 module-level state vars from `src/main/ipc/recording.ipc.ts` (752 lines) extracted to [packages/services/src/recording/RecordingSession.ts](packages/services/src/recording/RecordingSession.ts) (~726 lines). The IPC handler shrank to 159 lines of Electron-specific wiring. 17/17 tests green: 4 in `recording-start.test.ts`, 6 in `recording-stop-defer.test.ts` (fixed 4 pre-existing barrel-mock breakages from commit 155a59a as a side-effect), 7 new in `recording-session.test.ts`.
 
 **Deferred to a future session:**
-- **`summarizer-sync-vs-async.test.ts`** — the plan called for this contract test proving desktop sync wrapper + gateway async path produce byte-equal output. Exercises a different code path (the LLM summary service that fires post-finalize), separate session.
+- **`summarizer-sync-vs-async.test.ts`** — ✅ shipped (T25). Rather than two
+  code paths producing byte-equal output, T25 collapsed them to ONE: desktop +
+  gateway both build prompts via `buildPrompt` from `@cyggie/shared` over one
+  template source. The test ([api-gateway/test/summarizer-sync-vs-async.test.ts](api-gateway/test/summarizer-sync-vs-async.test.ts))
+  asserts referential identity + template-content parity + attendee-branch
+  characterization.
 - **Gateway-portable adapter interface** — class still imports `@main/...` for SQLite repos + deepgram + audio capture. When M3 needs gateway-side recording, introduce a `RecordingPersistenceAdapter` interface to swap the SQLite-bound implementation for a Postgres-backed one.
 
 ---
@@ -705,14 +730,14 @@ current work.
 | M1a | Expo shell + OAuth round-trip + multi-tenant onboarding + Maestro/vitest infra + EAS dev profile | ✅ shipped | commits b7ec2ba / 52ec9d7 / 17ab09e |
 | M1b | Calendar screen wired to `GET /calendar/events`; MMKV cache | ✅ shipped | commits b1a3273 / bc9e2c0 |
 | M2 | Read-only CRM verticals (meeting, company, contact, notes, universal search) | ✅ shipped | commits 45bd145 / f571dd3 / 53a6f24 / 8143aff / e4bc492 |
-| M2 | … + APNs push notifications | ⏳ pending | Slots in alongside M3/M4; needs APNs key + bundle ID provisioned |
-| **M3** | **Recording happy path** (Opus encoder, WS protocol, Record FAB, live transcript, stage-1 finalize, fake-Deepgram tests) | ⏳ **next** | 3 weeks — Phase 0.5 Batch 3 (`RecordingSession` class) just shipped; M3 is unblocked |
+| M2 | … + APNs push notifications | ✅ shipped | `api-gateway/src/push/apns.ts` + `POST /devices/register-push`; finalize sends push, 410 dead-token cleanup; `recordings-finalize.test.ts` |
+| **M3** | **Recording happy path** — PIVOTED to upload-then-batch (Record FAB → `mobile/lib/recording/*` expo-av AAC/M4A → `POST /recordings/upload` → Deepgram **batch** → `deepgram-webhook` persist + APNs → poll/display; summary via manual `POST /meetings/:id/enhance`). | ✅ shipped (pivoted) | The original Opus/WS/live-transcript design was **deliberately dropped** for upload-then-batch (simpler reliability + battery; documented in `mobile/app/record.tsx`). Live partials are not shown. The orphaned Opus/WS/two-stage test rows below reflect the abandoned design. |
 | M4 | Recording resilience (gap reconstruction, Live Activity, stage-2 finalize, 8hr cap) | ⏳ pending | 2.5 weeks; needs Cloudflare R2 bucket for canonical WAV |
 | M5 | AI Chat (SSE + citations), Tiptap notes editor + Enhance, writes | ⏳ pending | 2 weeks |
 | M6 | Polish, empty states, settings, TestFlight cohort 1, 10 Maestro E2E flows green | ⏳ pending | 2 weeks; needs Apple Developer Program seat |
 | M7 | App Store prep, cutover sequence, feature flags, user docs | ⏳ pending | 1.5 weeks |
 | Phase 1.5a | Desktop → Neon one-way sync (writeWithSync barrel, SyncAgent, /sync/push, drizzle-zod validators, dead-letter) | ✅ shipped | commits 7066796 / 99e1c38 / 36ff7f3 / 1778f7e — 59/59 + 17/17 tests, deployed to Fly. Desktop OAuth now wired so the SyncAgent has a real JWT. |
-| Phase 1.5b | Mobile → Neon writes (PATCH routes, mobile-side outbox, GET /sync/pull) | ⏳ pending | Ships when M4–M5 add mobile-side editing flows |
+| Phase 1.5b | Mobile → Neon writes (PATCH routes, mobile-side outbox, GET /sync/pull) | ⚠️ PARTIAL | Core shipped: PATCH routes (`api-gateway/src/routes/meetings.ts`), mobile outbox (`mobile/lib/sync/outbox.ts`), `GET /sync/pull` (`sync.ts`). Remaining: wrap the other owned-table repos for mobile writes. |
 | Phase 1.5c | Real-time push (SSE + APNs, sub-second propagation) | ⏳ pending | Ships when polling-refetch latency hurts |
 
 ### Mobile meeting list filter parity for past `'scheduled'` rows
@@ -778,11 +803,11 @@ The full per-migration audit is in [packages/db/MIGRATION_AUDIT.md](packages/db/
 | Test | Milestone | Path | Status |
 |---|---|---|---|
 | `progress-sink-propagation.test.ts` (ALS context survives SDK + nested calls) | Phase 0.5 | [src/tests/progress-sink-propagation.test.ts](src/tests/progress-sink-propagation.test.ts) | ✅ 8/8 pass |
-| `summarizer-sync-vs-async.test.ts` | Phase 0.5 Batch 3 | TBD | ⏳ |
-| Fake-Deepgram subprocess | Phase 0.6 follow-up | `api-gateway/test/fake-deepgram/` | ⏳ |
-| Opus encoder round-trip | M3 | `mobile/lib/recording/opus.test.ts` | ⏳ |
-| WS frame envelope (seq monotonic, dedup, gap detection) | M3 | `api-gateway/recording/wire.test.ts` | ⏳ |
-| Two-stage finalize merge | M3 + M4 | `api-gateway/recording/finalize.test.ts` | ⏳ |
+| `summarizer-sync-vs-async.test.ts` | Phase 0.5 Batch 3 | [api-gateway/test/summarizer-sync-vs-async.test.ts](api-gateway/test/summarizer-sync-vs-async.test.ts) | ✅ shipped (T25) — desktop + gateway now share ONE `buildPrompt` (@cyggie/shared) + one template source, so the test asserts referential identity of the function, byte-identical template content across sources, and characterizes the attendee branches. 11/11 green. |
+| Fake-Deepgram subprocess | Phase 0.6 follow-up | ~~`api-gateway/test/fake-deepgram/`~~ | ✅ superseded — Deepgram is faked via vitest mocks in `recordings-finalize.test.ts` (no subprocess/dir needed) |
+| ~~Opus encoder round-trip~~ | ~~M3~~ | ~~`mobile/lib/recording/opus.test.ts`~~ | ❌ OBSOLETE — Opus encoder dropped in the M3 upload-then-batch pivot (mobile records AAC/M4A via expo-av) |
+| ~~WS frame envelope (seq monotonic, dedup, gap detection)~~ | ~~M3~~ | ~~`api-gateway/recording/wire.test.ts`~~ | ❌ OBSOLETE — WS audio-streaming dropped in the M3 pivot (audio is uploaded as a file, not framed over WS) |
+| Two-stage finalize merge | M4 | `api-gateway/recording/finalize.test.ts` | ⏳ — M3 is single-stage (Deepgram batch webhook). Stage-2 canonical-WAV merge is M4 (needs R2). |
 | Gap chunks → prerecorded → assembler merge | M4 | `api-gateway/recording/assembler.test.ts` | ⏳ |
 | Quota soft-warn / hard-cut thresholds | M3 | `api-gateway/quota.test.ts` | ⏳ |
 | OAuth re-consent flow (simulate `invalid_grant`) | M1a | `api-gateway/auth/reauth.test.ts` | ⏳ |
@@ -833,12 +858,12 @@ fill out full M5 in subsequent passes.
 | # | What | Why | Effort | Notes |
 |---|---|---|---|---|
 | **T17** | **Chat session persistence + Neon sync** | Mobile Chat tab forgets every conversation on tab unmount. Desktop has `chat_sessions` + `chat_session_messages` tables (migrations 078-080) but they're SQLite-local — never written to Neon. To make mobile chat persist AND sync to desktop, mirror those tables in Neon, add `GET /chat/sessions`, `POST /chat/sessions`, `GET /chat/sessions/:id/messages`, then route desktop writes through the Phase 1.5a outbox the same way `meetings` flow does. **PRIORITY:** promoted from P2 → **P1** on 2026-05-23 (plan-ceo-review REDUCTION pass) — multiplayer-by-default in V1 means chat history must survive across teammates and devices. | L (~3-5 days) | Reuses `withSync` wrapper + applyRemote primitive from Phase 1.5a/c. T14 covers the multi-table pull side. |
-| **T18** | **SSE streaming for /chat/messages** | Today the route awaits the full Claude response (often 8-15s for long replies) before returning anything. UX would be much better with token-by-token streaming. Anthropic SDK supports `client.messages.stream()`; Fastify handles SSE via `reply.raw.write()`. | M (~2 days) | Mobile-side: `EventSource`-style consumer via `expo-fetch` or a polyfill (RN doesn't have `EventSource` natively). Test against a mocked SSE producer to keep Claude out of CI. |
+| **T18** | **✅ SHIPPED — SSE streaming for /chat/messages** | Route honors `Accept: text/event-stream` and emits token deltas via `reply.raw.write()`. Tests: `api-gateway/test/chat-sessions-stream.test.ts` (6 cases — token stream + done + error). | M (~2 days) | Mobile-side `expo-fetch` SSE consumer landed alongside. |
 | **T19** | **Multi-turn chat (history sent with each message)** | The current route is one-shot — every message is a fresh conversation. Users will expect "as we just discussed…" follow-ups. Cheapest path: client sends `messages: [{role,content}…]` array, gateway forwards as-is to Anthropic. Needs context-budget management (truncate oldest user turns when total exceeds ~50KB). | S (~half day) | Depends on T17 only if we want history to survive app kill. Without T17, history lives in `useState`. |
 | **T20** | **Citations into transcript ranges** | When the chat reply references a meeting, link `[1]` `[2]` style citations back to specific transcript segments. Tap a citation in mobile → scrolls to that point in the meeting detail's transcript view. | L (~3 days) | Requires the chat prompt to ask for structured `<cite seg="…">` blocks + a parse step on the gateway. Mobile UI changes are small once the data shape lands. |
 | **T21** | **Tiptap notes editor (replace plain TextInput on meeting detail)** | Plain TextInput works but is single-style and clunky for multi-paragraph notes. Tiptap (via `@tiptap/react-native` or equivalent) gets us bullets, headings, links. Desktop already uses Tiptap — porting brings parity. | L (~4-5 days) | Notes Enhance still works through Tiptap (replace the editor content via the doc API). |
 | **T22** | **"Diff modal" for Enhance** | Today's Enhance is silent-replace (with a confirm dialog). Better UX: show before/after side-by-side, let user accept/reject hunks. | M (~2 days) | Use existing `diff` package (already a mobile dep). Mobile diff UI patterns from MeetingDetail conflict modal. |
-| **T23** | **Test coverage for new chat routes** | `POST /chat/messages` and `POST /chat/enhance-notes` ship without tests because external-API routes were skipped (Anthropic SDK call). Cleanest path: a tiny `FakeAnthropic` mock in `api-gateway/test/_helpers/` + 4-5 happy/error cases per route. | M (~1 day) | Matches the fake-Deepgram pattern already in TODOS (Phase 0.6 follow-up). |
+| **T23** | **✅ SHIPPED — Test coverage for new chat routes** | Covered by `api-gateway/test/chat-sessions-stream.test.ts` using an inline `FakeStream` Anthropic mock (the planned shared `_helpers/FakeAnthropic.ts` wasn't needed — inline approach used). | M (~1 day) | Matches the fake-Deepgram vitest-mock pattern. |
 | **T24** | **BYO-key — per-user Anthropic key on the gateway** | M5-thin shipped with the gateway reading `env.ANTHROPIC_API_KEY` directly on every chat request. That works for a single-firm beta (one firm = the developer's key) but is wrong the moment external users land — they would all unknowingly bill against the gateway-owner's Anthropic account, eat into one shared rate limit, and have no way to set their own key. The existing memory note about Deepgram keys ("Desktop app stores a per-user key in SQLite; gateway needs a separate gateway-owned key in env. Don't conflate.") covers a *different* axis (per-user vs gateway-owned for ingestion) and does not solve this. The Anthropic key needs a *third* tier: per-user-overridable. **Sketch:** add `user_settings.anthropic_api_key` column (encrypted at rest via pgcrypto or app-level encryption); gateway resolves the key in priority order `user_settings.anthropic_api_key → env.ANTHROPIC_API_KEY → 503`. Desktop Settings already has a "Claude API Key" input (`getCredential('claudeApiKey')`) — extend the existing settings sync path (Phase 1.5a outbox already handles `user_settings.*`) so a desktop paste propagates to Neon, which the gateway then reads on each chat request. Mobile gets a matching field in the Settings screen shipped in da5f34a. **Until T24 ships, the gateway is single-tenant for AI features** — do not onboard a second firm before this lands. **STATUS:** ✅ shipped via commits 6e2c63a + 742bb69. user_credentials table holds per-user key; gateway resolves via resolveAnthropicKey helper; desktop pushes via pushAnthropicKey on Settings save + on startup. | L (~2-3 days) | Depends on Phase 1.5a user_settings sync path (already wired for other settings). Same encryption pattern likely applies to OpenAI / Ollama keys when those providers come back online server-side. |
 | **T32** | **BYO-key — Deepgram (extend `user_credentials`; delete gateway env var)** | Mirror T24 for Deepgram. Today: desktop uses per-user key from SQLite for live-stream; gateway uses its own `DEEPGRAM_API_KEY` env var for mobile-uploaded batch transcription — same multi-firm trap T24 was solving for Anthropic. **Sequencing (decided 2026-05-23, plan-ceo-review Issue 1A):** (1) extend `user_credentials` provider enum to `'deepgram'`, (2) extend `resolveProviderKey` to handle deepgram, (3) extend desktop push path so the existing `deepgramApiKey` in SQLite settings propagates to `user_credentials` on Settings save + on startup, (4) extend mobile Settings UI with a Deepgram key field that calls the same endpoint, (5) verify Sandy's Deepgram row exists in Neon, then (6) **delete `DEEPGRAM_API_KEY` from Fly secrets** (`flyctl secrets unset DEEPGRAM_API_KEY`) — hard cutover, no fallback. Adds a Sentry alert for "Deepgram 401 from gateway" so a missing key row surfaces immediately. **Gates safe multi-firm onboarding.** **STATUS:** ✅ shipped — PR-A (resolver + desktop push paths, env fallback retained) in commit afc4d1d; PR-B (drop env fallback, env.ts optional, Sentry 401 alert) in commit ff4ed74. Sandy's `(provider='deepgram', length=40)` row verified in Neon 2026-05-23 13:14:02 UTC. Final manual step **confirmed clean 2026-05-25**: `DEEPGRAM_API_KEY` is not present in `flyctl secrets list -a cyggie-gateway` (only `DEEPGRAM_WEBHOOK_SECRET` remains, which is the inbound-webhook signature key — separate concern). Gateway is fully on per-user `user_credentials` resolution; no shared env-key fallback exists. Mobile Settings UI for Deepgram deferred — desktop push is sufficient for V1 (Sandy is on desktop). | M (~1 week) | **P1.** Reuse T24's resolveProviderKey pattern verbatim. Deepgram billing collapses to one per-user account (the user pays for both desktop live-stream and gateway batch). Acceptable at single-firm beta scale; revisit if multi-firm onboarding ever wants Cyggie-pays-for-trial transcription. |
 | **T33** | **BYO-key — remaining providers (OpenAI, Exa, WebShare)** | Same pattern as T24/T32 for the three remaining gateway-relevant providers. **Memo deliberately excluded** (decided 2026-05-23) — memo-writing stays desktop-only for the foreseeable future, so the gateway never calls a memo API. None of these are wired to gateway routes today (so unlike Deepgram, no env-var-deletion sequencing risk), but they need to be plumbed for parity before any non-Anthropic gateway route ships (specifically T3 enrichment relocation, which is the only consumer that benefits). Mechanical: extend `ALLOWED_PROVIDERS` enum + DB CHECK constraint + `resolveProviderKeyFromDb` union + `PushableProvider` union + 3 SETTINGS_SET hooks. Bundle as one PR. | S (~3 hours total) | P3. Becomes P1 the moment T3 (or another gateway route for OpenAI/Exa/WebShare) is scheduled. |
@@ -846,8 +871,8 @@ fill out full M5 in subsequent passes.
 | **T35** | **Horizontally scrollable SegmentControl** | Company detail now has 5 tabs (Overview / Meetings / Memos / Notes / People). On iPhone SE (320pt) this is at the edge of what fits without truncation. Today's `SegmentControl` in `mobile/app/companies/[id].tsx` (~line 205) is a flat `<View>` with equal-width children; no horizontal overflow handling. **Fix:** wrap in `<ScrollView horizontal>` with `showsHorizontalScrollIndicator={false}` and `contentContainerStyle` for centered alignment when width permits. Apply same fix to meeting detail's segment control (4 tabs today; could grow). | M (~half day) | P3. Trigger: a user reports cramped UI on iPhone SE OR detail screens routinely add a 6th tab. |
 | **T36** | **Memo version history viewer on mobile** | Today mobile shows only the latest version's contentMarkdown. Desktop's memo editor lets users view/restore prior versions via `investment_memo_versions` table. Mobile equivalent: add a version-switcher pill in the memo-detail topbar that opens a list of versions ordered by `versionNumber DESC` with `change_note` previews. Tap a version → re-fetch `GET /memos/:id?version=N` (new query param on the existing route) → swap the markdown body. | M (~1 day) | P3. Defer until a user asks; the typical mobile workflow is "skim the latest" not "compare versions". |
 | **T37** | **Memo evidence drill-in on mobile** | `memo_evidence` table (migrations 085 + 090) links each memo claim to source meetings / transcripts / web URLs. On desktop, clicking a claim jumps to the source. Mobile equivalent: when rendering memo markdown, inject inline tappable links for claims that have evidence rows; tap → push to `/meetings/:id` with a scroll target at the right transcript range (or web URL via Linking.openURL). Significantly enhances the read view's value as a "verify a claim while skimming on the go" tool. Requires extending `GET /memos/:id` response to include evidence joins, OR a separate `GET /memos/:id/evidence` endpoint. Inline-link injection on the mobile side requires parsing the markdown to identify claim sentences — non-trivial. | M-L (~2-3 days) | P3. Trigger: user signal that they want this on mobile (it might stay primarily a desktop drafting workflow). |
-| **T38** | **SyncAgent adaptive batching + outbox payload trimming** | T17a A1 verification surfaced a real issue 2026-05-23: gateway returned `FST_ERR_CTP_BODY_TOO_LARGE` (413) on `/sync/push` when desktop's 200-row batch included meeting rows with large `transcript_segments` JSONB plus newly-added chat_session_messages. Bandaid landed in commit TBD: bumped gateway `bodyLimit` 10 MB → 50 MB. Real fix has two parts. **(a) Adaptive batching in `src/main/services/sync-agent.ts`:** on 413, halve the batch size and retry; persist the discovered safe-batch ceiling in `sync_state` so subsequent ticks start at the right size. **(b) Outbox payload trimming in `_sync.ts` / `withSync()`:** for UPDATE ops, emit only the columns that actually changed (or at minimum exclude large-JSONB columns the caller didn't touch). Today every outbox UPDATE emits the entire row including unmodified large fields. Both fixes together let the gateway keep a sane body limit and stop the cascade where one big meeting blocks the whole queue. | M (~2-3 days for both) | **P2.** 50 MB bandaid is fine for single-firm beta; revisit before multi-firm onboarding — a hot meeting with many transcript updates could still overflow under concurrent edits. |
-| **T25** | **Shared templates workspace package.** | Templates for meeting summarization live in `src/shared/constants/templates.ts` (desktop import path) AND mirrored in `api-gateway/src/templates/meeting-summary-templates.ts` (copy with `category` renamed to `id`). Two sources of truth that must be kept in sync by hand when a template is added/changed. Mobile picker fetches via `GET /templates` so it inherits the gateway copy — only the gateway + desktop need re-syncing. **Fix:** create a workspace package (`packages/shared/src/constants/templates.ts` or extend `@cyggie/db`) and have desktop + gateway both import from it. Mobile keeps the fetch posture. | M (~half day) | Effort low; priority lifts to P2 once a real divergence happens. | P2 |
+| **T38** | **✅ SHIPPED — SyncAgent adaptive batching + outbox payload trimming** | Both parts landed. **(a)** `src/main/services/sync-agent.ts` catches `PayloadTooLargeError` (413), halves the batch, and persists the safe ceiling in `sync_state.safe_batch_size` (migration 100). **(b)** `_sync.ts` `trimUnchangedLargeColumns()` omits unchanged `spec.largeColumns` from UPDATE outbox rows. Gateway `bodyLimit` is **10 MB** steady-state (the temporary 50 MB bump was reverted — it OOM-SIGABRT'd; comment in `api-gateway/src/app.ts`). | M (~2-3 days for both) | **P2.** Shipped; revisit only if a hot meeting overflows 10 MB under concurrent edits before multi-firm onboarding. |
+| **T25** | **✅ SHIPPED — Shared templates workspace package (+ shared prompt assembly).** | The 5 default templates AND the prompt-assembly logic now live in `@cyggie/shared`: [packages/shared/src/constants/meeting-templates.ts](packages/shared/src/constants/meeting-templates.ts) (`CANONICAL_MEETING_TEMPLATES`) + [packages/shared/src/llm/meeting-prompt.ts](packages/shared/src/llm/meeting-prompt.ts) (`buildPrompt`). Desktop seed ([src/shared/constants/templates.ts](src/shared/constants/templates.ts)) + desktop summarizer ([packages/services/src/llm/templates.ts](packages/services/src/llm/templates.ts)) + gateway ([api-gateway/src/templates/meeting-summary-templates.ts](api-gateway/src/templates/meeting-summary-templates.ts)) all re-export from the one source; the gateway's hand-mirrored `TEMPLATES` array + `substitutePlaceholders` were deleted and the enhance route now calls the SAME `buildPrompt` as the desktop summarizer. **Went beyond the original scope** (decision: full desktop/mobile Enhance parity): the gateway now also emits the anti-fabrication / company / task-attribution trailers, which required Neon `users` columns (firstName/lastName/title/jobFunction — migration `0045_users_profile_identity`) + a desktop→Neon push (`PATCH /user/profile` + `gateway-profile.ts`, backfilled on launch + on Settings save). Guard test: [api-gateway/test/summarizer-sync-vs-async.test.ts](api-gateway/test/summarizer-sync-vs-async.test.ts). Mobile keeps the `GET /templates` fetch posture. **⚠️ DEPLOY:** migration 0045 must be applied to Neon before the new gateway build serves `/meetings/:id/enhance` (the route now SELECTs the new user columns). | M (shipped) | Was P2. |
 | **T26** | **SSE streaming for /meetings/:id/enhance.** | Today the route blocks the mobile UI for 5-15s while Claude generates. Token-by-token streaming would massively improve perceived latency. Anthropic SDK supports `client.messages.stream()`; Fastify exposes raw `reply.raw.write()` for SSE. Mobile needs an EventSource consumer (RN doesn't ship one — use `event-source-polyfill` or roll a tiny one via `expo-fetch`). Test against a mocked SSE producer to keep Claude out of CI. | L (~2 days) | Pair with T18 (same pattern on /chat/messages) for one combined SSE landing. | P3 |
 | **T27** | ~~Markdown rendering on mobile~~ | **OBSOLETE.** Shipped in commit 00fa047 via Item 2 — `react-native-markdown-display` is installed and rendered in SummarySection. | — | — |
 | **T28** | **User-editable templates on mobile.** | Today mobile picker shows the 5 hardcoded templates. Desktop will eventually let users create/edit templates (template seed/editor surface). Mobile mirrors via the existing `GET /templates`. Requires: gateway stores user templates in a new `templates` table (or extends settings), mobile UI for create/edit, picker shows user templates above defaults. | L (~3-4 days) | Depends on T25 (shared source for default templates). | P3 |
@@ -974,7 +999,19 @@ single-firm scale. Hard cliff at ~500 meetings/user.
 **Context:** [api-gateway/src/routes/sync.ts](api-gateway/src/routes/sync.ts) — current handler returns full result set with `serverLamport` reflecting the max.
 **Depends on:** Real signal that a user crossed the cliff. Until then defer.
 
-### T2 — Outbox DLQ debug screen on mobile
+### T2 — Outbox DLQ debug screen on mobile ✅ shipped
+**STATUS:** ✅ shipped. Settings → **Developer** → "Outbox dead-letter queue (N)"
+opens [mobile/app/dev-tools/outbox-dlq.tsx](mobile/app/dev-tools/outbox-dlq.tsx),
+which lists each dead entry (op / resourceId / retries / lastError / createdAt)
+with per-row **Replay** + **Dismiss** and a header **Clear all**. New outbox
+primitives `replayFromDLQ` / `removeFromDLQ` / `clearDLQ` / `dlqCount` in
+[mobile/lib/sync/outbox.ts](mobile/lib/sync/outbox.ts) — replay **preserves the
+original lamport** (so a stale write loses LWW → clean 409 conflict rather than
+clobbering a newer server edit) and kicks `drainNow()`. Shared settings atoms
+extracted to [mobile/components/settings-rows.tsx](mobile/components/settings-rows.tsx).
+9 tests in [mobile/lib/sync/__tests__/outbox-dlq.test.ts](mobile/lib/sync/__tests__/outbox-dlq.test.ts).
+**Original scope below preserved for archaeology.**
+
 **What:** Settings → Dev tools view showing the mobile MMKV outbox DLQ
 (entries that hit 10 retries). Lets a dev or support engineer see what
 failed and force-replay.
@@ -1014,7 +1051,17 @@ PATCH notes, desktop needs to learn about those updates.
 two outboxes (desktop's and mobile's).
 **Depends on:** Mobile sync infrastructure shipped (Stage 2).
 
-### T5 — Record button on meeting detail screen
+### T5 — Record button on meeting detail screen ✅ shipped
+**STATUS:** ✅ shipped (commit `96d7127`, 2026-05-22). `RecordCTA` lives at
+[mobile/app/meetings/[id].tsx:652](mobile/app/meetings/[id].tsx#L652), gated by
+`status === 'scheduled' && calendarEventId`; `onStartRecordingHere`
+([mobile/app/meetings/[id].tsx:288](mobile/app/meetings/[id].tsx#L288)) routes to the
+record screen, which accepts `calEventId` + `title` params
+([mobile/app/record.tsx:86](mobile/app/record.tsx#L86)) and passes them through
+`stopRecording()` so the existing `/recordings/upload` find-or-update lights up the
+scheduled row instead of creating a duplicate. **Original scope below preserved for
+archaeology.**
+
 **What:** Add a "Record" button to the mobile meeting detail screen so a
 user can tap an upcoming event → see notes → tap Record without going
 back to the calendar tab. Recording reuses the existing meeting row
@@ -1876,7 +1923,10 @@ tracking exists in current schema.
 
 ---
 
-## P2 — NoteTagger
+## P2 — NoteTagger ✅ SHIPPED
+
+Mobile read-only tag chips on firm-shared notes shipped (commit `dcf4fee`);
+desktop tagging already worked. (Empty placeholder header otherwise.)
 
 ## P2 — Partner Meeting: Drag-and-drop item reordering
 
@@ -3153,7 +3203,14 @@ pattern (migrations + seed helpers) other repo tests can reuse. Start from
 
 **Effort:** M (mostly harness setup). **Priority:** P3. **Owner:** Sandy.
 
-## Notes — desktop parity for firm-shared reads
+## Notes — desktop parity for firm-shared reads ✅ SHIPPED
+
+**SHIPPED** in `ad80e44` (PR #58) — the body below is the original pre-ship
+write-up, kept for archaeology. Desktop `/sync/pull` now carries firm-shared
+notes owned by other firm members read-only (`noteVisibilityFilter` on the pull),
+and the local ownership model lives in `src/main/ipc/note-ownership.ts`
+(`isForeignNote`); foreign notes are stored read-only and the delete/edit guards
+reject local mutation. Desktop and mobile now show the same firm-shared note set.
 
 **What:** Extend `GET /sync/pull` (and the desktop apply path) so that
 firm-shared notes owned by *other* firm members land read-only in each
@@ -3282,7 +3339,7 @@ chat — company/contact/global chats want the same warning+cap. Start points:
 `feat/meeting-chat-context` (meeting chats can now carry attached companies, which
 is what makes a combined estimate meaningful).
 
-## Migrate remaining mobile app bars to `<ScreenHeader>`
+## Migrate remaining mobile app bars to `<ScreenHeader>` ⚠️ PARTIAL
 
 **What:** Move the still-hand-rolled app bars on the mobile screens that the
 record-tab PR did not touch — settings, search, meeting detail, and the
@@ -3561,7 +3618,12 @@ the `fix/company-notes-draft-and-sync` review; deliberately deferred there (pari
 
 ---
 
-## Notes — hard-purge / tombstone / recycle bin
+## Notes — hard-purge / tombstone / recycle bin (soft-delete half ✅ shipped)
+
+**Status note (2026-06-22 audit):** the **soft-delete half shipped** — `notes` has
+`deleted_at` / `deleted_by_user_id` (migration 130), `softDeleteNote` replicates via
+the owned-table pull, and all reads filter `deleted_at IS NULL`. Only the *hard-purge*
+half below remains (firm_id-blocked).
 
 **What:** Make note deletes a first-class cross-device *purge* (not just soft-delete). Add
 `notes` to `TOMBSTONE_ENTITY_TYPE` ([api-gateway/src/routes/sync.ts](api-gateway/src/routes/sync.ts)),

@@ -27,6 +27,7 @@ import { registerUserCredentialRoutes } from './routes/user-credentials'
 import { registerTemplateRoutes } from './routes/templates'
 import { registerMemoRoutes } from './routes/memos'
 import { registerUserPreferenceRoutes } from './routes/user-preferences'
+import { registerUserProfileRoutes } from './routes/user-profile'
 import { registerMcpRoute } from './mcp/route'
 import { registerOAuthRoutes } from './oauth/routes'
 import { registerSlackRoutes } from './slack/route'
@@ -92,6 +93,7 @@ export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   await registerTemplateRoutes(app, env)
   await registerMemoRoutes(app, env)
   await registerUserPreferenceRoutes(app, env)
+  await registerUserProfileRoutes(app, env)
   // OAuth must register BEFORE MCP route — MCP's /mcp route relies on
   // the OAuth server having mounted /oauth/* + /.well-known/* so that
   // bearer-token validation has a stable issuer to point clients at.

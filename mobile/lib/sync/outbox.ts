@@ -178,42 +178,116 @@ export function bumpRetry(id: string, lastError: string): void {
   writeAll(all)
 }
 
-/**
- * Move an entry to the dead-letter queue. Stored in a separate MMKV
- * slot — the agent's drain never visits it.
- */
+// =============================================================================
+// DEAD-LETTER QUEUE
+//
+// Stored in a separate MMKV slot — the agent's drain never visits it. Entries
+// land here on a permanent error (400/404/unknown_op) or after MAX_RETRIES.
+// readDLQ/writeDLQ mirror readAll/writeAll so corruption handling (corrupt blob
+// → start over) is identical to the active queue.
+// =============================================================================
+
 const DLQ_KEY = 'sync.outbox.dlq.v1'
 
+function readDLQ(): OutboxEntry[] {
+  const raw = storage.getString(DLQ_KEY)
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(isEntry)
+  } catch {
+    storage.delete(DLQ_KEY)
+    return []
+  }
+}
+
+function writeDLQ(entries: OutboxEntry[]): void {
+  if (entries.length === 0) {
+    storage.delete(DLQ_KEY)
+    return
+  }
+  storage.set(DLQ_KEY, JSON.stringify(entries))
+}
+
+/** Move an entry from the active queue to the dead-letter queue. */
 export function moveToDLQ(id: string): OutboxEntry | null {
   const all = readAll()
   const idx = all.findIndex((e) => e.id === id)
   if (idx < 0) return null
   const entry = all[idx]!
-  const remaining = [...all.slice(0, idx), ...all.slice(idx + 1)]
-  writeAll(remaining)
-
-  // Append to DLQ blob
-  const dlqRaw = storage.getString(DLQ_KEY)
-  let dlq: OutboxEntry[] = []
-  try {
-    if (dlqRaw) dlq = JSON.parse(dlqRaw) as OutboxEntry[]
-  } catch {
-    dlq = []
-  }
-  dlq.push(entry)
-  storage.set(DLQ_KEY, JSON.stringify(dlq))
+  writeAll([...all.slice(0, idx), ...all.slice(idx + 1)])
+  writeDLQ([...readDLQ(), entry])
   return entry
 }
 
 export function loadDLQ(): OutboxEntry[] {
-  const raw = storage.getString(DLQ_KEY)
-  if (!raw) return []
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? parsed.filter(isEntry) : []
-  } catch {
-    return []
+  return readDLQ()
+}
+
+/**
+ * Replay a dead-lettered entry back into the active queue for another drain.
+ *
+ *   ┌────────────────────────────────────────────────────────────────────┐
+ *   │ LAMPORT IS PRESERVED — DO NOT RE-STAMP.                             │
+ *   │                                                                      │
+ *   │ A DLQ entry's lamport was captured when it first failed (possibly   │
+ *   │ days old). Re-stamping a fresh lamport would make the replayed      │
+ *   │ notes write WIN last-write-wins on the gateway and could clobber a  │
+ *   │ newer server-side edit. Preserving the old lamport lets LWW resolve │
+ *   │ correctly:                                                          │
+ *   │   replayed (stale) lamport  <  server lamport  →  409  →  conflict  │
+ *   │ The agent's existing 409 path surfaces NotesConflictModal — a clean,│
+ *   │ visible outcome rather than silent data loss.                       │
+ *   └────────────────────────────────────────────────────────────────────┘
+ *
+ * Only the retry bookkeeping is reset (retries → 0, lastError cleared) so the
+ * entry gets a fresh attempt schedule. If a live entry for the same
+ * (op, resourceId) already exists it carries a newer lamport and would win
+ * anyway, so the dead entry is dropped and the live one is returned.
+ *
+ * Returns the entry now sitting in the active queue, or `null` if `id` was
+ * not in the DLQ.
+ */
+export function replayFromDLQ(id: string): OutboxEntry | null {
+  const dlq = readDLQ()
+  const idx = dlq.findIndex((e) => e.id === id)
+  if (idx < 0) return null
+  const dead = dlq[idx]!
+  // Remove from the DLQ regardless of the active-queue outcome.
+  writeDLQ([...dlq.slice(0, idx), ...dlq.slice(idx + 1)])
+
+  const active = readAll()
+  const clash = active.findIndex(
+    (e) => e.op === dead.op && e.resourceId === dead.resourceId,
+  )
+  if (clash >= 0) {
+    // Live entry wins (newer lamport); the stale dead entry is discarded.
+    return active[clash]!
   }
+  const revived: OutboxEntry = { ...dead, retries: 0, lastError: undefined }
+  active.push(revived)
+  writeAll(active)
+  return revived
+}
+
+/** Remove a single entry from the DLQ (the "Dismiss" action). */
+export function removeFromDLQ(id: string): void {
+  const dlq = readDLQ()
+  const filtered = dlq.filter((e) => e.id !== id)
+  if (filtered.length === dlq.length) return
+  writeDLQ(filtered)
+}
+
+/** Wipe the entire DLQ. */
+export function clearDLQ(): void {
+  storage.delete(DLQ_KEY)
+}
+
+/** Number of dead-lettered entries. Lets the settings row show "(N)" without
+ *  parsing the blob inside a render. */
+export function dlqCount(): number {
+  return readDLQ().length
 }
 
 /** Number of entries pending in the active queue. Used by the editor for
