@@ -23,8 +23,8 @@ import {
 import {
   TEMPLATE_IDS,
   findTemplate,
-  substitutePlaceholders,
 } from '../templates/meeting-summary-templates'
+import { buildPrompt } from '@cyggie/shared'
 
 // =============================================================================
 // /meetings — M2 read surface. Only detail today (list lives on Calendar
@@ -1016,47 +1016,44 @@ export async function registerMeetingRoutes(
         })
       }
 
-      // Build prompt context. Speakers come from speakerMap when present;
-      // fall back to "Unknown participants" so the template variable
-      // doesn't render literally.
-      const speakerMap = (meeting.speakerMap as Record<string, string> | null) ?? null
-      const speakerNames = speakerMap ? Object.values(speakerMap) : []
-      const speakersFallback =
-        speakerNames.length > 0 ? speakerNames.join(', ') : 'Unknown participants'
+      // T25: build the prompt via the SAME shared buildPrompt() the desktop
+      // summarizer uses (packages/services/src/llm/summarizer.ts), so a
+      // meeting enhanced on the gateway and one enhanced on desktop produce
+      // byte-identical prompts. buildPrompt owns the {{attendees}} branching
+      // (calendar-truth vs speaker fallback), the notes/anti-fabrication/
+      // company/task-attribution trailers, and placeholder substitution.
 
-      // Build the {{attendees}} value the same way the desktop
-      // summarizer does (packages/services/src/llm/templates.ts —
-      // buildAttendeesValue). Two surfaces, identical semantics:
-      //
-      //   • attendees null   → speakers fallback, no authority claim
-      //   • attendees [] + selfName → "<selfName> (meeting owner)"
-      //   • attendees [] + !selfName → "(no attendees recorded)"
-      //   • attendees has items → [selfName, ...attendees] (selfName
-      //                           omitted if null — firm-shared-meetings
-      //                           guard)
-      //
-      // T25 (workspace package) is the cleanup that lets these share
-      // one implementation.
-      const calendarAttendees = (meeting.attendees as string[] | null) ?? null
-      const selfName = meeting.selfName?.trim() || null
-      let attendeesStr: string
-      let hasCalendarTruth: boolean
-      if (calendarAttendees == null) {
-        attendeesStr = speakersFallback
-        hasCalendarTruth = false
-      } else {
-        const cleaned = calendarAttendees
-          .map((a) => a?.trim())
-          .filter((a): a is string => !!a)
-        const ownerLabel = selfName ? `${selfName} (meeting owner)` : null
-        if (cleaned.length === 0) {
-          attendeesStr = ownerLabel ?? '(no attendees recorded)'
-        } else {
-          attendeesStr = ownerLabel
-            ? [ownerLabel, ...cleaned].join(', ')
-            : cleaned.join(', ')
+      // Speakers from the diarization map; fall back to a single
+      // "Unknown participants" entry (matches desktop generateSummary).
+      const speakerMap = (meeting.speakerMap as Record<string, string> | null) ?? null
+      const speakers = speakerMap ? Object.values(speakerMap) : []
+      if (speakers.length === 0) speakers.push('Unknown participants')
+
+      // Resolve the caller's own profile for the task-attribution trailer
+      // (mirrors desktop's getUser()). The row is the authenticated user's
+      // own (user.sub) — reading identity fields is in-bounds. Non-fatal:
+      // the summary still works without it.
+      let userIdentity:
+        | { displayName: string; email: string | null; title: string | null; jobFunction: string | null }
+        | undefined
+      try {
+        const profile = await db.query.users.findFirst({
+          where: eq(schema.users.id, user.sub),
+        })
+        if (profile) {
+          const displayName =
+            [profile.firstName, profile.lastName].filter(Boolean).join(' ') ||
+            profile.displayName ||
+            ''
+          userIdentity = {
+            displayName,
+            email: profile.email ?? null,
+            title: profile.title ?? null,
+            jobFunction: profile.jobFunction ?? null,
+          }
         }
-        hasCalendarTruth = true
+      } catch (err) {
+        req.log.warn({ err, userId: user.sub }, 'enhance: user profile fetch failed')
       }
 
       const durationMin = meeting.durationSeconds
@@ -1067,15 +1064,20 @@ export async function registerMeetingRoutes(
         flattenSegments(meeting.transcriptSegments),
       )
 
-      const userPrompt = substitutePlaceholders(template, {
+      const { systemPrompt, userPrompt } = buildPrompt(template, {
+        transcript: transcriptFlat,
         meetingTitle: meeting.title ?? '(untitled)',
         date: new Date(meeting.date).toLocaleDateString(),
         duration: durationMin,
-        attendees: attendeesStr,
-        speakers: speakersFallback,
-        transcript: transcriptFlat,
-        notes: meeting.notes ?? '',
-        hasCalendarTruth,
+        speakers,
+        notes: meeting.notes ?? undefined,
+        companies: (meeting.companies as string[] | null) ?? undefined,
+        // Pass attendees through directly (null preserved, distinct from
+        // undefined) so buildPrompt's null vs [] vs has-items branching can
+        // distinguish "no calendar event" from "calendar event, no others".
+        attendees: (meeting.attendees as string[] | null) ?? null,
+        selfName: meeting.selfName ?? null,
+        userIdentity,
       })
 
       // Resolve key just before the Anthropic call — keeps the
@@ -1121,7 +1123,7 @@ export async function registerMeetingRoutes(
           {
             model: enhancementModel,
             max_tokens: 4096,
-            system: template.systemPrompt,
+            system: systemPrompt,
             messages: [{ role: 'user', content: userPrompt }],
           },
           { signal: abortController.signal },

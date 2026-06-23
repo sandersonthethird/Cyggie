@@ -33,6 +33,15 @@ export const users = pgTable(
     googleSub: varchar('google_sub', { length: 64 }).notNull(), // Google's stable user identifier
     email: varchar('email', { length: 320 }).notNull(),
     displayName: varchar('display_name', { length: 200 }),
+    // Profile identity fields. Mirror the desktop SQLite users columns
+    // (migrations 032 + 033). Desktop is the source of truth and pushes these
+    // via PATCH /user/profile (api-gateway/src/routes/user-profile.ts); the
+    // enhance route reads them to build the summarizer's task-attribution
+    // context so a gateway summary matches the desktop summary verbatim (T25).
+    firstName: varchar('first_name', { length: 200 }),
+    lastName: varchar('last_name', { length: 200 }),
+    title: varchar('title', { length: 200 }),
+    jobFunction: varchar('job_function', { length: 200 }),
     avatarUrl: text('avatar_url'),
     isActive: boolean('is_active').notNull().default(true),
     // Multi-tenant tenancy root. NULL until the user completes one of the

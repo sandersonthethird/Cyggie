@@ -25,6 +25,7 @@ import {
   triggerSyncPull,
 } from './services/sync-bootstrap'
 import { backfillProviderKeysOnLaunch } from './services/gateway-credentials'
+import { backfillUserProfileOnLaunch } from './services/gateway-profile'
 import { backfillWebChatModelOnLaunch } from './services/web-config-push'
 // EVAL-FEATURE: transcription provider evaluation bootstrap.
 import { runTranscriptionEvalMigration } from './transcription-eval/repo/migration'
@@ -324,6 +325,11 @@ app.whenReady().then(() => {
   // delay inside the helper so it doesn't compete with the SyncAgent's
   // first tick or token refresh.
   backfillProviderKeysOnLaunch()
+
+  // T25 — push the user's identity fields (firstName/lastName/title/jobFunction)
+  // to Neon so the gateway enhance route can build the same task-attribution
+  // prompt the desktop summarizer does. Same backfill posture as keys above.
+  backfillUserProfileOnLaunch()
 
   // Push the web-chat model up to the public web app so share chats resolve it
   // live, healing any value set before this shipped or while offline.
