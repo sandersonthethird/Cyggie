@@ -3741,3 +3741,26 @@ extra migration + index-upkeep surface.
 **Context/where to start:** the read surfaces filtered in `notes.repo.ts` + the gateway
 `noteVisibilityFilter`; mirror the `org_companies` partial-index migration.
 **Depends on / blocked by:** None (independent migration); trigger = note-volume growth.
+
+## Attachments — per-user storage quota (gate on multi-firm)
+
+**What:** A monthly (or total) byte cap on note/memo attachment uploads, enforced in the
+gateway `/attachments/upload-url` presign endpoint, mirroring `RECORDING_QUOTA_MONTHLY_MINUTES`
+(`ATTACHMENT_QUOTA_*` env + a usage-sum query over the `attachments` table).
+
+**Why:** The image/PDF attachment feature (plan: `~/.claude/plans/let-s-build-the-ability-glowing-quill.md`)
+stands up R2-backed uploads with NO storage cap. At single-firm beta with one trusted user, abuse
+is implausible and the cap was deliberately deferred (plan-ceo-review 2026-06-23, TODO-2 → option A).
+But an uncapped upload path is an unbounded R2 cost-and-fill vector the moment a second firm onboards —
+the same multi-tenant gotcha that gates T24/T32 (see provider-key memory).
+
+**Pros:** closes the cost/abuse vector before multi-firm; reuses the recordings-quota idiom.
+**Cons:** premature for one beta user; needs a usage-sum query + a user-facing "quota reached" message
+nobody will hit yet.
+
+**Context/where to start:** `api-gateway/src/routes/attachments.ts` presign handler; copy the
+quota-gate pattern from `recordings.ts` (`usedSeconds >= capSeconds` → 403 `QUOTA_EXCEEDED`), summing
+`attachments.size_bytes` per user/firm instead of meeting minutes.
+**Effort:** S. **Priority:** P2.
+**Depends on / blocked by:** the attachments feature shipping (PRs 1–5); trigger = multi-firm onboarding
+(same gate as T24/T32). Do NOT onboard firm #2 before this lands.
