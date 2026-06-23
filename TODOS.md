@@ -20,6 +20,30 @@ two-stage finalize) reference the abandoned design; the T38 body-limit note (10 
 steady state, the 50 MB attempt OOM'd); ScreenHeader migration is PARTIAL (4 screens
 left); notes hard-purge's soft-delete half shipped (migration 130).
 
+### Obsolescence pass (2026-06-22, second sweep)
+
+A follow-up sweep looked for items not *shipped* but *obviated* by the work above.
+The obviated cluster is narrow and recording-centric:
+
+- **M4 — re-scoped.** The M3 upload-pivot + phone-side audio retention obviated most of
+  it: gap reconstruction (assumed live WS streaming), the stage-2 canonical-WAV merge,
+  and the R2 dependency (driver gone — see the "Cloudflare R2 → post-V1" row); the 8hr
+  cap already shipped. **Net-new survivor: Live Activity.** The "Gap chunks → assembler"
+  test row is marked ❌ OBSOLETE.
+- **M5 — re-scoped.** Chat SSE (T18), chat persistence (T17) and basic mobile note
+  writes already shipped; remaining = rich Tiptap editor + mobile Enhance + citations.
+- **Transcription cluster — scoped down:** provider-picker (mobile half low-value post-
+  pivot), Sentry error codes + WebRTC AEC3 (desktop-only now), AssemblyAI per-channel
+  (accepted limitation — Deepgram multichannel shipped, AssemblyAI won't get it).
+- **Eroded (core shipped, only finish-work left):** T26 enhance-SSE → ready-to-ship
+  copy of T18; stress-test "apply findings" → only UI+append left; `ChipSelect`/
+  search-when-5+ → `OptionListPopover` primitive shipped; "persist context in
+  MeetingDetail" → eroded by MC.2; co-investors Part C → code-side done, only the Neon
+  `DROP COLUMN` (deferred ~July) remains.
+
+Everything else audited (the CRM/contacts/companies/partner-meeting/notes-polish/
+investment-thesis backlog) is **still fully relevant** — untouched by any pivot.
+
 ## Memo — accept/reject diff preview before persisting ("living memo")
 
 **What:** When incorporating new material (calls/notes/emails) into an existing memo,
@@ -73,7 +97,13 @@ Companies tab is the template for hardening other tab screens (none have one tod
 
 ---
 
-## Mobile ledger PR2 — Reliable co-investors — Part C: drop the dead column (REMAINING)
+## Mobile ledger PR2 — Reliable co-investors — Part C: drop the dead column (REMAINING) ⚠️ mostly done
+
+**2026-06-22 status:** code-side is **done** — `co_investors` is gone from the schema /
+sanitize-row / search / MCP paths (reads use the normalized `company_investors` join).
+The only thing left is the **physical Neon `ALTER TABLE … DROP COLUMN`**, deliberately
+deferred to ~July (budget window) + the SQLite migration ships with the next desktop
+build. So this is a scheduled cleanup, not open engineering work.
 
 **Status:** Parts A+B SHIPPED in PR #42 (`feat/co-investors-reliable`): `company_investors`
 is now a synced owned table (lamport col, OWNED_TABLES, validators, firm-scoped pull,
@@ -153,7 +183,14 @@ manual-QA-only). **Priority:** P2. **Depends on / blocked by:** PR1 (registry ex
 
 ---
 
-## Extend the transcription provider picker to the gateway/mobile path
+## Extend the transcription provider picker to the gateway/mobile path ⚠️ LOW-VALUE post-pivot
+
+**2026-06-22 obsolescence note:** the *desktop* live-stream provider picker already
+works (`src/main/transcription/factory.ts` builds Deepgram **or** AssemblyAI). The
+*mobile/gateway* half — the actual ask here — is now low-value: post-M3 pivot, mobile
+recordings are upload-then-**batch** and the gateway hard-codes Deepgram batch
+(`transcribe-job.ts`), which is fine for a single-provider V1. Only worth doing if a
+user genuinely needs AssemblyAI *batch* for mobile. Demote / likely won't-do.
 
 **What:** Make the gateway-side Deepgram batch path honor each user's
 `liveTranscriptionProvider` preference, so a user who has picked AssemblyAI
@@ -185,7 +222,11 @@ streaming holds up across multiple real meetings.
 
 ---
 
-## Wire the named transcription error codes to Sentry
+## Wire the named transcription error codes to Sentry (desktop-only post-pivot)
+
+**2026-06-22 note:** still relevant but **desktop-scoped** — the `*StreamingClient`
+errors are the desktop live path. Mobile is batch now; its errors land in the gateway
+`deepgramErrorRing` (`transcribe-job.ts`), not a streaming client. No mobile work here.
 
 **What:** Send the structured `error` events emitted by
 `DeepgramStreamingClient` and `AssemblyAiStreamingClient` to Sentry instead
@@ -321,7 +362,10 @@ Sandy still hits false-positive rewrites at 0.97, escalate to this.
 
 ---
 
-## WebRTC AEC3 native module for stereo capture
+## WebRTC AEC3 native module for stereo capture (desktop-only)
+
+**2026-06-22 note:** desktop-only — mobile records mono AAC (no stereo/AEC). Still a
+valid desktop-quality escalation if NLMS residual bleed proves insufficient.
 
 **What:** Replace the in-worklet NLMS adaptive filter shipped with the
 "separate transcription for you and others" feature (2026-05-29) with
@@ -357,7 +401,11 @@ real meetings.
 
 ---
 
-## AssemblyAI stereo / per-channel transcription parity ⚠️ PARTIAL
+## AssemblyAI stereo / per-channel transcription parity ⚠️ PARTIAL → accepted limitation
+
+**2026-06-22 note:** Deepgram multichannel **shipped** (`src/main/deepgram/client.ts`);
+AssemblyAI universal-streaming has no per-channel mode, so the toggle stays
+Deepgram-only. Treat as an **accepted limitation** (won't-ship) rather than open work.
 
 **What:** Provide a per-channel (mic + system separate) transcription
 mode on AssemblyAI to match the Deepgram multichannel path shipped
@@ -732,8 +780,8 @@ current work.
 | M2 | Read-only CRM verticals (meeting, company, contact, notes, universal search) | ✅ shipped | commits 45bd145 / f571dd3 / 53a6f24 / 8143aff / e4bc492 |
 | M2 | … + APNs push notifications | ✅ shipped | `api-gateway/src/push/apns.ts` + `POST /devices/register-push`; finalize sends push, 410 dead-token cleanup; `recordings-finalize.test.ts` |
 | **M3** | **Recording happy path** — PIVOTED to upload-then-batch (Record FAB → `mobile/lib/recording/*` expo-av AAC/M4A → `POST /recordings/upload` → Deepgram **batch** → `deepgram-webhook` persist + APNs → poll/display; summary via manual `POST /meetings/:id/enhance`). | ✅ shipped (pivoted) | The original Opus/WS/live-transcript design was **deliberately dropped** for upload-then-batch (simpler reliability + battery; documented in `mobile/app/record.tsx`). Live partials are not shown. The orphaned Opus/WS/two-stage test rows below reflect the abandoned design. |
-| M4 | Recording resilience (gap reconstruction, Live Activity, stage-2 finalize, 8hr cap) | ⏳ pending | 2.5 weeks; needs Cloudflare R2 bucket for canonical WAV |
-| M5 | AI Chat (SSE + citations), Tiptap notes editor + Enhance, writes | ⏳ pending | 2 weeks |
+| M4 | Recording resilience — **RE-SCOPED 2026-06-22** by the M3 upload pivot. ~~Gap reconstruction~~ (OBVIATED — was for live WS streaming; upload-retry already ships in `mobile/lib/recording/pending-upload.ts`). ~~8hr cap~~ (✅ shipped — `MAX_RECORDING_MS` in `mobile/lib/recording/session.ts`). ~~Stage-2 finalize / canonical-WAV merge~~ (deferred post-V1 — R2 driver gone, the phone keeps audio until `transcribed`; see the R2 row below). **Surviving net-new work: Live Activity** (iOS lock-screen recording UI). | ⚠️ mostly obviated | Collapsed from a 2.5-wk milestone to ~Live Activity only. R2 is **not** a dependency anymore (contradicts the old note; the "Cloudflare R2 → post-V1" row is the correct one). |
+| M5 | AI Chat + notes editor + writes — **RE-SCOPED 2026-06-22**. ~~Chat SSE~~ (✅ T18) + ~~chat persistence~~ (✅ T17) + ~~basic mobile note writes~~ (✅ create/tag/soft-delete) already shipped. **Surviving work: rich Tiptap notes editor on mobile + mobile Enhance + chat citations.** | ⚠️ partially shipped | ~Half the original M5 is done; remaining is the Tiptap editor + Enhance + citations. |
 | M6 | Polish, empty states, settings, TestFlight cohort 1, 10 Maestro E2E flows green | ⏳ pending | 2 weeks; needs Apple Developer Program seat |
 | M7 | App Store prep, cutover sequence, feature flags, user docs | ⏳ pending | 1.5 weeks |
 | Phase 1.5a | Desktop → Neon one-way sync (writeWithSync barrel, SyncAgent, /sync/push, drizzle-zod validators, dead-letter) | ✅ shipped | commits 7066796 / 99e1c38 / 36ff7f3 / 1778f7e — 59/59 + 17/17 tests, deployed to Fly. Desktop OAuth now wired so the SyncAgent has a real JWT. |
@@ -807,8 +855,8 @@ The full per-migration audit is in [packages/db/MIGRATION_AUDIT.md](packages/db/
 | Fake-Deepgram subprocess | Phase 0.6 follow-up | ~~`api-gateway/test/fake-deepgram/`~~ | ✅ superseded — Deepgram is faked via vitest mocks in `recordings-finalize.test.ts` (no subprocess/dir needed) |
 | ~~Opus encoder round-trip~~ | ~~M3~~ | ~~`mobile/lib/recording/opus.test.ts`~~ | ❌ OBSOLETE — Opus encoder dropped in the M3 upload-then-batch pivot (mobile records AAC/M4A via expo-av) |
 | ~~WS frame envelope (seq monotonic, dedup, gap detection)~~ | ~~M3~~ | ~~`api-gateway/recording/wire.test.ts`~~ | ❌ OBSOLETE — WS audio-streaming dropped in the M3 pivot (audio is uploaded as a file, not framed over WS) |
-| Two-stage finalize merge | M4 | `api-gateway/recording/finalize.test.ts` | ⏳ — M3 is single-stage (Deepgram batch webhook). Stage-2 canonical-WAV merge is M4 (needs R2). |
-| Gap chunks → prerecorded → assembler merge | M4 | `api-gateway/recording/assembler.test.ts` | ⏳ |
+| Two-stage finalize merge | M4 (post-V1) | `api-gateway/recording/finalize.test.ts` | ⏳ deferred — M3 is single-stage (Deepgram batch webhook), which is the live path; the real gap is a **single-stage** finalize test. Stage-2 canonical-WAV merge is post-V1 (R2 driver gone). |
+| ~~Gap chunks → prerecorded → assembler merge~~ | ~~M4~~ | ~~`api-gateway/recording/assembler.test.ts`~~ | ❌ OBSOLETE — gap reconstruction/assembly assumed live WS streaming; the upload-then-batch model has no stream gaps (Deepgram batch returns one complete transcript). |
 | Quota soft-warn / hard-cut thresholds | M3 | `api-gateway/quota.test.ts` | ⏳ |
 | OAuth re-consent flow (simulate `invalid_grant`) | M1a | `api-gateway/auth/reauth.test.ts` | ⏳ |
 | LLM eval suite regression + 5 new mobile-flow cases | Phase 0.5 Batch 3 | existing eval scripts | ⏳ |
@@ -873,7 +921,7 @@ fill out full M5 in subsequent passes.
 | **T37** | **Memo evidence drill-in on mobile** | `memo_evidence` table (migrations 085 + 090) links each memo claim to source meetings / transcripts / web URLs. On desktop, clicking a claim jumps to the source. Mobile equivalent: when rendering memo markdown, inject inline tappable links for claims that have evidence rows; tap → push to `/meetings/:id` with a scroll target at the right transcript range (or web URL via Linking.openURL). Significantly enhances the read view's value as a "verify a claim while skimming on the go" tool. Requires extending `GET /memos/:id` response to include evidence joins, OR a separate `GET /memos/:id/evidence` endpoint. Inline-link injection on the mobile side requires parsing the markdown to identify claim sentences — non-trivial. | M-L (~2-3 days) | P3. Trigger: user signal that they want this on mobile (it might stay primarily a desktop drafting workflow). |
 | **T38** | **✅ SHIPPED — SyncAgent adaptive batching + outbox payload trimming** | Both parts landed. **(a)** `src/main/services/sync-agent.ts` catches `PayloadTooLargeError` (413), halves the batch, and persists the safe ceiling in `sync_state.safe_batch_size` (migration 100). **(b)** `_sync.ts` `trimUnchangedLargeColumns()` omits unchanged `spec.largeColumns` from UPDATE outbox rows. Gateway `bodyLimit` is **10 MB** steady-state (the temporary 50 MB bump was reverted — it OOM-SIGABRT'd; comment in `api-gateway/src/app.ts`). | M (~2-3 days for both) | **P2.** Shipped; revisit only if a hot meeting overflows 10 MB under concurrent edits before multi-firm onboarding. |
 | **T25** | **✅ SHIPPED — Shared templates workspace package (+ shared prompt assembly).** | The 5 default templates AND the prompt-assembly logic now live in `@cyggie/shared`: [packages/shared/src/constants/meeting-templates.ts](packages/shared/src/constants/meeting-templates.ts) (`CANONICAL_MEETING_TEMPLATES`) + [packages/shared/src/llm/meeting-prompt.ts](packages/shared/src/llm/meeting-prompt.ts) (`buildPrompt`). Desktop seed ([src/shared/constants/templates.ts](src/shared/constants/templates.ts)) + desktop summarizer ([packages/services/src/llm/templates.ts](packages/services/src/llm/templates.ts)) + gateway ([api-gateway/src/templates/meeting-summary-templates.ts](api-gateway/src/templates/meeting-summary-templates.ts)) all re-export from the one source; the gateway's hand-mirrored `TEMPLATES` array + `substitutePlaceholders` were deleted and the enhance route now calls the SAME `buildPrompt` as the desktop summarizer. **Went beyond the original scope** (decision: full desktop/mobile Enhance parity): the gateway now also emits the anti-fabrication / company / task-attribution trailers, which required Neon `users` columns (firstName/lastName/title/jobFunction — migration `0046_users_profile_identity`) + a desktop→Neon push (`PATCH /user/profile` + `gateway-profile.ts`, backfilled on launch + on Settings save). Guard test: [api-gateway/test/summarizer-sync-vs-async.test.ts](api-gateway/test/summarizer-sync-vs-async.test.ts). Mobile keeps the `GET /templates` fetch posture. **⚠️ DEPLOY:** migration 0046 must be applied to Neon before the new gateway build serves `/meetings/:id/enhance` (the route now SELECTs the new user columns). | M (shipped) | Was P2. |
-| **T26** | **SSE streaming for /meetings/:id/enhance.** | Today the route blocks the mobile UI for 5-15s while Claude generates. Token-by-token streaming would massively improve perceived latency. Anthropic SDK supports `client.messages.stream()`; Fastify exposes raw `reply.raw.write()` for SSE. Mobile needs an EventSource consumer (RN doesn't ship one — use `event-source-polyfill` or roll a tiny one via `expo-fetch`). Test against a mocked SSE producer to keep Claude out of CI. | L (~2 days) | Pair with T18 (same pattern on /chat/messages) for one combined SSE landing. | P3 |
+| **T26** | **READY-TO-SHIP — SSE streaming for /meetings/:id/enhance.** Token-by-token streaming for the enhance route. **No longer a discovery task** — T18 already shipped the exact pattern (`Accept: text/event-stream` + `reply.raw.write()` + `expo-fetch` consumer + mocked-SSE test in `chat-sessions-stream.test.ts`); this is a mechanical copy to the enhance route. | S (copy T18) | Was L; T18 collapsed it to a paste. | P3 |
 | **T27** | ~~Markdown rendering on mobile~~ | **OBSOLETE.** Shipped in commit 00fa047 via Item 2 — `react-native-markdown-display` is installed and rendered in SummarySection. | — | — |
 | **T28** | **User-editable templates on mobile.** | Today mobile picker shows the 5 hardcoded templates. Desktop will eventually let users create/edit templates (template seed/editor surface). Mobile mirrors via the existing `GET /templates`. Requires: gateway stores user templates in a new `templates` table (or extends settings), mobile UI for create/edit, picker shows user templates above defaults. | L (~3-4 days) | Depends on T25 (shared source for default templates). | P3 |
 | **T29** | **Template-picker UX polish.** | Add "last used" memory (persist last-picked template id per meeting), preview of the system prompt before commit, drag-to-reorder, search/filter. Today's picker is a vanilla list. | S | Defer until 1+ user complains. | P3 |
@@ -2000,7 +2048,11 @@ desktop tagging already worked. (Empty placeholder header otherwise.)
 
 ## P3 — Notes: Index for getFolderCounts() scalability
 
-## P3 — Chat: Persist context selection across sessions in MeetingDetail
+## P3 — Chat: Persist context selection across sessions in MeetingDetail (eroded by MC.2)
+
+**2026-06-22 note:** MC.2 shipped the selectable-context infra (`selected_company_ids` on
+`chat_sessions`); the principle is solved. This is now just the meeting-anchored restore
+variant — low-frequency, P3-latent. Fold into chat QoL if reported.
 
 ### Remember last-selected AI chat context per meeting
 **What:** Persist the user's last-selected context option (company or contact) in the AI chat panel so it restores when they reopen the meeting.
@@ -2450,7 +2502,13 @@ new IPC channel; user can opt in to sharing.
 
 ## P1 — Stress-test (Phase 2 follow-ups)
 
-### Apply selected findings → rewrite memo
+### Apply selected findings → rewrite memo ⚠️ ERODED (core agent shipped)
+
+**2026-06-22 note:** the stress-test *agent* shipped (`thesis-stress-test-agent.ts`
+produces a structured `StressTestReport`); what remains is **only** the UI (per-concern
+checkboxes in `StressTestReportViewer`) + the apply/append step. So this P1 is mechanical
+finish-work, not a new capability — decide deterministic-append vs agent-rewrite after a
+week of dogfooding.
 **What:** Add checkboxes per concern in the StressTestReportViewer. "Apply N selected" triggers either (a) deterministic append to memo's Risks section or (b) a new memo-rewriter agent run.
 **Why:** Closes the loop on the new product model. Phase 1 made stress-test produce findings without touching the memo; Phase 2 lets the user opt-in concern-by-concern to incorporate findings into a new memo version.
 **Pros:** Completes the "review → incorporate" workflow; preserves analyst control.
@@ -2886,7 +2944,10 @@ PR).
 
 ---
 
-## Add search-when-5+-options input to the shared `OptionListPopover`
+## Add search-when-5+-options input to the shared `OptionListPopover` (still open; primitive shipped)
+
+**2026-06-22 note:** `OptionListPopover` itself **shipped**; `PropertyRow` already has the
+search-when-5+ behaviour — this is just porting that input into the shared primitive. Small.
 
 **What:** Render a small search input at the top of `OptionListPopover`
 when `options.length >= 5`. Filter the visible list as the user types.
@@ -2971,7 +3032,10 @@ dropdown plan: `when-the-user-clicks-cheeky-candy.md`).
 
 ---
 
-## Migrate `ChipSelect` onto the shared `OptionListPopover`
+## Migrate `ChipSelect` onto the shared `OptionListPopover` (still open; primitive shipped)
+
+**2026-06-22 note:** the `OptionListPopover` primitive **shipped** and is the migration
+target; `ChipSelect` (~12 usages) is the orphan still to be migrated. Audit-before-migrate.
 
 **What:** Audit [ChipSelect.tsx](src/renderer/components/crm/ChipSelect.tsx)
 against the shared `OptionListPopover` introduced by the three-click
