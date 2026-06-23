@@ -1427,15 +1427,26 @@ tracking exists in current schema.
 
 ## P2 — Contacts (Performance)
 
-### Pre-compute contact activity touchpoints
-**What:** Add `last_meeting_date` and `last_email_date` columns to the contacts table, updated on write (via triggers or write hooks). Remove the 3 full-table scan functions (`buildLatestMeetingTouchByEmail`, `buildLatestEmailTouchByEmail`, `buildLatestEmailTouchByContactId`) from the read path.
-**Why:** When `includeActivityTouchpoint=true`, `listContacts()` runs 3 full-table scans across meetings and email tables on every call. This is the heaviest query in the app and fires on every Contacts page mount. The correct pattern for web/mobile is to move this work from read-time to write-time.
-**Pros:** Eliminates O(n) scans on every Contacts load; correct architecture for web/mobile migration; read path becomes a simple column read.
-**Cons:** Requires a migration to add columns + backfill existing data; write paths (meeting create/update, email sync) need to update the denormalized columns.
-**Context:** The 3 scan functions are in `src/main/database/repositories/contact.repo.ts` lines 641-760. Called when `includeActivityTouchpoint=true` (Contacts.tsx line 388). Write-side update points: meeting creation/update in `meeting.repo.ts`, email sync in `email.repo.ts`. Backfill migration: run the existing scan logic once to populate columns for all existing contacts.
-**Effort:** M
-**Priority:** P2
-**Depends on:** Nothing.
+### Pre-compute contact activity touchpoints — ⚠️ PARTIALLY ADDRESSED (lightweight CTE fix shipped)
+**Update (2026-06-23):** The expensive read path was fixed *without* denormalizing. The three full-table JS scans (`buildLatestMeetingTouchByEmail` / `buildLatestEmailTouchByEmail` / `buildLatestEmailTouchByContactId`) + `applyActivityTouchpointToContactRows` + `buildContactEmailMap` were deleted and replaced by one shared SQL fragment, `TOUCHPOINT_CTES` in [packages/db/src/sqlite/repositories/contact.repo.ts](packages/db/src/sqlite/repositories/contact.repo.ts), used by both `listContacts` and `listContactsLight`. This also fixed a latent bug: the light path computed the touchpoint *after* pagination and silently fell back to `updated_at` for sorting, so "Recent Activity" ordering never worked on the full table. **No columns added, no write-path maintenance, no sync churn.** Migration 132 (covering indexes) was prototyped then dropped: `EXPLAIN QUERY PLAN` proved no index helps — the list computes a touchpoint for *every* contact, so the email/meeting tables must be read in full regardless; the win is native SQL scan+aggregate vs marshaling whole tables into JS. The remaining denormalization work below is **deferred**, not done.
+
+**What (deferred):** Add write-maintained `last_meeting_at` / `last_email_at` columns to `contacts` (synced to Neon), via ONE `recomputeContactTouchpoints(contactIds)` helper called from every write path, plus a one-time backfill. Read path becomes an O(1) indexed column read; mobile gets recency without re-implementing the scan.
+**Why defer, not do now:** Migration **127** (commit `d8e729f`) already added these exact columns and reverted them — "their server-side maintenance was never wired, so they sat empty and silently broke the contact list's recency sort." The lightweight CTE fix removes the perf pain at current single-firm scale; the denormalization only pays off when the **mobile** contact list needs recency or Contacts mount becomes visibly laggy, and it carries that same maintenance-rot risk + outbox churn.
+**Pros:** O(1) reads; mobile-ready recency; indexed SQL recency sort.
+**Cons:** Must wire EVERY write path (createMeeting / updateMeeting / **deleteMeeting** / email ingest in `email-sync-backfill.service.ts` / `addContactEmail` / contact merge) or the columns rot like migration 127; outbox/sync churn on every meeting/email ingest.
+**Effort:** M-L
+**Priority:** P2 (revisit-when-triggered, not active)
+**Depends on:** Mobile contact-list recency requirement OR observed Contacts-mount latency.
+
+### Attendees-embedded email extraction in the touchpoint CTE
+**What:** Add a `json_each(attendees)` branch (with SQL email extraction for `"Name <email>"` entries) to the shared `TOUCHPOINT_CTES` meeting branch.
+**Why:** The shipped CTE matches `attendee_emails` only. The old JS scan also parsed emails embedded in the `attendees` JSON, so legacy meetings that have `attendees` but no `attendee_emails` lose meeting-touch recall.
+**Pros:** Closes the recall gap for old meetings.
+**Cons:** Fragile `instr`/`substr` parsing of free-text attendee strings; only matters if such rows actually exist.
+**Context:** Build ONLY if the golden/per-branch test in [src/tests/contact.repo.test.ts](src/tests/contact.repo.test.ts) (or a one-off query on prod data) surfaces real contacts whose touchpoint changes. Reference the deleted `parseAttendeeEntry` logic in `contact-utils.ts` for the extraction rules.
+**Effort:** S
+**Priority:** P3 (conditional)
+**Depends on:** Evidence that `attendees`-only meetings exist in the dataset.
 
 ---
 

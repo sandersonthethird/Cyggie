@@ -24,10 +24,7 @@ import {
   parseJsonArray,
   parseEmailParticipants,
   normalizeForCompare,
-  SQLITE_DATETIME_RE,
-  parseTimestamp,
   pickLatestTimestamp,
-  setLatestMapValue,
   NAME_STOP_WORDS,
   LINKEDIN_URL_RE,
   normalizePersonNameCandidate,
@@ -676,211 +673,106 @@ function buildContactOrderBy(sortBy: ContactSortBy | undefined, includeLastTouch
   `
 }
 
-function buildContactEmailMap(
-  db: ReturnType<typeof getDatabase>,
-  rows: ContactRow[]
-): Map<string, string[]> {
-  const contactIds = rows.map((row) => row.id).filter((value) => value.trim().length > 0)
-  const byContact = new Map<string, Set<string>>()
+/**
+ * Shared "activity touchpoint" CTEs — the single source of truth for a
+ * contact's most-recent meeting / email DATE. Replaces the three former
+ * full-table JS scans (buildLatestMeetingTouchByEmail / *EmailByEmail /
+ * *EmailByContactId) with one indexed SQL pass, computed BEFORE pagination so
+ * `last_touchpoint` is a real, orderable column.
+ *
+ *   contact_email_keys ─┬─► meeting_touch ──┐
+ *   (contact_emails ∪   │   (attendee_emails │
+ *    contacts.email)    │    ⋈ json_each)    ├─► last_touchpoint =
+ *                       └─► email_touch ─────┘   COALESCE(MAX(meeting,email),
+ *                           (participants.email ∪   c.updated_at)
+ *                            from_email ∪
+ *                            email_contact_links ∪
+ *                            participants.contact_id)
+ *
+ * NOTE (decision 1A): this computes touchpoint DATES only. meeting_count /
+ * email_count keep their own COUNT(DISTINCT) CTEs in listContacts — routing
+ * counts through the fuller email UNION would double-count a message matched
+ * by two branches.
+ *
+ * NOTE (decision 2A): the meeting branch matches `attendee_emails` only. The
+ * old JS scan also parsed emails embedded in the `attendees` JSON
+ * ("Name <email>"); that legacy fallback is intentionally dropped (gated by
+ * the golden test).
+ *
+ * Inject into a query's WITH chain (comma-joined). Joined as `mt` / `et`.
+ */
+const TOUCHPOINT_CTES = `
+      contact_email_keys AS (
+        SELECT ce.contact_id AS contact_id, lower(trim(ce.email)) AS email
+        FROM contact_emails ce
+        WHERE ce.email IS NOT NULL AND trim(ce.email) <> ''
+        UNION
+        SELECT c.id AS contact_id, lower(trim(c.email)) AS email
+        FROM contacts c
+        WHERE c.email IS NOT NULL AND trim(c.email) <> ''
+      ),
+      meeting_touch AS (
+        SELECT k.contact_id AS contact_id, MAX(m.date) AS last_meeting_at
+        FROM contact_email_keys k
+        JOIN meetings m ON m.date IS NOT NULL AND EXISTS (
+          SELECT 1
+          FROM json_each(COALESCE(m.attendee_emails, '[]')) e
+          WHERE lower(trim(e.value)) = k.email
+        )
+        GROUP BY k.contact_id
+      ),
+      email_touch AS (
+        SELECT contact_id, MAX(last_at) AS last_email_at
+        FROM (
+          SELECT k.contact_id AS contact_id,
+                 COALESCE(em.received_at, em.sent_at, em.created_at) AS last_at
+          FROM contact_email_keys k
+          JOIN email_message_participants p ON lower(trim(p.email)) = k.email
+          JOIN email_messages em ON em.id = p.message_id
 
-  for (const row of rows) {
-    const contactId = row.id.trim()
-    if (!contactId) continue
-    if (!byContact.has(contactId)) {
-      byContact.set(contactId, new Set<string>())
-    }
-    const normalized = normalizeEmail(row.email || '')
-    if (normalized) {
-      byContact.get(contactId)!.add(normalized)
-    }
-  }
+          UNION ALL
 
-  if (contactIds.length === 0) {
-    return new Map()
-  }
+          SELECT k.contact_id AS contact_id,
+                 COALESCE(em.received_at, em.sent_at, em.created_at) AS last_at
+          FROM contact_email_keys k
+          JOIN email_messages em ON lower(trim(em.from_email)) = k.email
 
-  const placeholders = contactIds.map(() => '?').join(', ')
-  const emailRows = db
-    .prepare(`
-      SELECT contact_id, email
-      FROM contact_emails
-      WHERE contact_id IN (${placeholders})
-    `)
-    .all(...contactIds) as Array<{
-    contact_id: string
-    email: string | null
-  }>
+          UNION ALL
 
-  for (const row of emailRows) {
-    const contactId = row.contact_id.trim()
-    if (!contactId) continue
-    if (!byContact.has(contactId)) {
-      byContact.set(contactId, new Set<string>())
-    }
-    const normalized = normalizeEmail(row.email || '')
-    if (normalized) {
-      byContact.get(contactId)!.add(normalized)
-    }
-  }
+          SELECT l.contact_id AS contact_id,
+                 COALESCE(em.received_at, em.sent_at, em.created_at) AS last_at
+          FROM email_contact_links l
+          JOIN email_messages em ON em.id = l.message_id
 
-  const result = new Map<string, string[]>()
-  for (const [contactId, emails] of byContact.entries()) {
-    result.set(contactId, [...emails])
-  }
-  return result
-}
+          UNION ALL
 
-function buildLatestMeetingTouchByEmail(
-  db: ReturnType<typeof getDatabase>
-): Map<string, string> {
-  const rows = db
-    .prepare(`
-      SELECT date, attendees, attendee_emails
-      FROM meetings
-      WHERE (attendee_emails IS NOT NULL OR attendees IS NOT NULL)
-        AND date IS NOT NULL
-    `)
-    .all() as Array<{
-    date: string | null
-    attendees: string | null
-    attendee_emails: string | null
-  }>
+          SELECT p.contact_id AS contact_id,
+                 COALESCE(em.received_at, em.sent_at, em.created_at) AS last_at
+          FROM email_message_participants p
+          JOIN email_messages em ON em.id = p.message_id
+          WHERE p.contact_id IS NOT NULL AND trim(p.contact_id) <> ''
+        ) src
+        WHERE src.last_at IS NOT NULL AND src.contact_id IS NOT NULL
+        GROUP BY src.contact_id
+      )
+`
 
-  const latestByEmail = new Map<string, string>()
-  for (const row of rows) {
-    const meetingDate = row.date
-    if (!meetingDate) continue
-
-    for (const rawEmail of parseJsonArray(row.attendee_emails)) {
-      const email = normalizeEmail(rawEmail)
-      if (!email) continue
-      setLatestMapValue(latestByEmail, email, meetingDate)
-    }
-
-    for (const entry of parseJsonArray(row.attendees)) {
-      const parsed = parseAttendeeEntry(entry)
-      if (!parsed.email) continue
-      setLatestMapValue(latestByEmail, parsed.email, meetingDate)
-    }
-  }
-  return latestByEmail
-}
-
-function buildLatestEmailTouchByEmail(
-  db: ReturnType<typeof getDatabase>
-): Map<string, string> {
-  const rows = db
-    .prepare(`
-      SELECT
-        email,
-        MAX(last_at) AS last_touchpoint
-      FROM (
-        SELECT
-          lower(trim(p.email)) AS email,
-          COALESCE(em.received_at, em.sent_at, em.created_at) AS last_at
-        FROM email_message_participants p
-        JOIN email_messages em ON em.id = p.message_id
-        WHERE p.email IS NOT NULL
-          AND trim(p.email) <> ''
-
-        UNION ALL
-
-        SELECT
-          lower(trim(em.from_email)) AS email,
-          COALESCE(em.received_at, em.sent_at, em.created_at) AS last_at
-        FROM email_messages em
-        WHERE em.from_email IS NOT NULL
-          AND trim(em.from_email) <> ''
-      ) source
-      WHERE source.last_at IS NOT NULL
-      GROUP BY email
-    `)
-    .all() as Array<{
-    email: string
-    last_touchpoint: string | null
-  }>
-
-  const latestByEmail = new Map<string, string>()
-  for (const row of rows) {
-    if (!row.email) continue
-    setLatestMapValue(latestByEmail, row.email, row.last_touchpoint)
-  }
-  return latestByEmail
-}
-
-function buildLatestEmailTouchByContactId(
-  db: ReturnType<typeof getDatabase>,
-  contactIds: string[]
-): Map<string, string> {
-  if (contactIds.length === 0) return new Map()
-  const placeholders = contactIds.map(() => '?').join(', ')
-  const rows = db
-    .prepare(`
-      SELECT
-        contact_id,
-        MAX(last_at) AS last_touchpoint
-      FROM (
-        SELECT
-          l.contact_id AS contact_id,
-          COALESCE(em.received_at, em.sent_at, em.created_at) AS last_at
-        FROM email_contact_links l
-        JOIN email_messages em ON em.id = l.message_id
-        WHERE l.contact_id IN (${placeholders})
-
-        UNION ALL
-
-        SELECT
-          p.contact_id AS contact_id,
-          COALESCE(em.received_at, em.sent_at, em.created_at) AS last_at
-        FROM email_message_participants p
-        JOIN email_messages em ON em.id = p.message_id
-        WHERE p.contact_id IN (${placeholders})
-      ) source
-      WHERE source.contact_id IS NOT NULL
-      GROUP BY contact_id
-    `)
-    .all(...contactIds, ...contactIds) as Array<{
-    contact_id: string
-    last_touchpoint: string | null
-  }>
-
-  const latestByContactId = new Map<string, string>()
-  for (const row of rows) {
-    if (!row.contact_id) continue
-    setLatestMapValue(latestByContactId, row.contact_id, row.last_touchpoint)
-  }
-  return latestByContactId
-}
-
-function applyActivityTouchpointToContactRows(
-  db: ReturnType<typeof getDatabase>,
-  rows: ContactRow[]
-): ContactRow[] {
-  if (rows.length === 0) return rows
-
-  const contactIds = rows.map((row) => row.id).filter((value) => value.trim().length > 0)
-  const emailsByContactId = buildContactEmailMap(db, rows)
-  const latestMeetingByEmail = buildLatestMeetingTouchByEmail(db)
-  const latestEmailByEmail = buildLatestEmailTouchByEmail(db)
-  const latestEmailByContactId = buildLatestEmailTouchByContactId(db, contactIds)
-
-  return rows.map((row) => {
-    const contactId = row.id.trim()
-    const candidates: Array<string | null | undefined> = [latestEmailByContactId.get(contactId.toLowerCase())]
-
-    const emails = emailsByContactId.get(contactId) || []
-    for (const email of emails) {
-      candidates.push(latestMeetingByEmail.get(email))
-      candidates.push(latestEmailByEmail.get(email))
-    }
-
-    const computed = pickLatestTimestamp(candidates)
-    return {
-      ...row,
-      last_touchpoint: computed || row.updated_at
-    }
-  })
-}
+/**
+ * The touchpoint SELECT expression — most-recent of meeting/email touch,
+ * falling back to the contact's own updated_at. Requires `meeting_touch mt` /
+ * `email_touch et` to be LEFT JOINed and `c` aliased to contacts. Mirrors the
+ * string comparison the shipped listContacts CTE has always used.
+ */
+const TOUCHPOINT_EXPR = `
+        COALESCE(
+          CASE
+            WHEN mt.last_meeting_at IS NULL THEN et.last_email_at
+            WHEN et.last_email_at IS NULL THEN mt.last_meeting_at
+            WHEN mt.last_meeting_at > et.last_email_at THEN mt.last_meeting_at
+            ELSE et.last_email_at
+          END,
+          c.updated_at
+        )`
 
 export function listContacts(filter?: {
   query?: string
@@ -935,7 +827,8 @@ export function listContacts(filter?: {
         JOIN email_message_participants p ON lower(trim(p.email)) = lower(trim(ce.email))
         JOIN email_messages em ON em.id = p.message_id
         GROUP BY c.id
-      )
+      ),
+${TOUCHPOINT_CTES}
       SELECT
         c.id,
         c.full_name,
@@ -953,15 +846,7 @@ export function listContacts(filter?: {
         c.crm_provider,
         COALESCE(ms.meeting_count, 0) AS meeting_count,
         COALESCE(es.email_count, 0) AS email_count,
-        COALESCE(
-          CASE
-            WHEN ms.last_meeting_at IS NULL THEN es.last_email_at
-            WHEN es.last_email_at IS NULL THEN ms.last_meeting_at
-            WHEN ms.last_meeting_at > es.last_email_at THEN ms.last_meeting_at
-            ELSE es.last_email_at
-          END,
-          c.updated_at
-        ) AS last_touchpoint,
+        ${TOUCHPOINT_EXPR} AS last_touchpoint,
         c.phone,
         c.street,
         c.city,
@@ -989,6 +874,8 @@ export function listContacts(filter?: {
       FROM contacts c
       LEFT JOIN meeting_stats ms ON ms.contact_id = c.id
       LEFT JOIN email_stats es ON es.contact_id = c.id
+      LEFT JOIN meeting_touch mt ON mt.contact_id = c.id
+      LEFT JOIN email_touch et ON et.contact_id = c.id
       LEFT JOIN org_companies oc ON oc.id = c.primary_company_id
       ${where}
       ${buildContactOrderBy(filter?.sortBy, true)}
@@ -1041,8 +928,25 @@ export function listContactsLight(filter?: {
     : ''
   if (companyId) params.push(companyId)
 
-  const baseRows = db
+  // When activity touchpoint is requested, compute it in-query via the shared
+  // CTE so `last_touchpoint` is a real column ordered BEFORE pagination (the
+  // pre-CTE path computed it post-pagination and silently fell back to
+  // updated_at for sorting). When not requested, keep the cheap path verbatim.
+  const withClause = includeActivityTouchpoint ? `WITH ${TOUCHPOINT_CTES}` : ''
+  const touchpointSelect = includeActivityTouchpoint
+    ? `${TOUCHPOINT_EXPR} AS last_touchpoint`
+    : 'c.updated_at AS last_touchpoint'
+  const touchpointJoins = includeActivityTouchpoint
+    ? `LEFT JOIN meeting_touch mt ON mt.contact_id = c.id
+      LEFT JOIN email_touch et ON et.contact_id = c.id`
+    : ''
+  const orderBy = buildContactOrderBy(filter?.sortBy, includeActivityTouchpoint)
+    .trim()
+    .replace(/^ORDER BY\s*/i, '')
+
+  const rows = db
     .prepare(`
+      ${withClause}
       SELECT
         c.id,
         c.full_name,
@@ -1060,7 +964,7 @@ export function listContactsLight(filter?: {
         c.crm_provider,
         0 AS meeting_count,
         0 AS email_count,
-        c.updated_at AS last_touchpoint,
+        ${touchpointSelect},
         c.phone,
         c.street,
         c.city,
@@ -1087,15 +991,12 @@ export function listContactsLight(filter?: {
         c.updated_at
       FROM contacts c
       LEFT JOIN org_companies oc ON oc.id = c.primary_company_id
+      ${touchpointJoins}
       ${where}
-      ORDER BY ${companyBoost} ${buildContactOrderBy(filter?.sortBy, false).trim().replace(/^ORDER BY\s*/i, '')}
+      ORDER BY ${companyBoost} ${orderBy}
       LIMIT ? OFFSET ?
     `)
     .all(...params, limit, offset) as ContactRow[]
-
-  const rows = includeActivityTouchpoint
-    ? applyActivityTouchpointToContactRows(db, baseRows)
-    : baseRows
 
   return rows.map(rowToContactSummary)
 }

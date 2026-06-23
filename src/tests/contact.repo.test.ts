@@ -248,7 +248,13 @@ describe('listContacts — keeps manual/tagged no-email CRM contacts', () => {
       CREATE TABLE email_message_participants (
         id TEXT PRIMARY KEY,
         message_id TEXT,
+        contact_id TEXT,
         email TEXT
+      );
+      CREATE TABLE email_contact_links (
+        id TEXT PRIMARY KEY,
+        message_id TEXT,
+        contact_id TEXT
       );
       INSERT INTO contacts (id, full_name, normalized_name, email, contact_type, tags) VALUES
         -- Has email: always shown
@@ -577,5 +583,171 @@ describe('getContact / updateContact — keyTakeaways field', () => {
     const contact = getContact('c1')
     expect(contact!.keyTakeawaysUserNote).toBe('My personal note')
     expect(contact!.keyTakeaways).toBe('• Fresh AI bullet')
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────────────
+// Activity touchpoint — shared TOUCHPOINT_CTES (replaces the 3 deleted JS scans)
+//
+// Each seeded contact exercises exactly ONE linkage branch so the expected
+// last_touchpoint is hand-computable. Together they cover every branch of the
+// union the old JS path covered:
+//
+//   cA  meeting via attendee_emails, email lives in contacts.email ONLY
+//       (no contact_emails row)        → proves contact_email_keys ∪ c.email
+//   cB  email via participants.email ⋈ contact_emails
+//   cC  email via email_contact_links.contact_id (email NOT in participants)
+//   cD  email via email_messages.from_email ⋈ contact_emails
+//   cE  multi-email: touch arrives on the SECONDARY contact_emails entry
+//   cF  meeting (older) + email (newer)  → MAX picks the email
+//   cG  no activity                      → falls back to c.updated_at
+// ───────────────────────────────────────────────────────────────────────────
+function buildTouchpointDb(): Database.Database {
+  const db = new Database(':memory:')
+  db.pragma('foreign_keys = ON')
+  db.exec(`
+    CREATE TABLE org_companies (id TEXT PRIMARY KEY, canonical_name TEXT NOT NULL);
+    CREATE TABLE contacts (
+      id TEXT PRIMARY KEY,
+      full_name TEXT NOT NULL,
+      first_name TEXT,
+      last_name TEXT,
+      is_private INTEGER NOT NULL DEFAULT 0,
+      normalized_name TEXT,
+      email TEXT,
+      primary_company_id TEXT REFERENCES org_companies(id),
+      title TEXT, contact_type TEXT, talent_pipeline TEXT, linkedin_url TEXT,
+      crm_contact_id TEXT, crm_provider TEXT, phone TEXT, street TEXT, city TEXT,
+      state TEXT, postal_code TEXT, country TEXT, timezone TEXT, twitter_handle TEXT,
+      university TEXT, pronouns TEXT, last_met_event TEXT, warm_intro_path TEXT,
+      notes TEXT, fund_size REAL, typical_check_size_min REAL, typical_check_size_max REAL,
+      investment_sector_focus_notes TEXT, proud_portfolio_companies TEXT, tags TEXT,
+      previous_companies TEXT, investment_stage_focus TEXT, investment_sector_focus TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE contact_emails (
+      contact_id TEXT NOT NULL, email TEXT NOT NULL, is_primary INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (contact_id, email)
+    );
+    CREATE TABLE meetings (id TEXT PRIMARY KEY, date TEXT, attendee_emails TEXT, attendees TEXT);
+    CREATE TABLE email_messages (
+      id TEXT PRIMARY KEY, from_email TEXT, received_at TEXT, sent_at TEXT, created_at TEXT
+    );
+    CREATE TABLE email_message_participants (
+      id TEXT PRIMARY KEY, message_id TEXT, contact_id TEXT, email TEXT
+    );
+    CREATE TABLE email_contact_links (id TEXT PRIMARY KEY, message_id TEXT, contact_id TEXT);
+  `)
+
+  // updated_at deliberately ancient for cA–cF so the touchpoint comes from
+  // activity, not the fallback. cG is the only one whose updated_at "wins".
+  db.exec(`
+    INSERT INTO contacts (id, full_name, normalized_name, email, updated_at) VALUES
+      ('cA', 'Anna A', 'annaa', 'aemail@x.com', '2020-01-01T00:00:00.000Z'),
+      ('cB', 'Bert B', 'bertb', 'bemail@x.com', '2020-01-01T00:00:00.000Z'),
+      ('cC', 'Cara C', 'carac', 'cemail@x.com', '2020-01-01T00:00:00.000Z'),
+      ('cD', 'Dale D', 'daled', 'demail@x.com', '2020-01-01T00:00:00.000Z'),
+      ('cE', 'Erin E', 'erine', 'eprimary@x.com', '2020-01-01T00:00:00.000Z'),
+      ('cF', 'Finn F', 'finnf', 'femail@x.com', '2020-01-01T00:00:00.000Z'),
+      ('cG', 'Gwen G', 'gweng', 'gemail@x.com', '2023-06-01T00:00:00.000Z');
+
+    -- cA has NO contact_emails row (touch must come from contacts.email key).
+    INSERT INTO contact_emails (contact_id, email, is_primary) VALUES
+      ('cB', 'bemail@x.com', 1),
+      ('cC', 'cemail@x.com', 1),
+      ('cD', 'demail@x.com', 1),
+      ('cE', 'eprimary@x.com', 1),
+      ('cE', 'esecondary@x.com', 0),
+      ('cF', 'femail@x.com', 1),
+      ('cG', 'gemail@x.com', 1);
+
+    INSERT INTO meetings (id, date, attendee_emails) VALUES
+      ('mA', '2022-03-01T00:00:00.000Z', '["aemail@x.com"]'),
+      ('mF', '2022-01-01T00:00:00.000Z', '["femail@x.com"]');
+
+    INSERT INTO email_messages (id, from_email, received_at) VALUES
+      ('eB', 'someone@x.com',  '2022-04-01T00:00:00.000Z'),
+      ('eC', 'someone@x.com',  '2022-05-01T00:00:00.000Z'),
+      ('eD', 'demail@x.com',   '2022-06-01T00:00:00.000Z'),
+      ('eE', 'someone@x.com',  '2022-07-01T00:00:00.000Z'),
+      ('eF', 'someone@x.com',  '2022-08-01T00:00:00.000Z');
+
+    -- cB / cE / cF: matched by participant EMAIL. cD: matched by from_email (no
+    -- participant). cC: matched only by the direct contact-link.
+    INSERT INTO email_message_participants (id, message_id, contact_id, email) VALUES
+      ('pB', 'eB', NULL, 'bemail@x.com'),
+      ('pE', 'eE', NULL, 'esecondary@x.com'),
+      ('pF', 'eF', NULL, 'femail@x.com');
+    INSERT INTO email_contact_links (id, message_id, contact_id) VALUES
+      ('lC', 'eC', 'cC');
+  `)
+  return db
+}
+
+const EXPECTED_TOUCHPOINTS: Record<string, string> = {
+  cA: '2022-03-01T00:00:00.000Z', // meeting via contacts.email key
+  cB: '2022-04-01T00:00:00.000Z', // participant email match
+  cC: '2022-05-01T00:00:00.000Z', // direct contact link
+  cD: '2022-06-01T00:00:00.000Z', // from_email match
+  cE: '2022-07-01T00:00:00.000Z', // secondary email match
+  cF: '2022-08-01T00:00:00.000Z', // MAX(meeting 2022-01, email 2022-08) → email
+  cG: '2023-06-01T00:00:00.000Z', // no activity → updated_at fallback
+}
+
+describe('listContactsLight — activity touchpoint CTE (per-branch correctness)', () => {
+  beforeEach(() => {
+    testDb = buildTouchpointDb()
+  })
+
+  it('computes last_touchpoint for every linkage branch', () => {
+    const rows = listContactsLight({ includeActivityTouchpoint: true })
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r.lastTouchpoint]))
+    for (const [id, expected] of Object.entries(EXPECTED_TOUCHPOINTS)) {
+      expect(byId[id], `touchpoint for ${id}`).toBe(expected)
+    }
+  })
+
+  it('without the flag, last_touchpoint falls back to updated_at (cheap path unchanged)', () => {
+    const rows = listContactsLight({ includeActivityTouchpoint: false })
+    const cA = rows.find((r) => r.id === 'cA')
+    expect(cA?.lastTouchpoint).toBe('2020-01-01T00:00:00.000Z')
+  })
+})
+
+describe('listContactsLight — recency sort happens BEFORE pagination', () => {
+  beforeEach(() => {
+    testDb = buildTouchpointDb()
+  })
+
+  it('most-recently-touched contacts land on page 1 (regression: fixed by the CTE)', () => {
+    // 7 contacts, page size 3. Touchpoint DESC ⇒ cG > cF > cE.
+    // Pre-CTE this sorted the page by updated_at AFTER slicing and could not
+    // surface cF/cE on page 1 at all.
+    const page1 = listContactsLight({ includeActivityTouchpoint: true, limit: 3, offset: 0 })
+    expect(page1.map((r) => r.id)).toEqual(['cG', 'cF', 'cE'])
+  })
+})
+
+describe('listContacts — counts unchanged (decision 1A: counts NOT routed through the fuller union)', () => {
+  beforeEach(() => {
+    testDb = buildTouchpointDb()
+  })
+
+  it('meeting_count / email_count keep their COUNT(DISTINCT) semantics', () => {
+    const rows = listContacts()
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]))
+    // cF: 1 meeting + 1 participant email → 1 / 1
+    expect(byId.cF.meetingCount).toBe(1)
+    expect(byId.cF.emailCount).toBe(1)
+    // cB: participant email only → 0 meetings / 1 email
+    expect(byId.cB.meetingCount).toBe(0)
+    expect(byId.cB.emailCount).toBe(1)
+    // cC: linked ONLY via email_contact_links — the count CTEs (participants-by-
+    // email) deliberately do NOT pick this up, so email_count stays 0 even
+    // though its touchpoint is set. This is the 1A guarantee.
+    expect(byId.cC.emailCount).toBe(0)
+    expect(byId.cC.lastTouchpoint).toBe('2022-05-01T00:00:00.000Z')
   })
 })
