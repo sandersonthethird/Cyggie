@@ -10,7 +10,7 @@
 
 import type { FastifyBaseLogger } from 'fastify'
 import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
-import { schema } from '@cyggie/db'
+import { schema, type Citation } from '@cyggie/db'
 import { stripContextIdPrefix } from '@cyggie/shared'
 import { getDb } from '../../db'
 import { flattenSegments, truncateTranscript } from '../../llm/transcript-flatten'
@@ -251,6 +251,87 @@ export async function buildContextForSession(
   }
 
   return result
+}
+
+// =============================================================================
+// collectContextEntities — the citation CANDIDATE set for a chat turn (M5).
+//
+// Mirrors buildContextForSession's dispatch but returns just the {type,id,label}
+// identity of the PRIMARY entities injected into context, so the gateway can
+// CONTEXT-ATTRIBUTE citations (cite the ones the answer names — see
+// extractCitations in @cyggie/db). Cheap: attached entities already carry their
+// label (zero queries); the contextKind / selected-companies cases do one light
+// id→name lookup each. Transitively-linked meetings are NOT candidates yet
+// (follow-up) — V1 cites the entities the session is explicitly about.
+//
+// Returning a slightly broad candidate set is safe: the conservative matcher
+// filters to names that actually appear in the answer.
+// =============================================================================
+export async function collectContextEntities(
+  db: ReturnType<typeof getDb>,
+  session: typeof schema.chatSessions.$inferSelect,
+): Promise<Citation[]> {
+  // Attached entities (the "+ Add context" chips) already carry {type,id,label}.
+  const attached = session.attachedContextEntities as
+    | Array<{ type: 'company' | 'contact'; id: string; label: string }>
+    | null
+  if (attached && attached.length > 0) {
+    return attached
+      .filter((e) => e && e.id && e.label)
+      .map((e) => ({ type: e.type, id: e.id, label: e.label }))
+  }
+
+  const out: Citation[] = []
+  switch (session.contextKind) {
+    case 'meeting': {
+      const mid = stripContextIdPrefix('meeting', session.contextId)
+      const [m] = await db
+        .select({ id: schema.meetings.id, title: schema.meetings.title, date: schema.meetings.date })
+        .from(schema.meetings)
+        .where(and(eq(schema.meetings.id, mid), eq(schema.meetings.userId, session.userId)))
+        .limit(1)
+      if (m?.title) {
+        out.push({ type: 'meeting', id: m.id, label: m.title, timestamp: new Date(m.date).getTime() })
+      }
+      break
+    }
+    case 'company': {
+      const cid = stripContextIdPrefix('company', session.contextId)
+      const [c] = await db
+        .select({ id: schema.orgCompanies.id, name: schema.orgCompanies.canonicalName })
+        .from(schema.orgCompanies)
+        .where(and(eq(schema.orgCompanies.id, cid), eq(schema.orgCompanies.userId, session.userId)))
+        .limit(1)
+      if (c?.name) out.push({ type: 'company', id: c.id, label: c.name })
+      break
+    }
+    case 'contact': {
+      const cid = stripContextIdPrefix('contact', session.contextId)
+      const [c] = await db
+        .select({ id: schema.contacts.id, fullName: schema.contacts.fullName })
+        .from(schema.contacts)
+        .where(and(eq(schema.contacts.id, cid), eq(schema.contacts.userId, session.userId)))
+        .limit(1)
+      if (c?.fullName) out.push({ type: 'contact', id: c.id, label: c.fullName })
+      break
+    }
+    default: {
+      // crm / global Ask Cyggie — the pill-row selected companies.
+      if (session.selectedCompanyIds && session.selectedCompanyIds.length > 0) {
+        const rows = await db
+          .select({ id: schema.orgCompanies.id, name: schema.orgCompanies.canonicalName })
+          .from(schema.orgCompanies)
+          .where(
+            and(
+              inArray(schema.orgCompanies.id, session.selectedCompanyIds),
+              eq(schema.orgCompanies.userId, session.userId),
+            ),
+          )
+        for (const r of rows) if (r.name) out.push({ type: 'company', id: r.id, label: r.name })
+      }
+    }
+  }
+  return out
 }
 
 // Phase 2: batched-query context builder for the global Ask Cyggie chat's

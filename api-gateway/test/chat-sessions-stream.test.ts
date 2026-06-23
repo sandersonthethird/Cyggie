@@ -255,6 +255,80 @@ describe('POST /chat/sessions/:id/messages — T18 SSE streaming', () => {
     expect(persistedRows.map((r) => r.role).sort()).toEqual(['assistant', 'user'])
   })
 
+  // ─── M5 citations ────────────────────────────────────────────────────────
+  async function insertCompany(userId: string, name: string): Promise<{ id: string; name: string }> {
+    // Unique normalized_name per insert (the column is UNIQUE).
+    const uniqueName = `${name} ${createId().slice(0, 5)}`
+    const id = TEST_PREFIX + 'co-' + createId().slice(0, 8)
+    await db.insert(schema.orgCompanies).values({
+      id,
+      userId,
+      canonicalName: uniqueName,
+      normalizedName: uniqueName.toLowerCase(),
+    })
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, id)
+    return { id, name: uniqueName }
+  }
+
+  async function insertSessionWithCompanies(userId: string, companyIds: string[]): Promise<string> {
+    const id = TEST_PREFIX + 'sess-' + createId().slice(0, 8)
+    await db.insert(schema.chatSessions).values({
+      id,
+      userId,
+      contextId: id,
+      contextKind: 'crm',
+      selectedCompanyIds: companyIds,
+      lamport: '1',
+      lastMessageAt: new Date(),
+      createdByUserId: userId,
+    })
+    cleanup.track(schema.chatSessions, schema.chatSessions.id, id)
+    return id
+  }
+
+  test('citations: done event cites a selected company the answer NAMES', async () => {
+    const { userId, jwt } = await setupUser()
+    const { id: companyId, name } = await insertCompany(userId, 'Acme Corp')
+    const sessionId = await insertSessionWithCompanies(userId, [companyId])
+    globalThis.__anthropicMockState = { deltas: [name, ' looks like a strong fit.'] }
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/chat/sessions/${sessionId}/messages`,
+      headers: { authorization: `Bearer ${jwt}`, accept: 'text/event-stream' },
+      payload: { content: 'is acme a fit?', lamport: String(Date.now() + 1000) },
+    })
+    expect(res.statusCode).toBe(200)
+    const done = parseSseEvents(res.body).find((e) => e.event === 'done')!
+    const citations = (done.data as { assistantMessage: { citations: unknown } }).assistantMessage.citations
+    expect(citations).toEqual([{ type: 'company', id: companyId, label: name }])
+
+    // Persisted on the assistant row (the synced source of truth).
+    const rows = await db
+      .select()
+      .from(schema.chatSessionMessages)
+      .where(eq(schema.chatSessionMessages.sessionId, sessionId))
+    const assistant = rows.find((r) => r.role === 'assistant')!
+    expect(assistant.citations).toEqual([{ type: 'company', id: companyId, label: name }])
+  })
+
+  test('citations: NOT cited when the answer never names the company', async () => {
+    const { userId, jwt } = await setupUser()
+    const { id: companyId } = await insertCompany(userId, 'Acme Corp')
+    const sessionId = await insertSessionWithCompanies(userId, [companyId])
+    globalThis.__anthropicMockState = { deltas: ['I need more information to answer that.'] }
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/chat/sessions/${sessionId}/messages`,
+      headers: { authorization: `Bearer ${jwt}`, accept: 'text/event-stream' },
+      payload: { content: 'thoughts?', lamport: String(Date.now() + 1000) },
+    })
+    const done = parseSseEvents(res.body).find((e) => e.event === 'done')!
+    const citations = (done.data as { assistantMessage: { citations: unknown } }).assistantMessage.citations
+    expect(citations).toBeNull()
+  })
+
   test('2. without Accept header → blocking JSON path (unchanged contract)', async () => {
     const { userId, jwt } = await setupUser()
     const sessionId = await insertSessionDirect({ userId })

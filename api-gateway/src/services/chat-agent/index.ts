@@ -78,6 +78,7 @@ export {
 
 export {
   buildContextForSession,
+  collectContextEntities,
   buildCompanyContextForChat,
   buildContactContextForChat,
   buildSelectedCompaniesContext,

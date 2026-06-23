@@ -67,12 +67,23 @@ export interface CompanyChip {
   primaryDomain: string | null
 }
 
+// M5 citations — sources the assistant answer drew on. Mirrors the gateway's
+// Citation (api-gateway/src/routes/chat.ts) + @cyggie/db; mobile is a separate
+// Expo bundle so it can't import the shared type. Keep in sync.
+export type CitationType = 'meeting' | 'company' | 'contact' | 'note'
+export interface Citation {
+  type: CitationType
+  id: string
+  label: string
+  timestamp?: number
+}
+
 export interface ChatMessage {
   id: string
   sessionId: string
   role: 'user' | 'assistant' | 'system'
   content: string
-  citations: unknown | null
+  citations: Citation[] | null
   attachmentsJson: unknown | null
   createdAt: string
   lamport: string
