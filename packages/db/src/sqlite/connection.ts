@@ -129,6 +129,7 @@ import { runDropContactTouchpointColumnsMigration } from './migrations/127-drop-
 import { runCompanyInvestorsLamportMigration } from './migrations/128-company-investors-lamport'
 import { runContactsMeetingsFirmSharedMigration } from './migrations/129-contacts-meetings-firm-shared'
 import { runNotesSoftDeleteMigration } from './migrations/130-notes-soft-delete'
+import { runChatMessageCitationsMigration } from './migrations/132-chat-message-citations'
 import { runDropDeadCoInvestorsMigration } from './migrations/131-drop-dead-co-investors'
 
 let db: Database.Database | null = null
@@ -351,4 +352,5 @@ export function runAllMigrations(db: Database.Database): void {
   runContactsMeetingsFirmSharedMigration(db)
   runNotesSoftDeleteMigration(db)
   runDropDeadCoInvestorsMigration(db)
+  runChatMessageCitationsMigration(db)
 }

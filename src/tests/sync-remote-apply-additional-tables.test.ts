@@ -239,6 +239,7 @@ function freshDb(): Database.Database {
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       attachments_json TEXT,
+      citations TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       lamport TEXT NOT NULL DEFAULT '0',
       FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE

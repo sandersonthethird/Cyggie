@@ -5,6 +5,17 @@ export interface ChatAttachment {
   data: string // text content for text type; base64 (no data: prefix) for image/pdf types
 }
 
+// M5 — sources an assistant chat answer drew on (context-attributed by the
+// gateway). Renderer-safe mirror of @cyggie/db's Citation (the renderer bundle
+// can't import @cyggie/db — native deps). Keep the shape in sync.
+export type CitationType = 'meeting' | 'company' | 'contact' | 'note'
+export interface Citation {
+  type: CitationType
+  id: string
+  label: string
+  timestamp?: number
+}
+
 export interface ContextOption {
   type: 'company' | 'contact'
   id: string

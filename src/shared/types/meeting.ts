@@ -42,6 +42,8 @@ export interface MeetingCompany {
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
+  /** M5 — sources the assistant answer drew on (assistant messages only). */
+  citations?: import('./chat').Citation[] | null
 }
 
 export interface Meeting {
