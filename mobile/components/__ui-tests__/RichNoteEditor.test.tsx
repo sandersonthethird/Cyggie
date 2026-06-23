@@ -8,13 +8,15 @@ import { render, screen } from '@testing-library/react-native'
 // the editor HTML and converts it back to markdown (real turndown runs — pure JS).
 // jest.mock factories may only reference out-of-scope vars prefixed with `mock`.
 const mockGetHTML = jest.fn(async () => '<h2>Title</h2><p><strong>bold</strong> and <em>italic</em></p>')
-// Stable bridge identity so the onEditorReady effect doesn't refire across renders.
-const mockEditor = { getHTML: mockGetHTML }
+// IMPORTANT: the real useEditorBridge rebuilds the editor object on EVERY render
+// (no internal memo). Mirror that here — return a FRESH object per call — so the
+// "lift once" test below actually guards against the infinite-loop regression a
+// stable mock would silently hide.
 jest.mock('@10play/tentap-editor', () => {
   const React = require('react')
   const { View } = require('react-native')
   return {
-    useEditorBridge: () => mockEditor,
+    useEditorBridge: () => ({ getHTML: mockGetHTML }),
     RichText: () => React.createElement(View, { accessibilityLabel: 'rich-text' }),
     // Present so the mock is faithful, but RichNoteEditor no longer renders it.
     Toolbar: () => React.createElement(View, { accessibilityLabel: 'toolbar' }),
@@ -31,12 +33,18 @@ describe('RichNoteEditor', () => {
     expect(screen.queryByLabelText('toolbar')).toBeNull()
   })
 
-  test('hands the editor bridge up on mount and clears it (null) on unmount', () => {
+  test('lifts the bridge ONCE on mount (not per render) and clears it on unmount', () => {
     const onEditorReady = jest.fn()
-    const { unmount } = render(
+    const { rerender, unmount } = render(
       <RichNoteEditor initialMarkdown="# hi" onChange={() => {}} onEditorReady={onEditorReady} />,
     )
-    expect(onEditorReady).toHaveBeenCalledWith(mockEditor)
+    // Re-render with changed props. The real useEditorBridge returns a fresh
+    // object each render, so a `[editor]`-dependent effect would re-fire here and
+    // (via setToolbarEditor in the parent) infinite-loop. Assert it does NOT.
+    rerender(<RichNoteEditor initialMarkdown="# changed" onChange={() => {}} onEditorReady={onEditorReady} />)
+    const lifts = onEditorReady.mock.calls.filter(([arg]) => arg !== null)
+    expect(lifts).toHaveLength(1)
+    expect(lifts[0]?.[0]).toMatchObject({ getHTML: expect.any(Function) })
     onEditorReady.mockClear()
     unmount()
     // null-on-unmount is what hides the orphaned screen-root toolbar after a
