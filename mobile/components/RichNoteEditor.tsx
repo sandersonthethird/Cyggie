@@ -77,10 +77,20 @@ export const RichNoteEditor = forwardRef<RichNoteEditorHandle, RichNoteEditorPro
 
     // Hand the bridge up for the screen-root <Toolbar>; clear it on unmount so a
     // 409 remount or an ErrorBoundary fallback can't leave an orphaned toolbar.
+    //
+    // ⚠️ MOUNT-ONLY (empty deps), NOT [editor]. tentap's useEditorBridge rebuilds
+    // the editor object on EVERY render (no internal memo), so depending on
+    // `editor` identity here re-fires the effect each render → setToolbarEditor →
+    // re-render → loop ("Maximum update depth exceeded"), which crashes the screen
+    // the instant the editor mounts (e.g. a new note that auto-enters edit mode).
+    // The instance wraps stable refs (webviewRef/editorStateRef), so the first one
+    // is valid for the toolbar's whole lifetime; a 409 keyed remount fully
+    // remounts this component and re-runs the effect with the fresh bridge.
     useEffect(() => {
       onEditorReady?.(editor)
       return () => onEditorReady?.(null)
-    }, [editor, onEditorReady])
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
 
     useImperativeHandle(
       ref,
