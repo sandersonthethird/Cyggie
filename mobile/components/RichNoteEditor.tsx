@@ -1,6 +1,9 @@
 import { forwardRef, useImperativeHandle, useMemo } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { RichText, Toolbar, useEditorBridge } from '@10play/tentap-editor'
+// Pure-JS markdown→HTML engine (same library read-mode uses under the hood, but
+// imported standalone — react-native-markdown-display's wrapper pulls RN native
+// modules that can't load in jest, and this transform must run in tests too).
 import MarkdownIt from 'markdown-it'
 import TurndownService from 'turndown'
 
