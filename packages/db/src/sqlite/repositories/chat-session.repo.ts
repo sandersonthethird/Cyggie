@@ -3,6 +3,7 @@ import { getDatabase } from '../connection'
 import { logAudit } from './audit.repo'
 import type { ChatContextKind } from '@shared/utils/chat-context'
 import type { AttachedContextEntity } from '@shared/types/chat'
+import type { Citation } from '../../citation'
 
 const PREVIEW_MAX = 120
 const TITLE_MAX = 80
@@ -35,6 +36,9 @@ export interface ChatSessionMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   attachmentsJson: string | null
+  // M5 — sources the assistant answer drew on (synced from the gateway as a
+  // JSON TEXT string; parsed here). Null for user/local messages.
+  citations: Citation[] | null
   createdAt: string
 }
 
@@ -96,7 +100,19 @@ interface MessageRow {
   role: 'user' | 'assistant' | 'system'
   content: string
   attachments_json: string | null
+  citations: string | null
   created_at: string
+}
+
+/** Parse the JSON-TEXT citations column into Citation[], tolerating bad data. */
+function parseCitations(raw: string | null): Citation[] | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) && parsed.length > 0 ? (parsed as Citation[]) : null
+  } catch {
+    return null
+  }
 }
 
 function mapSession(row: SessionRow): ChatSession {
@@ -126,6 +142,7 @@ function mapMessage(row: MessageRow): ChatSessionMessage {
     role: row.role,
     content: row.content,
     attachmentsJson: row.attachments_json,
+    citations: parseCitations(row.citations ?? null),
     createdAt: row.created_at,
   }
 }
@@ -290,7 +307,7 @@ export function appendMessage(
 
   const row = db
     .prepare(
-      `SELECT id, session_id, role, content, attachments_json, created_at
+      `SELECT id, session_id, role, content, attachments_json, citations, created_at
        FROM chat_session_messages WHERE id = ?`
     )
     .get(messageId) as MessageRow
@@ -433,7 +450,7 @@ export function loadMessages(sessionId: string, limit = 200, offset = 0): ChatSe
   const db = getDatabase()
   const rows = db
     .prepare(
-      `SELECT id, session_id, role, content, attachments_json, created_at
+      `SELECT id, session_id, role, content, attachments_json, citations, created_at
        FROM chat_session_messages
        WHERE session_id = ?
        ORDER BY datetime(created_at) ASC

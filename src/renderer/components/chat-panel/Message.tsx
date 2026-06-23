@@ -1,6 +1,8 @@
 import { memo, type ReactNode } from 'react'
 import { SafeMarkdown } from '../SafeMarkdown'
 import { type FindMatch } from '../../hooks/useFindInPage'
+import { CitationChipRow } from './CitationChip'
+import type { Citation } from '../../../shared/types/chat'
 import styles from './Message.module.css'
 
 export type MessageRole = 'user' | 'assistant'
@@ -29,6 +31,8 @@ interface MessageProps {
    *  wrapping every match. Pass undefined for messages with no matches so
    *  the memoized component doesn't re-render unnecessarily. */
   findHighlight?: FindHighlight
+  /** M5 — sources the assistant answer drew on; rendered as chips below content. */
+  citations?: Citation[] | null
 }
 
 /**
@@ -64,7 +68,7 @@ function plainWithMarks(content: string, hl: FindHighlight): ReactNode {
  * `content` per token so the partial-message row should NOT use this component
  * directly — render it inline so it doesn't fight memoization.
  */
-function MessageInner({ role, authorInitials, time, content, plain = false, large = false, trailing, findHighlight }: MessageProps) {
+function MessageInner({ role, authorInitials, time, content, plain = false, large = false, trailing, findHighlight, citations }: MessageProps) {
   const isUser = role === 'user'
   return (
     <div className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAi} ${large ? styles.rowLarge : ''}`}>
@@ -81,6 +85,7 @@ function MessageInner({ role, authorInitials, time, content, plain = false, larg
           ) : (
             <SafeMarkdown findHighlight={findHighlight}>{content}</SafeMarkdown>
           )}
+          {!isUser && <CitationChipRow citations={citations} />}
           {trailing}
         </div>
       </div>
