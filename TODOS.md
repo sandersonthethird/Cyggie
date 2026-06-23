@@ -3764,3 +3764,49 @@ quota-gate pattern from `recordings.ts` (`usedSeconds >= capSeconds` → 403 `QU
 **Effort:** S. **Priority:** P2.
 **Depends on / blocked by:** the attachments feature shipping (PRs 1–5); trigger = multi-firm onboarding
 (same gate as T24/T32). Do NOT onboard firm #2 before this lands.
+
+## Attachments — batch the download-url presign endpoint (cold-render fan-out)
+
+**What:** A batch variant of `POST /attachments/{id}/download-url` that accepts `id[]` and returns many
+presigned GETs in one round-trip, so a fresh device rendering an image-dense note/memo doesn't fire N
+separate presign calls + N R2 GETs on first paint.
+
+**Why:** The attachment protocol handler resolves each `cyggie-attachment://{id}` on cache-miss by calling
+the gateway for a presigned GET. A note with N distinct images = N round-trips on cold render. Fine at
+single-user beta (few images/note); becomes a visible first-paint latency cost once notes/memos routinely
+carry many images. Deferred at plan-eng-review 2026-06-23 (TODO-B → option A) — premature before the
+image-dense access pattern exists.
+
+**Pros:** collapses N presign round-trips to 1 for image-dense docs. **Cons:** premature optimization at
+current scale; extra endpoint + the renderer must batch-prefetch ids from the document rather than resolve
+lazily per `<img>`.
+
+**Context/where to start:** `api-gateway/src/routes/attachments.ts` (`download-url` handler) + the desktop
+`cyggie-attachment://` protocol handler / a renderer pre-resolve step that scans the loaded doc for
+attachment ids. Trigger = a note/memo with enough images that first-paint latency is user-visible.
+**Effort:** S. **Priority:** P3.
+**Depends on / blocked by:** the attachments feature shipping (PRs 1–5); independent of the storage-quota TODO.
+
+## Notes — investigate desktop↔mobile user_id identity mismatch
+
+**What:** Confirm whether the mobile JWT `sub` differs from the `user_id` stamped on desktop-synced notes
+for the same human, and if so, reconcile them.
+
+**Why:** The mobile Notes folder-count fix (PR: mobile notes folder counts + private/public filter, 2026-06-23)
+made the `/note-folders` badges match the `/notes` list by reusing `noteVisibilityFilter`. But it only
+*explains* the symptom — the badges read 0 because the user's own desktop-synced notes were being served via
+the **teammate-shared** branch, not the own-notes branch. That only happens if the notes' `user_id` ≠ the
+mobile `sub`. If they genuinely differ, **the user's private and untagged desktop notes are silently invisible
+on mobile** (the shared branch requires tagged AND not-private), and the folder picker mislabels own notes as
+shared. The count fix does NOT address that visibility gap.
+
+**Pros:** restores full own-note visibility on mobile + correct ownership attribution. **Cons:** identity
+reconciliation can be fiddly (migration of existing `user_id`s vs. mapping at the JWT layer); needs runtime
+data to confirm a mismatch even exists.
+
+**Context/where to start:** documented gotcha — the gateway stamps `user_id` from the JWT `sub` (a cuid2),
+which differs from the `sync_state` UUID. Start by querying Neon for `select distinct user_id from notes`
+within the firm and compare against the mobile login `sub` (and the desktop user's `sub`). See
+`api-gateway/src/notes/visibility.ts` for the branch logic. Independent of the count-fix PR.
+**Effort:** M. **Priority:** P2.
+**Depends on / blocked by:** nothing; can start immediately.
