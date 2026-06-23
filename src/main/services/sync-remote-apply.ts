@@ -1904,6 +1904,8 @@ export interface PulledChatSessionMessageRow extends PulledRow {
   role: string
   content: string
   attachmentsJson: unknown
+  // M5 — gateway sends citations as jsonb; stored locally as a JSON TEXT string.
+  citations: unknown
   createdAt: string | Date
   lamport: string
 }
@@ -1935,15 +1937,16 @@ function upsertChatSessionMessageRow(
 ): void {
   db.prepare(
     `INSERT INTO chat_session_messages (
-       id, session_id, role, content, attachments_json, created_at, lamport
+       id, session_id, role, content, attachments_json, citations, created_at, lamport
      ) VALUES (
-       @id, @sessionId, @role, @content, @attachmentsJson, @createdAt, @lamport
+       @id, @sessionId, @role, @content, @attachmentsJson, @citations, @createdAt, @lamport
      )
      ON CONFLICT(id) DO UPDATE SET
        session_id = excluded.session_id,
        role = excluded.role,
        content = excluded.content,
        attachments_json = excluded.attachments_json,
+       citations = excluded.citations,
        created_at = excluded.created_at,
        lamport = excluded.lamport`,
   ).run({
@@ -1952,6 +1955,8 @@ function upsertChatSessionMessageRow(
     role: row.role,
     content: row.content,
     attachmentsJson: stringify(row.attachmentsJson),
+    // jsonb (object|null) → TEXT JSON string for SQLite.
+    citations: stringify(row.citations),
     createdAt: toIso(row.createdAt),
     lamport: row.lamport,
   })

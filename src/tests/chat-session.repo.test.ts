@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { runChatSessionsMigration } from '@cyggie/db/sqlite/migrations/078-chat-sessions'
+import { runChatMessageCitationsMigration } from '@cyggie/db/sqlite/migrations/132-chat-message-citations'
 import { runChatSessionSelectedCompaniesMigration } from '@cyggie/db/sqlite/migrations/102-chat-session-selected-companies'
 import { runChatSessionCacheEnabledMigration } from '@cyggie/db/sqlite/migrations/103-chat-session-cache-enabled'
 import { runChatSessionAttachedEntitiesMigration } from '@cyggie/db/sqlite/migrations/118-chat-session-attached-entities'
@@ -55,6 +56,7 @@ function buildDb(): Database.Database {
   runChatSessionSelectedCompaniesMigration(db)
   runChatSessionCacheEnabledMigration(db)
   runChatSessionAttachedEntitiesMigration(db)
+  runChatMessageCitationsMigration(db)
   return db
 }
 
