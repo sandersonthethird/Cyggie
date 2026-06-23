@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -12,16 +11,16 @@ import {
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { router } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
-  createNote,
   fetchNoteFolders,
   fetchNotes,
   NOTES_INBOX_SENTINEL,
   type NoteListItem,
 } from '../../lib/api/notes'
+import { useCreateNote } from '../../lib/notes/use-create-note'
 import { NotesFolderPicker } from '../../components/NotesFolderPicker'
 import { useAuthStore } from '../../lib/auth/store'
 import { colors, radii, spacing, type } from '../../theme'
@@ -44,7 +43,6 @@ type FilterMode = 'all' | 'untagged' | 'private' | 'public'
 export default function NotesTab() {
   const signOut = useAuthStore((s) => s.signOut)
   const myUserId = useAuthStore((s) => s.userId)
-  const queryClient = useQueryClient()
   const [searchInput, setSearchInput] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
   const [filterMode, setFilterMode] = useState<FilterMode>('all')
@@ -52,7 +50,7 @@ export default function NotesTab() {
   // string = exact folder path. Drives the gateway `folderPath` param.
   const [folderSelection, setFolderSelection] = useState<string | null>(null)
   const [folderPickerOpen, setFolderPickerOpen] = useState(false)
-  const [creating, setCreating] = useState(false)
+  const { createNewNote, creating } = useCreateNote()
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(searchInput.trim()), SEARCH_DEBOUNCE_MS)
@@ -102,37 +100,15 @@ export default function NotesTab() {
 
   const folderChipLabel = folderSelectionLabel(folderSelection)
 
-  // Instant-create (desktop handleNewNote parity): POST an empty note, seed its
-  // detail cache so the editor opens with no spinner, then push to the detail
-  // screen with ?new=1 so it auto-enters edit mode. The note inherits the
-  // currently-selected folder (but not the Inbox sentinel — that's "no folder").
-  const handleNewNote = async (): Promise<void> => {
-    if (creating) return
-    setCreating(true)
-    try {
-      const note = await createNote(
-        {
-          content: '',
-          title: null,
-          folderPath:
-            folderSelection && folderSelection !== NOTES_INBOX_SENTINEL
-              ? folderSelection
-              : undefined,
-        },
-        Date.now().toString(),
-      )
-      queryClient.setQueryData(['notes', 'detail', note.id], note)
-      void queryClient.invalidateQueries({ queryKey: ['notes', 'list'] })
-      router.push(`/notes/${note.id}?new=1`)
-    } catch (err) {
-      if (err instanceof ApiError && err.reauthRequired) {
-        void signOut().then(() => router.replace('/(auth)/sign-in'))
-        return
-      }
-      Alert.alert('Could not create note', err instanceof Error ? err.message : 'Please try again')
-    } finally {
-      setCreating(false)
-    }
+  // Compose a new note. Inherits the currently-selected folder (but not the
+  // Inbox sentinel — that's "no folder"). Shared flow lives in useCreateNote.
+  const handleNewNote = (): void => {
+    void createNewNote({
+      folderPath:
+        folderSelection && folderSelection !== NOTES_INBOX_SENTINEL
+          ? folderSelection
+          : undefined,
+    })
   }
 
   return (
@@ -143,7 +119,7 @@ export default function NotesTab() {
           subtitle={headerSubtitle}
           actions={
             <HeaderIconButton
-              icon="add"
+              icon="create-outline"
               onPress={handleNewNote}
               accessibilityLabel="New note"
               disabled={creating}

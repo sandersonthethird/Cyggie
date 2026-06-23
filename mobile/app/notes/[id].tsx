@@ -23,6 +23,7 @@ import { NoteTagger } from '../../components/NoteTagger'
 import { ErrorBoundary } from '../../components/ErrorBoundary'
 import { RichNoteEditor, type RichNoteEditorHandle } from '../../components/RichNoteEditor'
 import { resolveNoteSaveContent } from '../../lib/notes/save-content'
+import { useCreateNote } from '../../lib/notes/use-create-note'
 import { colors, radii, spacing, type } from '../../theme'
 
 // M5 PR3 — gate the Tiptap-in-WebView editor. OFF by default until a dev build
@@ -48,6 +49,7 @@ export default function NoteDetailScreen() {
   const signOut = useAuthStore((s) => s.signOut)
   const myUserId = useAuthStore((s) => s.userId)
   const queryClient = useQueryClient()
+  const { createNewNote, creating } = useCreateNote()
 
   const query = useQuery({
     queryKey: ['notes', 'detail', id],
@@ -257,18 +259,23 @@ export default function NoteDetailScreen() {
                 <Text style={[styles.topbarActionText, styles.topbarSave]}>Save</Text>
               )}
             </Pressable>
-          ) : note && isOwner ? (
+          ) : (
+            // Compose a NEW note (not edit this one — tap the body to edit).
+            // Shown for everyone: a teammate viewing a shared note can still
+            // compose their own.
             <Pressable
-              onPress={startEditing}
+              onPress={() => void createNewNote()}
+              disabled={creating}
               hitSlop={8}
-              style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-              accessibilityLabel="Edit note"
+              style={({ pressed }) => [
+                styles.backBtn,
+                (pressed || creating) && styles.pressed,
+              ]}
+              accessibilityLabel="New note"
               accessibilityRole="button"
             >
               <Ionicons name="create-outline" size={20} color={colors.text} />
             </Pressable>
-          ) : (
-            <View style={styles.backBtn} />
           )}
         </View>
       </SafeAreaView>
