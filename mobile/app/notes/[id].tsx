@@ -20,7 +20,17 @@ import { useAuthStore } from '../../lib/auth/store'
 import { RichMarkdown } from '../../lib/markdown'
 import { KeyboardAvoidingScreen } from '../../components/KeyboardAvoidingScreen'
 import { NoteTagger } from '../../components/NoteTagger'
+import { ErrorBoundary } from '../../components/ErrorBoundary'
+import { RichNoteEditor, type RichNoteEditorHandle } from '../../components/RichNoteEditor'
+import { resolveNoteSaveContent } from '../../lib/notes/save-content'
 import { colors, radii, spacing, type } from '../../theme'
+
+// M5 PR3 — gate the Tiptap-in-WebView editor. OFF by default until a dev build
+// confirms the editor + md round-trip; inlined at JS-bundle time like the other
+// EXPO_PUBLIC flags. Flag-off OR an editor crash (ErrorBoundary) falls back to
+// the plain TextInput, so note editing never bricks.
+const RICH_NOTE_EDITOR_ENABLED =
+  process.env['EXPO_PUBLIC_FEATURE_RICH_NOTE_EDITOR'] === '1'
 
 // Note detail — single screen because notes don't have enough cardinality to
 // justify a segmented control. Just hero + meta chips + content body.
@@ -77,6 +87,12 @@ export default function NoteDetailScreen() {
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const contentRef = useRef<TextInput>(null)
+  // Rich editor (PR3): a ref to extract markdown on save + a dirty flag so an
+  // un-edited note is saved VERBATIM (no md↔html round-trip → no corruption).
+  // editorRemountKey forces a fresh editor mount after a 409 reseed.
+  const editorRef = useRef<RichNoteEditorHandle>(null)
+  const [contentDirty, setContentDirty] = useState(false)
+  const [editorRemountKey, setEditorRemountKey] = useState(0)
 
   const startEditing = (): void => {
     if (!note || !isOwner) return
@@ -87,6 +103,7 @@ export default function NoteDetailScreen() {
     setDraftCompanyName(note.companyName)
     setDraftContactId(note.contactId)
     setDraftContactName(note.contactName)
+    setContentDirty(false)
     setEditError(null)
     setEditing(true)
     setTimeout(() => contentRef.current?.focus(), 50)
@@ -102,11 +119,18 @@ export default function NoteDetailScreen() {
     setSaving(true)
     setEditError(null)
     try {
+      // Don't-touch-untouched guard (4A) — see resolveNoteSaveContent.
+      const content = await resolveNoteSaveContent({
+        richEnabled: RICH_NOTE_EDITOR_ENABLED,
+        dirty: contentDirty,
+        draftContent,
+        getMarkdown: editorRef.current ? () => editorRef.current!.getMarkdown() : null,
+      })
       const result = await updateNote(
         note.id,
         {
           title: draftTitle.trim() || null,
-          content: draftContent,
+          content,
           isPrivate: draftPrivate,
           companyId: draftCompanyId,
           contactId: draftContactId,
@@ -132,6 +156,10 @@ export default function NoteDetailScreen() {
           setDraftCompanyName(fresh.data.companyName)
           setDraftContactId(fresh.data.contactId)
           setDraftContactName(fresh.data.contactName)
+          // The rich editor is uncontrolled — force a remount so the reseeded
+          // server content actually replaces what's on screen, and clear dirty.
+          setEditorRemountKey((k) => k + 1)
+          setContentDirty(false)
         }
       } else {
         setEditError(err instanceof Error ? err.message : 'Save failed — please try again')
@@ -278,16 +306,43 @@ export default function NoteDetailScreen() {
             </View>
 
             <View style={styles.contentBlock}>
-              <TextInput
-                ref={contentRef}
-                value={draftContent}
-                onChangeText={setDraftContent}
-                placeholder="Write your note…"
-                placeholderTextColor={colors.text4}
-                style={styles.contentInput}
-                multiline
-                editable={!saving}
-              />
+              {RICH_NOTE_EDITOR_ENABLED ? (
+                <ErrorBoundary
+                  // A WebView/editor crash degrades to the plain TextInput —
+                  // note editing never bricks. `reset` lets the user retry.
+                  fallback={() => (
+                    <TextInput
+                      ref={contentRef}
+                      value={draftContent}
+                      onChangeText={setDraftContent}
+                      placeholder="Write your note…"
+                      placeholderTextColor={colors.text4}
+                      style={styles.contentInput}
+                      multiline
+                      editable={!saving}
+                    />
+                  )}
+                >
+                  <RichNoteEditor
+                    key={editorRemountKey}
+                    ref={editorRef}
+                    initialMarkdown={draftContent}
+                    onChange={() => setContentDirty(true)}
+                    editable={!saving}
+                  />
+                </ErrorBoundary>
+              ) : (
+                <TextInput
+                  ref={contentRef}
+                  value={draftContent}
+                  onChangeText={setDraftContent}
+                  placeholder="Write your note…"
+                  placeholderTextColor={colors.text4}
+                  style={styles.contentInput}
+                  multiline
+                  editable={!saving}
+                />
+              )}
               {editError ? <Text style={styles.editError}>{editError}</Text> : null}
             </View>
 
