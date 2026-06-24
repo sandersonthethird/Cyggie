@@ -1,6 +1,11 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
 import { appendOutboxRow, currentSyncContext } from '../sync-wrapper'
+import {
+  runInSyncBatchWithCascade,
+  withCascadeUnderDeclarationGuard,
+  type CascadeScope,
+} from './_sync'
 import { jaroWinkler } from '@main/utils/jaroWinkler'
 import { UnionFind } from '@main/utils/unionFind'
 import {
@@ -2504,7 +2509,14 @@ function enrichContactCandidates(
   let linkedCompanies = 0
   let skipped = 0
 
+  // Per-entity granularity (2A): each contact's enrich writes run in their own
+  // cascade batch scoped to that contact, so the snapshot stays O(1 contact)
+  // even when enriching thousands. The dev guard wraps the whole loop once.
+  withCascadeUnderDeclarationGuard(['contacts'], ENRICH_GUARD_ALLOWLIST, () => {
   for (const contact of contacts) {
+    runInSyncBatchWithCascade(
+      [{ table: 'contacts', where: 'id = ?', params: [contact.id] }],
+      () => {
     const contactEmails = listContactEmailAddresses(db, contact.id, contact.email)
       .map((email) => normalizeEmail(email))
       .filter((email): email is string => Boolean(email))
@@ -2512,7 +2524,7 @@ function enrichContactCandidates(
 
     if (uniqueEmails.length === 0) {
       skipped += 1
-      continue
+      return
     }
 
     const nameCandidates = new Set<string>()
@@ -2694,7 +2706,10 @@ function enrichContactCandidates(
     if (!touched) {
       skipped += 1
     }
+      },
+    )
   }
+  })
 
   return {
     scannedContacts: contacts.length,
@@ -2977,13 +2992,47 @@ export function resolveContactsByNormalizedNames(names: string[]): Record<string
  * Merge a source contact into a target contact. All meetings, emails, notes,
  * and custom field values are relinked to the target. The source is deleted.
  */
+// ── Cascade emission for the bulk contact ops (merge / dedup / enrich) ────────
+// These rewire multiple owned tables (contacts + contact_emails forward-emitted;
+// email_contact_links + tasks left backfill-covered). The snapshot-diff engine
+// (`runInSyncBatchWithCascade`) auto-emits every change in the DECLARED scopes,
+// so no hand-rolled `appendOutboxRow`. Scope is per merge-group / per-contact so
+// the snapshot stays bounded (2A).
+function contactCascadeScopes(contactIds: readonly string[]): CascadeScope[] {
+  const ph = contactIds.map(() => '?').join(', ')
+  return [
+    { table: 'contacts', where: `id IN (${ph})`, params: [...contactIds] },
+    { table: 'contact_emails', where: `contact_id IN (${ph})`, params: [...contactIds] },
+  ]
+}
+// Owned tables the merge/dedup/enrich paths touch but intentionally DON'T
+// forward-emit (they stay backfill-covered / mobile-refetch — depth is
+// contacts + contact_emails only). These are the FK children of `contacts`:
+//   • email_contact_links / meeting_speaker_contact_links — ON DELETE CASCADE
+//   • notes / tasks / email_messages.contact_id            — ON DELETE SET NULL
+// Allow-listed so the dev under-declaration guard treats them as known, not drift.
+const CONTACT_BULK_GUARD_ALLOWLIST = [
+  'email_contact_links',
+  'meeting_speaker_contact_links',
+  'tasks',
+  'notes',
+  'email_messages',
+] as const
+// enrich additionally CREATES companies as a side effect (inferCompanyIdFromEmails
+// → raw createOrgCompany). Those org_companies / org_company_aliases inserts stay
+// backfill-covered (depth = contacts only for enrich), so allow-list them.
+const ENRICH_GUARD_ALLOWLIST = ['org_companies', 'org_company_aliases'] as const
+
 export function mergeContacts(
   targetContactId: string,
   sourceContactId: string,
   userId: string | null = null
 ): { mergedCount: number } {
   const db = getDatabase()
-  const mergedCount = mergeContactsIntoOne(db, targetContactId, [sourceContactId], userId)
+  let mergedCount = 0
+  withCascadeUnderDeclarationGuard(['contacts', 'contact_emails'], CONTACT_BULK_GUARD_ALLOWLIST, () => {
+    mergedCount = mergeContactsIntoOne(db, targetContactId, [sourceContactId], userId)
+  })
   return { mergedCount }
 }
 
@@ -3311,7 +3360,13 @@ function mergeContactsIntoOne(
     }
   })
 
-  tx()
+  // Run the merge inside the cascade engine: it snapshots the keep + source
+  // contacts and their emails before/after `tx`, then auto-emits the kept-row
+  // field-LWW update, the source-row deletes, and the contact_emails re-points.
+  runInSyncBatchWithCascade(
+    contactCascadeScopes([normalizedKeepId, ...normalizedSources]),
+    () => tx(),
+  )
   return normalizedSources.length
 }
 
@@ -3574,6 +3629,7 @@ export function applyContactDedupDecisions(
     }
   })
 
+  withCascadeUnderDeclarationGuard(['contacts', 'contact_emails'], CONTACT_BULK_GUARD_ALLOWLIST, () => {
   for (const decision of decisions) {
     const groupKey = (decision.groupKey || '').trim() || 'unknown-group'
     const action: ContactDedupAction = decision.action
@@ -3626,7 +3682,8 @@ export function applyContactDedupDecisions(
       }
 
       if (action === 'delete') {
-        deleteContacts(sourceIds)
+        // Cascade-emit the contacts (+ FK-cascaded contact_emails) deletes.
+        runInSyncBatchWithCascade(contactCascadeScopes(sourceIds), () => deleteContacts(sourceIds))
         result.deletedGroups += 1
         result.deletedContacts += sourceIds.length
         continue
@@ -3643,6 +3700,7 @@ export function applyContactDedupDecisions(
       })
     }
   }
+  })
 
   return result
 }
