@@ -78,7 +78,8 @@ export function registerVideoHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.VIDEO_GET_PATH, async (_event, meetingId: string) => {
-    const meeting = meetingRepo.getMeeting(meetingId)
+    // Lite read: this handler only needs recordingPath, never the transcript.
+    const meeting = meetingRepo.getMeetingLite(meetingId)
     if (!meeting) return null
 
     const resolvedFilename = resolveMeetingRecordingFilename(meetingId, meeting.recordingPath)

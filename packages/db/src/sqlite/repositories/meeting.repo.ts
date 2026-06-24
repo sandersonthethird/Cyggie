@@ -410,6 +410,37 @@ export function getMeeting(id: string): Meeting | null {
   return meeting
 }
 
+// Lightweight read for callers that need meeting metadata but NOT the
+// transcript. The explicit column list pulls every field except
+// transcript_segments and chat_messages — each can be many MB per row — so
+// rowToMeeting falls back to null for just those two (same trick as
+// listMeetings). It also skips the speakerContactMap lookup, which lite
+// callers never read. Use this instead of getMeeting on hot paths that don't
+// render the transcript.
+export function getMeetingLite(id: string): Meeting | null {
+  const db = getDatabase()
+  const row = db
+    .prepare(`
+      SELECT
+        m.id, m.title, m.date, m.duration_seconds,
+        m.calendar_event_id, m.meeting_platform, m.meeting_url, m.location,
+        m.transcript_path, m.summary_path, m.summary, m.notes,
+        m.transcript_drive_id, m.summary_drive_id,
+        m.template_id, m.speaker_count, m.speaker_map,
+        m.attendees, m.attendee_emails, m.self_name,
+        m.transcript_provider, m.me_speaker_index,
+        m.companies, m.dismissed_companies,
+        m.recording_path, m.status,
+        m.is_group_event, m.is_group_event_user_set, m.is_private,
+        m.created_at, m.updated_at
+      FROM meetings m
+      WHERE m.id = ?
+    `)
+    .get(id) as MeetingRow | undefined
+  if (!row) return null
+  return rowToMeeting(row)
+}
+
 export function listMeetings(filter?: MeetingListFilter): Meeting[] {
   const db = getDatabase()
   const conditions: string[] = []
