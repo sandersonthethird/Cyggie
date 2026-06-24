@@ -19,16 +19,24 @@
 //   They'll be wrapped in a follow-up commit when the corresponding mobile
 //   screens land in M4–M5.
 //
-// Known gap — multi-table cascades:
-//   Some operations write to multiple owned tables (e.g.
-//   `mergeContacts` rewires emails+links). Without better-sqlite3's
-//   update_hook, the wrapper can't auto-emit outbox rows for those side-
-//   effect tables. The PRIMARY entity row (meeting / contact / company /
-//   note) is always emitted; remaining cascading link/email tables stay
-//   un-emitted in V1. Mobile views refresh on focus, so the eventual-
-//   consistency window is one TanStack refetch. Some bulk operations
-//   (`mergeContacts`, `applyContactDedupDecisions`, `enrichExistingContacts`,
-//   etc.) bypass the wrapper entirely — they're not yet sync-aware.
+// Multi-table cascades:
+//   Some operations write to multiple owned tables. Without better-sqlite3's
+//   update_hook, the wrapper can't auto-DETECT those side-effect rows, so we
+//   use a DECLARED-scope snapshot-diff engine (`runInSyncBatchWithCascade` in
+//   `_sync.ts`): the caller declares the owned-table scopes an op may touch; the
+//   engine snapshots them pre/post, diffs by PK, and auto-emits insert/update/
+//   delete (routing field-LWW rows through `stampFieldLww`, whole-row rows
+//   through `stampWholeRowLww`). A dev-only under-declaration guard throws if an
+//   op writes an owned table outside its declared scopes + allow-list.
+//
+//   Exception — bulk contact ops: `mergeContacts` / `applyContactDedupDecisions`
+//   / `enrichExistingContacts` ARE now sync-aware — each runs inside
+//   `runInSyncBatchWithCascade` scoped to `contacts` (+ `contact_emails` for
+//   merge/dedup), so the kept-contact field-LWW update, source-contact deletes,
+//   and email re-points reach Neon. Deeper FK children (email_contact_links,
+//   meeting_speaker_contact_links, tasks, notes, email_messages — and the
+//   company rows enrich creates) stay backfill-covered (allow-listed in the
+//   guard), matching the `syncContactsFromAttendees` depth precedent.
 //
 //   Exception — `note_folders`: deleteFolder + renameFolder DO emit
 //   cascade rows. The raw repo functions call `appendOutboxRow` directly

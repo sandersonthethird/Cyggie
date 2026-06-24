@@ -9,6 +9,7 @@ import {
 } from '../sync-wrapper'
 import { nextLamport } from '../../sync/sync-clock'
 import { mergeFieldLww, parseFieldLamports } from '../../sync/field-lww'
+import { encodeRowId } from '../../sync/encode-row-id'
 
 // =============================================================================
 // _sync.ts — `withSync` higher-order helper applied at the repository barrel.
@@ -403,10 +404,233 @@ function stampFieldLww(
 }
 
 /**
+ * Whole-row-LWW write stamp. For a non-`fieldLww` owned table insert/update,
+ * stamp the LOCAL row's `lamport` (= this txn's lamport) so it stops sitting at
+ * `lamport='0'` until a pull echo heals it. Simpler than `stampFieldLww`: no
+ * `field_lamports` map, no no-op detection (whole-row LWW always emits).
+ *
+ * INVARIANT: only ever called inside an active sync transaction (same txn as the
+ * matching `appendOutboxRow`) so stamp + emit are atomic. A stamped-but-unemitted
+ * row would be invisible to the `lamport='0'` backfill selectors and stranded.
+ *
+ * PK read via `spec.primaryKey` (snake_case) — every emit row carries snake-case
+ * PK keys (encodeRowId requires them). Defensive: if a PK value is missing we
+ * skip the stamp rather than UPDATE the whole table.
+ *
+ * NOTE: this helper is currently used by the cascade engine below. Wiring it into
+ * `withSync`'s primary whole-row emit path (the flicker fix for every wrapped
+ * whole-row write) is Task 2 of the sync-hardening batch — intentionally not done
+ * here to keep this change scoped to the cascade work.
+ */
+function stampWholeRowLww(
+  db: Database.Database,
+  spec: OwnedTableSpec,
+  row: Record<string, unknown>,
+  lamport: string,
+): void {
+  const vals = spec.primaryKey.map((c) => row[c])
+  if (vals.some((v) => v == null)) return
+  const where = spec.primaryKey.map((c) => `"${c}" = ?`).join(' AND ')
+  db.prepare(`UPDATE ${spec.table} SET lamport = ? WHERE ${where}`).run(lamport, ...vals)
+}
+
+// =============================================================================
+// Cascade snapshot-diff — auto-emit outbox rows for multi-table writes.
+//
+// better-sqlite3 exposes no update_hook, so we can't auto-discover the rows an
+// inner fn touched. Instead the caller DECLARES the owned-table scopes an
+// operation may touch; we snapshot those scoped rows before/after the fn, diff
+// by primary key, and emit insert/update/delete for each change — routing
+// field-LWW rows through `stampFieldLww` (sparse map + local stamp) and
+// whole-row rows through `stampWholeRowLww` + `appendOutboxRow`.
+//
+//   declare scopes ─▶ PRE snapshot ─▶ fn() ─▶ POST snapshot ─▶ diff by PK ─▶ emit
+//                       (bounded)              (bounded)        (3A col-wise)
+//
+// Payloads are the bare snake_case `SELECT *` rows — the canonical outbox shape
+// (the gateway documents "desktop emits SQL column names"; the existing manual
+// emitters like syncMeetingCompanyLinks do exactly this).
+// =============================================================================
+
+/**
+ * An owned-table scope an operation may touch. `where`+`params` bound the rows
+ * so the pre/post snapshot stays small (per-entity, not whole-table).
+ */
+export interface CascadeScope {
+  table: string
+  where: string
+  params: readonly unknown[]
+}
+
+type ScopeSnapshot = Map<string, Record<string, unknown>> // encodeRowId -> bare row
+
+function snapshotScope(
+  db: Database.Database,
+  spec: OwnedTableSpec,
+  scope: CascadeScope,
+): ScopeSnapshot {
+  const rows = db
+    .prepare(`SELECT * FROM ${scope.table} WHERE ${scope.where}`)
+    .all(...scope.params) as Array<Record<string, unknown>>
+  const map: ScopeSnapshot = new Map()
+  for (const r of rows) map.set(encodeRowId(spec, r), r)
+  return map
+}
+
+/**
+ * Emit one cascade row, routing by spec. Field-LWW insert/update delegates to
+ * `stampFieldLww` (which stamps the local row + returns the sparse-map payload,
+ * or null on a no-op — already pre-filtered for updates). Whole-row insert/update
+ * stamps the local lamport then emits the bare row. Deletes emit the pre-row.
+ */
+function emitCascadeRow(
+  db: Database.Database,
+  spec: OwnedTableSpec,
+  op: WriteOp,
+  row: Record<string, unknown>,
+  preRow: Record<string, unknown> | null,
+  lamport: string,
+): void {
+  if (op !== 'delete' && spec.fieldLww === true) {
+    const emit = stampFieldLww(db, spec, op, row, preRow, lamport)
+    if (emit != null) appendOutboxRowWithSpec(db, spec, op, emit)
+    return
+  }
+  if (op !== 'delete') stampWholeRowLww(db, spec, row, lamport)
+  appendOutboxRowWithSpec(db, spec, op, row)
+}
+
+function emitScopeDiff(
+  db: Database.Database,
+  spec: OwnedTableSpec,
+  pre: ScopeSnapshot,
+  post: ScopeSnapshot,
+  lamport: string,
+): void {
+  // inserts + updates
+  for (const [pk, postRow] of post) {
+    const preRow = pre.get(pk)
+    if (preRow == null) {
+      emitCascadeRow(db, spec, 'insert', postRow, null, lamport)
+      continue
+    }
+    // 3A: column-wise compare of data columns (skip meta + PK). Empty ⇒ no-op.
+    const changed = diffChangedColumns(preRow, postRow).filter(
+      (c) => !FIELD_LWW_META_COLS.has(c) && !spec.primaryKey.includes(c),
+    )
+    if (changed.length > 0) emitCascadeRow(db, spec, 'update', postRow, preRow, lamport)
+  }
+  // deletes
+  for (const [pk, preRow] of pre) {
+    if (!post.has(pk)) emitCascadeRow(db, spec, 'delete', preRow, null, lamport)
+  }
+}
+
+/**
+ * Like `runInSyncBatch`, but auto-emits outbox rows for every change the inner
+ * `fn` makes within the DECLARED `scopes` (via the snapshot-diff above). The fn
+ * does raw owned-table writes; it must NOT also call `appendOutboxRow` for a
+ * declared table (that would double-emit). `runInSyncBatch` is the zero-scope
+ * case of this.
+ *
+ * Per-entity granularity (2A): callers loop and wrap EACH entity's writes so the
+ * snapshot stays O(one entity). Offline (no auth) → runs `fn` directly, no emit.
+ * Nested-safe (savepoint + saved/restored context), same as `runInSyncBatch`.
+ */
+export function runInSyncBatchWithCascade<T>(
+  scopes: readonly CascadeScope[],
+  fn: () => T,
+): T {
+  const userId = configured?.getUserId() ?? null
+  const deviceId = configured?.getDeviceId() ?? null
+  if (!configured || !userId || !deviceId) {
+    return fn()
+  }
+  const resolved = scopes.map((scope) => {
+    const spec = OWNED_TABLES_BY_NAME.get(scope.table)
+    if (!spec) {
+      throw new Error(
+        `[sync] runInSyncBatchWithCascade: '${scope.table}' is not in OWNED_TABLES`,
+      )
+    }
+    return { spec, scope }
+  })
+  const db = configured.getDb()
+  const txn = db.transaction((): T => {
+    const lamport = nextLamport(db, deviceId)
+    const ctx: SyncContext = { userId, deviceId, lamport, emittedCount: 0 }
+    const prev = pushSyncContext(ctx)
+    try {
+      const pre = resolved.map(({ spec, scope }) => snapshotScope(db, spec, scope))
+      const result = fn()
+      resolved.forEach(({ spec, scope }, i) => {
+        const post = snapshotScope(db, spec, scope)
+        emitScopeDiff(db, spec, pre[i]!, post, lamport)
+      })
+      return result
+    } finally {
+      popSyncContext(prev)
+    }
+  })
+  return txn()
+}
+
+/**
+ * Dev-only guard (1A+6A): wraps the OUTER boundary of a multi-entity bulk op and
+ * throws if it wrote to an owned table that is neither in `declaredTables` (the
+ * union of every per-entity cascade scope) nor in `allowList` (tables we
+ * intentionally leave backfill-covered, e.g. email_contact_links / tasks). This
+ * is what actually closes the "owned write silently skips the outbox" class — a
+ * forgotten scope throws loudly in dev instead of stranding rows.
+ *
+ * Cheap structural signature: COUNT(*) + MAX(rowid) per owned table, once before
+ * and once after the whole op (O(#owned), not O(N×#owned)). Catches INSERT/DELETE
+ * drift to undeclared tables; pure in-place UPDATEs to undeclared tables are not
+ * caught by this signature (documented limit — a full content hash would be too
+ * costly even in dev). Compiled out of production.
+ */
+export function withCascadeUnderDeclarationGuard(
+  declaredTables: readonly string[],
+  allowList: readonly string[],
+  fn: () => void,
+): void {
+  if (process.env['NODE_ENV'] === 'production' || !configured) {
+    fn()
+    return
+  }
+  const db = configured.getDb()
+  const declared = new Set([...declaredTables, ...allowList])
+  const signature = (): Map<string, string> => {
+    const m = new Map<string, string>()
+    for (const [name] of OWNED_TABLES_BY_NAME) {
+      const r = db
+        .prepare(`SELECT COUNT(*) AS c, COALESCE(MAX(rowid), 0) AS m FROM ${name}`)
+        .get() as { c: number; m: number }
+      m.set(name, `${r.c}:${r.m}`)
+    }
+    return m
+  }
+  const before = signature()
+  fn()
+  const after = signature()
+  for (const [name, sig] of after) {
+    if (before.get(name) !== sig && !declared.has(name)) {
+      throw new Error(
+        `[sync] cascade under-declared owned-table write: '${name}' changed ` +
+          `but no scope (or allow-list entry) declared it`,
+      )
+    }
+  }
+}
+
+/**
  * Re-export for repo files that need to read the active context (e.g. to
  * stamp deviceId / userId onto an inner row).
  */
 export { currentSyncContext }
+
+/** Exported for the cascade engine's reuse by repo barrels + tests. */
+export { stampFieldLww, stampWholeRowLww }
 
 /**
  * Returns true when `a` and `b` differ. Fast-path: identical primitives compare

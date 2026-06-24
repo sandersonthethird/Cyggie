@@ -972,20 +972,34 @@ visualizes them.
 **Depends on:** Phase 1.5b or first multi-device user (until then a single
 user, single device — grep is fine).
 
-### Cascade-aware outbox emission for multi-table writes
-**What:** The barrel's `withSync` wrapper currently only emits the PRIMARY
-entity row. Multi-table side effects in the wrapped repos (e.g.
-`createMeeting` writing `meeting_company_links` via
-`syncMeetingCompanyLinks`; `mergeContacts` rewiring emails+links;
-`renameFolder` updating many notes' folder_path) stay unemitted.
-**Why:** Documented gap in the barrel header. Mobile views refetch on
-focus so the gap closes when the parent row is next touched, but for
-edit-heavy moments the link tables go stale briefly.
-**How:** Either (a) modify the inner repo functions to call
-`appendOutboxRow(db, …)` for each child row, or (b) add a snapshot-diff
-mechanism that reads pre/post row counts on owned tables inside the
-transaction.
-**Depends on:** Nothing.
+### Cascade-aware outbox emission for multi-table writes — ⚠️ MOSTLY SHIPPED (bulk contact ops)
+**Update (2026-06-24):** the generic **declared-scope snapshot-diff engine**
+shipped (`runInSyncBatchWithCascade` + `withCascadeUnderDeclarationGuard` +
+`stampWholeRowLww` in [_sync.ts](packages/db/src/sqlite/repositories/_sync.ts)).
+The 3 bulk contact ops (`mergeContacts` / `applyContactDedupDecisions` /
+`enrichExistingContacts`) — which previously bypassed the wrapper entirely — now
+run through it (contacts + contact_emails depth; FK children allow-listed). Engine
++ bulk-op tests in `cascade-snapshot-diff.test.ts` / `contact-bulk-ops-outbox.test.ts`.
+
+**Remaining (deferred) — migrate the 3 existing MANUAL emitters onto the engine.**
+`renameFolder` / `deleteFolder` (note_folders) and `syncMeetingCompanyLinks` /
+`createCompanyForMeeting` (org_companies/aliases/links) still hand-roll
+`appendOutboxRow`. Attempting the migration surfaced **two reasons it's NOT a clean
+byte-identical swap** (so it was pulled out of the engine PR):
+  1. **create-cascade misfit:** `createCompanyForMeeting` CREATEs rows whose ids
+     aren't known until after the fn runs, so there's no stable upfront scope
+     predicate for snapshot-diff. Manual `appendOutboxRow`-at-creation is the
+     correct pattern for create-with-fresh-id cascades — don't force these.
+  2. **payload-shape change:** the engine emits the full bare `SELECT *` row; the
+     manual note_folders emitters emit a minimal `{ path }`. Migrating
+     renameFolder/deleteFolder changes the payload and breaks the byte-identical
+     golden tests ([notes-folders-outbox.test.ts](src/tests/notes-folders-outbox.test.ts)).
+     Functionally fine (fuller payload), but it's a behavior change + loses the
+     golden safety net, so it needs its own focused PR + updated goldens.
+**How (if pursued):** only renameFolder/deleteFolder are good engine candidates
+(known note_folders scope); update their golden tests to the full-row payload.
+Leave the meeting→company emitters as manual.
+**Effort:** S–M. **Priority:** P3 (DRY-only; gap already closed). **Depends on:** Nothing.
 
 ### Wrap the other 4 owned-table repos
 **What:** Extend the barrel to wrap task / template / pipeline-config /
