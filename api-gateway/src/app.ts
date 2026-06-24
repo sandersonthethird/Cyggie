@@ -22,6 +22,7 @@ import { registerSyncRoutes } from './routes/sync'
 import { registerDebugRoutes } from './routes/_debug'
 import { registerFirmRoutes } from './routes/firms'
 import { registerRecordingRoutes } from './routes/recordings'
+import { registerAttachmentRoutes } from './routes/attachments'
 import { registerChatRoutes } from './routes/chat'
 import { registerUserCredentialRoutes } from './routes/user-credentials'
 import { registerTemplateRoutes } from './routes/templates'
@@ -88,6 +89,7 @@ export async function buildApp(env: GatewayEnv): Promise<FastifyInstance> {
   await registerSearchRoutes(app, env)
   await registerSyncRoutes(app, env)
   await registerRecordingRoutes(app, env)
+  await registerAttachmentRoutes(app, env)
   await registerChatRoutes(app, env)
   await registerUserCredentialRoutes(app, env)
   await registerTemplateRoutes(app, env)
