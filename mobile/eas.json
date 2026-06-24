@@ -8,7 +8,10 @@
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
-        "simulator": true
+        "simulator": false
+      },
+      "env": {
+        "EXPO_PUBLIC_FEATURE_RICH_NOTE_EDITOR": "1"
       }
     },
     "preview": {
