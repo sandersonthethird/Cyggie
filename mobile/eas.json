@@ -9,9 +9,6 @@
       "distribution": "internal",
       "ios": {
         "simulator": false
-      },
-      "env": {
-        "EXPO_PUBLIC_FEATURE_RICH_NOTE_EDITOR": "1"
       }
     },
     "preview": {
