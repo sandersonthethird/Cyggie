@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Keyboard,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -11,6 +12,7 @@ import {
   View,
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
+import { Toolbar, type EditorBridge } from '@10play/tentap-editor'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
@@ -95,6 +97,14 @@ export default function NoteDetailScreen() {
   const editorRef = useRef<RichNoteEditorHandle>(null)
   const [contentDirty, setContentDirty] = useState(false)
   const [editorRemountKey, setEditorRemountKey] = useState(0)
+  // The editor bridge, lifted out of RichNoteEditor so the formatting <Toolbar>
+  // can render at the SCREEN ROOT (it must float above the keyboard — see
+  // RichNoteEditor header). null when not mounted / after a crash fallback.
+  const [toolbarEditor, setToolbarEditor] = useState<EditorBridge | null>(null)
+  // Measured keyboard height — floats the formatting toolbar exactly at the
+  // keyboard top. Explicit offset (NOT a nested KeyboardAvoidingView, which
+  // double-shifts against the screen's own KeyboardAvoidingScreen).
+  const [kbHeight, setKbHeight] = useState(0)
 
   const startEditing = (): void => {
     if (!note || !isOwner) return
@@ -210,8 +220,24 @@ export default function NoteDetailScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Track keyboard height so the floating toolbar sits at its top. iOS fires the
+  // `Will` events (smoother, pre-animation height); Android only the `Did` ones.
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardWillShow', (e) => setKbHeight(e.endCoordinates.height))
+    const showAndroid = Keyboard.addListener('keyboardDidShow', (e) => setKbHeight(e.endCoordinates.height))
+    const hide = Keyboard.addListener('keyboardWillHide', () => setKbHeight(0))
+    const hideAndroid = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0))
+    return () => {
+      show.remove()
+      showAndroid.remove()
+      hide.remove()
+      hideAndroid.remove()
+    }
+  }, [])
+
   return (
-    <KeyboardAvoidingScreen style={styles.root}>
+    <View style={styles.root}>
+      <KeyboardAvoidingScreen style={styles.flex}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <View style={styles.topbar}>
           {editing ? (
@@ -335,6 +361,7 @@ export default function NoteDetailScreen() {
                     ref={editorRef}
                     initialMarkdown={draftContent}
                     onChange={() => setContentDirty(true)}
+                    onEditorReady={setToolbarEditor}
                     editable={!saving}
                   />
                 </ErrorBoundary>
@@ -427,7 +454,24 @@ export default function NoteDetailScreen() {
           </>
         ) : null}
       </ScrollView>
-    </KeyboardAvoidingScreen>
+      </KeyboardAvoidingScreen>
+
+      {/*
+        Floating formatting toolbar at the SCREEN ROOT — a sibling of
+        KeyboardAvoidingScreen, NOT inside it (that would double-shift it against
+        the screen's own keyboard padding). Its `bottom` is the measured keyboard
+        height, so it sits exactly at the keyboard top while editing and drops to
+        the screen bottom when the keyboard dismisses. hidden={false} keeps it
+        visible whenever editing — tentap's focus-gated default never appears
+        reliably on-device. Gated on !saving so it isn't live on the read-only
+        (editable={!saving}) editor mid-save.
+      */}
+      {editing && !saving && RICH_NOTE_EDITOR_ENABLED && toolbarEditor ? (
+        <View style={[styles.floatingToolbar, { bottom: kbHeight }]} pointerEvents="box-none">
+          <Toolbar editor={toolbarEditor} hidden={false} />
+        </View>
+      ) : null}
+    </View>
   )
 }
 
@@ -540,6 +584,9 @@ function formatDateLong(iso: string): string {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
+  // Screen-root host for the floating tentap toolbar (bottom is set dynamically
+  // to the measured keyboard height — see render comment).
+  floatingToolbar: { position: 'absolute', left: 0, right: 0 },
   safeArea: { backgroundColor: colors.surface },
 
   topbar: {
