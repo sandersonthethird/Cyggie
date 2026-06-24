@@ -169,7 +169,7 @@ interface MeetingData {
   linkedCompanies: { id: string; name: string }[]
 }
 
-const TAGGABLE_COMPANY_TYPES: CompanyEntityType[] = ['prospect', 'vc_fund', 'customer', 'portfolio', 'other']
+const TAGGABLE_COMPANY_TYPES: CompanyEntityType[] = ['prospect', 'vc_fund', 'customer', 'portfolio', 'vendor', 'other']
 
 const TAG_LABELS: Record<CompanyEntityType, string> = {
   prospect: 'Prospect',
