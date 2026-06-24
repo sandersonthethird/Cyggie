@@ -150,6 +150,7 @@ export const unlinkMeetingSpeakerContact = withSync(
 export const findMeetingByCalendarEventId = rawMeeting.findMeetingByCalendarEventId
 export const getMeetingSpeakerContactMap = rawMeeting.getMeetingSpeakerContactMap
 export const getMeeting = rawMeeting.getMeeting
+export const getMeetingLite = rawMeeting.getMeetingLite
 export const listMeetings = rawMeeting.listMeetings
 export const cleanupStaleRecordings = rawMeeting.cleanupStaleRecordings
 export const cleanupExpiredScheduledMeetings = rawMeeting.cleanupExpiredScheduledMeetings

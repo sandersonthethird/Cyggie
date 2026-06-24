@@ -697,7 +697,9 @@ export function registerMeetingHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.COMPANY_GET_SUGGESTIONS,
     (_event, meetingId: string) => {
-      const meeting = meetingRepo.getMeeting(meetingId)
+      // Lite read: only attendeeEmails / companies / dismissedCompanies are
+      // used below — none of the heavy transcript columns.
+      const meeting = meetingRepo.getMeetingLite(meetingId)
       if (!meeting) return []
       const suggestions = getCompanySuggestionsForMeeting(meeting.attendeeEmails, meeting.companies)
       const enriched = suggestions.map((s) => {
