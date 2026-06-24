@@ -17,10 +17,14 @@
 import type { FastifyInstance } from 'fastify'
 import { ZodTypeProvider } from 'fastify-type-provider-zod'
 import { z } from 'zod'
+import { and, eq, isNull } from 'drizzle-orm'
+import { schema } from '@cyggie/db'
+import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
 import type { GatewayEnv } from '../env'
 import {
   presignAttachmentPut,
+  presignAttachmentGet,
   attachmentStorageKey,
   isAllowedAttachmentMime,
   isAttachmentStorageConfigured,
@@ -125,6 +129,87 @@ export async function registerAttachmentRoutes(
       )
 
       return { url, storageKey, expiresInSeconds: env.ATTACHMENT_PRESIGN_TTL_SECONDS }
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // POST /attachments/:id/download-url  (authed, firm-scoped)
+  //
+  // The desktop cyggie-attachment:// protocol handler calls this on a local-
+  // cache miss. Authorization is FIRM-SCOPED (not uploader-scoped): attachments
+  // are fully firm-shared (a teammate must resolve an image in a shared note/
+  // memo), so the guard is firm_id == requester.firm_id — mirroring
+  // companyVisibilityFilter. A foreign-firm or unknown id is a 404 (never leak
+  // existence). The attachment row arrives via /sync (desktop-created); this
+  // route never writes it.
+  // ───────────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/attachments/:id/download-url',
+    schema: {
+      params: z.object({ id: z.string().min(1).max(32) }),
+      response: {
+        200: z.object({
+          url: z.string().url(),
+          mimeType: z.string(),
+          checksum: z.string().nullable(),
+          sizeBytes: z.number(),
+          expiresInSeconds: z.number(),
+        }),
+      },
+    },
+    handler: async (req) => {
+      const user = req.requireFirm()
+
+      if (!isAttachmentStorageConfigured(env)) {
+        throw new GatewayError({
+          statusCode: 503,
+          code: 'STORAGE_NOT_CONFIGURED',
+          message: 'Attachment storage is not configured on this gateway.',
+        })
+      }
+
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const row = await db.query.attachments.findFirst({
+        where: and(
+          eq(schema.attachments.id, req.params.id),
+          eq(schema.attachments.firmId, user.firm_id),
+          isNull(schema.attachments.deletedAt),
+        ),
+        columns: {
+          storageKey: true,
+          mimeType: true,
+          checksum: true,
+          sizeBytes: true,
+        },
+      })
+      if (!row) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'ATTACHMENT_NOT_FOUND',
+          message: 'Attachment not found or not authorized.',
+        })
+      }
+
+      const url = await presignAttachmentGet({ env, key: row.storageKey })
+
+      req.log.info(
+        {
+          attachmentId: req.params.id,
+          userId: user.sub,
+          firmId: user.firm_id,
+          metric: 'attachment.download.presigned',
+        },
+        'attachments.download-url issued presigned GET',
+      )
+
+      return {
+        url,
+        mimeType: row.mimeType,
+        checksum: row.checksum,
+        sizeBytes: row.sizeBytes,
+        expiresInSeconds: env.ATTACHMENT_PRESIGN_TTL_SECONDS,
+      }
     },
   })
 }
