@@ -9,9 +9,6 @@
       "distribution": "internal",
       "ios": {
         "simulator": true
-      },
-      "env": {
-        "EXPO_PUBLIC_FEATURE_RICH_NOTE_EDITOR": "1"
       }
     },
     "preview": {
@@ -22,8 +19,7 @@
       "channel": "preview",
       "env": {
         "EXPO_PUBLIC_GATEWAY_URL": "https://cyggie-gateway.fly.dev",
-        "EXPO_PUBLIC_FEATURE_SUMMARY_TAB": "1",
-        "EXPO_PUBLIC_FEATURE_RICH_NOTE_EDITOR": "1"
+        "EXPO_PUBLIC_FEATURE_SUMMARY_TAB": "1"
       }
     },
     "production": {
@@ -31,8 +27,7 @@
       "channel": "production",
       "env": {
         "EXPO_PUBLIC_GATEWAY_URL": "https://cyggie-gateway.fly.dev",
-        "EXPO_PUBLIC_FEATURE_SUMMARY_TAB": "1",
-        "EXPO_PUBLIC_FEATURE_RICH_NOTE_EDITOR": "1"
+        "EXPO_PUBLIC_FEATURE_SUMMARY_TAB": "1"
       }
     }
   },
