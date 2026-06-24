@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Keyboard,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -100,6 +101,10 @@ export default function NoteDetailScreen() {
   // can render at the SCREEN ROOT (it must float above the keyboard — see
   // RichNoteEditor header). null when not mounted / after a crash fallback.
   const [toolbarEditor, setToolbarEditor] = useState<EditorBridge | null>(null)
+  // Measured keyboard height — floats the formatting toolbar exactly at the
+  // keyboard top. Explicit offset (NOT a nested KeyboardAvoidingView, which
+  // double-shifts against the screen's own KeyboardAvoidingScreen).
+  const [kbHeight, setKbHeight] = useState(0)
 
   const startEditing = (): void => {
     if (!note || !isOwner) return
@@ -215,8 +220,24 @@ export default function NoteDetailScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Track keyboard height so the floating toolbar sits at its top. iOS fires the
+  // `Will` events (smoother, pre-animation height); Android only the `Did` ones.
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardWillShow', (e) => setKbHeight(e.endCoordinates.height))
+    const showAndroid = Keyboard.addListener('keyboardDidShow', (e) => setKbHeight(e.endCoordinates.height))
+    const hide = Keyboard.addListener('keyboardWillHide', () => setKbHeight(0))
+    const hideAndroid = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0))
+    return () => {
+      show.remove()
+      showAndroid.remove()
+      hide.remove()
+      hideAndroid.remove()
+    }
+  }, [])
+
   return (
-    <KeyboardAvoidingScreen style={styles.root}>
+    <View style={styles.root}>
+      <KeyboardAvoidingScreen style={styles.flex}>
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
         <View style={styles.topbar}>
           {editing ? (
@@ -433,23 +454,24 @@ export default function NoteDetailScreen() {
           </>
         ) : null}
       </ScrollView>
+      </KeyboardAvoidingScreen>
 
       {/*
-        Floating formatting toolbar — tentap's <Toolbar> is keyboard-sticky and
-        self-hides unless the editor is focused, so it must sit at the SCREEN
-        ROOT to float above the keyboard. Sibling of the ScrollView, pinned to
-        the bottom. We do NOT wrap it in its own KeyboardAvoidingView: the
-        enclosing KeyboardAvoidingScreen already pads (iOS) / resizes (Android),
-        so absolute bottom:0 rides up to the keyboard top — a nested KAV would
-        double-shift it. Gated on !saving so it isn't live on the read-only
+        Floating formatting toolbar at the SCREEN ROOT — a sibling of
+        KeyboardAvoidingScreen, NOT inside it (that would double-shift it against
+        the screen's own keyboard padding). Its `bottom` is the measured keyboard
+        height, so it sits exactly at the keyboard top while editing and drops to
+        the screen bottom when the keyboard dismisses. hidden={false} keeps it
+        visible whenever editing — tentap's focus-gated default never appears
+        reliably on-device. Gated on !saving so it isn't live on the read-only
         (editable={!saving}) editor mid-save.
       */}
       {editing && !saving && RICH_NOTE_EDITOR_ENABLED && toolbarEditor ? (
-        <View style={styles.floatingToolbar} pointerEvents="box-none">
-          <Toolbar editor={toolbarEditor} />
+        <View style={[styles.floatingToolbar, { bottom: kbHeight }]} pointerEvents="box-none">
+          <Toolbar editor={toolbarEditor} hidden={false} />
         </View>
       ) : null}
-    </KeyboardAvoidingScreen>
+    </View>
   )
 }
 
@@ -562,8 +584,9 @@ function formatDateLong(iso: string): string {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
-  // Screen-root host for the keyboard-sticky tentap toolbar (see render comment).
-  floatingToolbar: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  // Screen-root host for the floating tentap toolbar (bottom is set dynamically
+  // to the measured keyboard height — see render comment).
+  floatingToolbar: { position: 'absolute', left: 0, right: 0 },
   safeArea: { backgroundColor: colors.surface },
 
   topbar: {

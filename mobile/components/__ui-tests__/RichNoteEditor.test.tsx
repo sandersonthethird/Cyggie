@@ -20,6 +20,9 @@ jest.mock('@10play/tentap-editor', () => {
     RichText: () => React.createElement(View, { accessibilityLabel: 'rich-text' }),
     // Present so the mock is faithful, but RichNoteEditor no longer renders it.
     Toolbar: () => React.createElement(View, { accessibilityLabel: 'toolbar' }),
+    // Read-matching content CSS (RichNoteEditor passes these as bridgeExtensions).
+    TenTapStartKit: [],
+    CoreBridge: { configureCSS: () => ({}) },
   }
 })
 

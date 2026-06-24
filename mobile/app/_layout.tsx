@@ -1,5 +1,12 @@
 import { useEffect } from 'react'
+import { LogBox } from 'react-native'
 import { router, Stack } from 'expo-router'
+
+// Cosmetic, dev-only: React 19 warns when a props object containing `key` is
+// spread into JSX. The source is library code (tentap's Toolbar `_extends`,
+// react-native-markdown-display's render rules), not our components, and it never
+// surfaces in production. Silence it so it doesn't bury real warnings.
+LogBox.ignoreLogs([/A props object containing a "key" prop is being spread into JSX/])
 import { QueryClient } from '@tanstack/react-query'
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'

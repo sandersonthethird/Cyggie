@@ -1,13 +1,19 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo } from 'react'
 import { StyleSheet, View } from 'react-native'
-import { RichText, useEditorBridge, type EditorBridge } from '@10play/tentap-editor'
+import {
+  RichText,
+  useEditorBridge,
+  TenTapStartKit,
+  CoreBridge,
+  type EditorBridge,
+} from '@10play/tentap-editor'
 // Pure-JS markdown→HTML engine (same library read-mode uses under the hood, but
 // imported standalone — react-native-markdown-display's wrapper pulls RN native
 // modules that can't load in jest, and this transform must run in tests too).
 import MarkdownIt from 'markdown-it'
 import TurndownService from 'turndown'
 
-import { colors } from '../theme'
+import { colors, type } from '../theme'
 
 // =============================================================================
 // RichNoteEditor — Tiptap-in-WebView note editor (M5 PR3), behind a flag with a
@@ -62,6 +68,20 @@ interface RichNoteEditorProps {
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' })
 
+// Make the WYSIWYG editor LOOK LIKE the read view. tentap's content defaults to
+// `font-size: 0.9rem` (≈14px) — smaller than read mode. We override the Tiptap
+// content root (`.ProseMirror`) via CoreBridge.configureCSS, deriving every value
+// from `theme.ts` (NO magic numbers) so it tracks `richMarkdownStyles`
+// (lib/markdown.tsx) — the read-view typography this must mirror.
+const NOTE_CSS = `
+  .ProseMirror { font-size: ${type.body + 1}px; line-height: 22px; color: ${colors.text}; }
+  .ProseMirror a { color: ${colors.crimson}; }
+  .ProseMirror h1 { font-size: ${type.h2}px; font-weight: 700; }
+  .ProseMirror h2 { font-size: ${type.h2 - 2}px; font-weight: 700; }
+  .ProseMirror h3 { font-size: ${type.body + 2}px; font-weight: 600; }
+  .ProseMirror code { background: ${colors.surface3}; border-radius: 4px; padding: 0 4px; }
+`
+
 export const RichNoteEditor = forwardRef<RichNoteEditorHandle, RichNoteEditorProps>(
   function RichNoteEditor({ initialMarkdown, onChange, onEditorReady, editable = true }, ref) {
     const initialHTML = useMemo(() => md.render(initialMarkdown ?? ''), [initialMarkdown])
@@ -71,6 +91,10 @@ export const RichNoteEditor = forwardRef<RichNoteEditorHandle, RichNoteEditorPro
       avoidIosKeyboard: true,
       editable,
       initialContent: initialHTML,
+      // Grow to fit content (outer ScrollView scrolls) instead of a fixed 240px box.
+      dynamicHeight: true,
+      // Default bridges + our read-matching content CSS (see NOTE_CSS).
+      bridgeExtensions: [...TenTapStartKit, CoreBridge.configureCSS(NOTE_CSS)],
       // Fire the parent's dirty signal on any content update.
       onChange,
     })
@@ -112,5 +136,7 @@ export const RichNoteEditor = forwardRef<RichNoteEditorHandle, RichNoteEditorPro
 )
 
 const styles = StyleSheet.create({
-  root: { flex: 1, minHeight: 240, backgroundColor: colors.surface },
+  // No flex:1 — with dynamicHeight the editor sizes to its content; keep a
+  // minHeight as an empty-note tap target.
+  root: { minHeight: 200, backgroundColor: colors.surface },
 })
