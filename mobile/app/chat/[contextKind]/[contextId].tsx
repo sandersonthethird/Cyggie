@@ -19,9 +19,11 @@ import {
   type ChatMessage,
   type ChatSessionListItem,
   createOrGetChatSession,
+  fetchChatSession,
   updateChatSession,
 } from '../../../lib/api/chat'
 import { ChatComposer, type ChatComposerHandle } from '../../../components/ChatComposer'
+import { CompanyRecentChats } from '../../../components/CompanyRecentChats'
 import { useStartNewChat } from '../../../components/useStartNewChat'
 import { colors, radii, spacing, type } from '../../../theme'
 
@@ -49,18 +51,27 @@ export default function ChatScreen() {
     contextKind: string
     contextId: string
     label?: string
+    sessionId?: string
   }>()
 
   const contextKind = KINDS[params.contextKind ?? '']
   const contextId = params.contextId ?? ''
   const contextLabel = (Array.isArray(params.label) ? params.label[0] : params.label) ?? null
+  // Resume mode: opened to a SPECIFIC prior chat by id (from a recent-chats
+  // row or the global past-chats sheet) rather than the context's active
+  // session. Drives the header/actions from that session's detail and hides
+  // the recent-chats section so the screen is a clean single-chat view.
+  const resumeSessionId =
+    (Array.isArray(params.sessionId) ? params.sessionId[0] : params.sessionId) || undefined
+  const isResume = Boolean(resumeSessionId)
 
   // Stack-pushed screen with no tab bar — pad the bottom by the home-indicator
   // inset so the composer doesn't bleed off the screen on devices with one.
   const insets = useSafeAreaInsets()
 
-  // Shares cache with ChatComposer via identical query key.
-  const sessionQuery = useQuery({
+  // Default mode: find-or-create the active session. Shares cache with
+  // ChatComposer via identical query key.
+  const contextSessionQuery = useQuery({
     queryKey: ['chat', 'session-by-context', contextKind, contextId],
     queryFn: () =>
       createOrGetChatSession({
@@ -68,12 +79,26 @@ export default function ChatScreen() {
         contextId,
         ...(contextLabel != null ? { contextLabel } : {}),
       }),
-    enabled: Boolean(contextKind && contextId),
+    enabled: Boolean(contextKind && contextId) && !isResume,
     staleTime: 60_000,
   })
 
-  const session = sessionQuery.data
+  // Resume mode: load the specific session's detail (shares cache with the
+  // composer's detailQuery — same key — so they dedupe).
+  const detailQuery = useQuery({
+    queryKey: ['chat', 'session-detail', resumeSessionId],
+    queryFn: ({ signal }) => fetchChatSession(resumeSessionId!, { signal }),
+    enabled: isResume,
+    staleTime: 15_000,
+  })
+
+  const session = isResume ? detailQuery.data?.session : contextSessionQuery.data
   const headerTitle = session?.title ?? session?.contextLabel ?? contextLabel ?? 'Chat'
+
+  // Recent-chats section: company default-entry only (hidden in resume mode).
+  // Starts expanded; collapses on first send so it stops taking space.
+  const [recentCollapsed, setRecentCollapsed] = useState(false)
+  const showRecentChats = contextKind === 'company' && !isResume
 
   // T17b Slice 3 — session actions sheet (Rename / Pin / Archive / Start new chat).
   const [actionsOpen, setActionsOpen] = useState(false)
@@ -149,6 +174,7 @@ export default function ChatScreen() {
           open={actionsOpen}
           session={session}
           composerRef={composerRef}
+          resumeMode={isResume}
           onClose={() => setActionsOpen(false)}
           onRename={() => {
             setActionsOpen(false)
@@ -168,11 +194,22 @@ export default function ChatScreen() {
         />
       )}
 
+      {showRecentChats && (
+        <CompanyRecentChats
+          contextId={contextId}
+          currentSessionId={contextSessionQuery.data?.id}
+          collapsed={recentCollapsed}
+          onToggle={() => setRecentCollapsed((c) => !c)}
+        />
+      )}
+
       <ChatComposer
         ref={composerRef}
         contextKind={contextKind as ChatContextKind}
         contextId={contextId}
         contextLabel={contextLabel}
+        sessionId={resumeSessionId}
+        onMessageSent={showRecentChats ? () => setRecentCollapsed(true) : undefined}
       />
     </View>
   )
@@ -225,12 +262,19 @@ function SessionActionsSheet({
   open,
   session,
   composerRef,
+  resumeMode = false,
   onClose,
   onRename,
 }: {
   open: boolean
   session: ChatSessionListItem
   composerRef: RefObject<ChatComposerHandle | null>
+  /** True when this screen was opened by resuming a specific past chat. In
+   *  that mode the screen is pinned to a fixed sessionId, so after "Start new
+   *  chat" archives it we must navigate back to the default (find-or-create)
+   *  company chat — otherwise the screen would keep showing the just-archived
+   *  session and the button would appear to do nothing. */
+  resumeMode?: boolean
   onClose: () => void
   onRename: () => void
 }): React.JSX.Element {
@@ -242,7 +286,20 @@ function SessionActionsSheet({
     contextId: session.contextId,
     messageCount: session.messageCount,
     abortInflight: () => composerRef.current?.abortInflight(),
-    onStarted: onClose,
+    onStarted: () => {
+      onClose()
+      if (resumeMode) {
+        // Drop the sessionId param → default mode → fresh/active session.
+        router.replace({
+          pathname: '/chat/[contextKind]/[contextId]',
+          params: {
+            contextKind: session.contextKind,
+            contextId: session.contextId,
+            label: session.title ?? session.contextLabel ?? 'Chat',
+          },
+        })
+      }
+    },
   })
 
   const togglePinMut = useMutation({
