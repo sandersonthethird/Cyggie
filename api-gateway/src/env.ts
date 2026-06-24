@@ -80,6 +80,35 @@ const EnvSchema = z.object({
   // Hard cap on a single uploaded audio file. 200 MB ≈ 8 hours of 16 kHz mono AAC.
   RECORDING_MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(200 * 1024 * 1024),
 
+  // ─── Note/Memo attachments — Cloudflare R2 object storage ───────────────
+  // Inline images + PDF attachments in the desktop note/memo editor. The
+  // BYTES live in R2; only small metadata rows sync via the outbox. The
+  // gateway never holds the binary — it mints short-TTL, user-scoped,
+  // size/content-type-constrained presigned URLs and the desktop PUTs/GETs
+  // R2 directly (Apple-Notes/CloudKit-style direct-to-blob).
+  //
+  // All five R2_* vars are optional so the gateway boots without R2 (parity
+  // with the APNs / Slack groups), but the /attachments routes FAIL CLOSED
+  // with a clear operator error when any is missing — see attachment-storage.ts.
+  //
+  //   R2_ACCOUNT_ID         — Cloudflare account id
+  //   R2_ACCESS_KEY_ID      — R2 API token access key
+  //   R2_SECRET_ACCESS_KEY  — R2 API token secret
+  //   R2_BUCKET             — bucket name (private; no public access)
+  //   R2_ENDPOINT           — https://<accountid>.r2.cloudflarestorage.com
+  R2_ACCOUNT_ID: z.string().min(1).optional(),
+  R2_ACCESS_KEY_ID: z.string().min(1).optional(),
+  R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  R2_BUCKET: z.string().min(1).optional(),
+  R2_ENDPOINT: z.string().url().optional(),
+  // Hard cap on a single attachment upload. 25 MB — generous for a pitch
+  // deck PDF or a full-res screenshot, far below RECORDING_MAX_UPLOAD_BYTES.
+  // Enforced in the presign route (authoritative) AND desktop-side (fast fail).
+  ATTACHMENT_MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(25 * 1024 * 1024),
+  // TTL on a minted presigned URL. 5 minutes — long enough to upload a 25 MB
+  // file on a slow link, short enough that a leaked/logged URL is low-value.
+  ATTACHMENT_PRESIGN_TTL_SECONDS: z.coerce.number().int().positive().default(300),
+
   // Server bind.
   HOST: z.string().default('127.0.0.1'),
   PORT: z.coerce.number().default(8443),

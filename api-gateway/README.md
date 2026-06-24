@@ -70,6 +70,41 @@ Mobile's `lib/api/client.ts` checks `reauth_required` to fire the OAuth re-conse
 - Move OAuth `pending` state from in-memory Map to Neon table (`oauth_pending`)
 - Wrap refresh_token in real KMS encryption before persisting (currently sha256 hash for storage — adequate for V1 dev, not prod)
 
+## Attachments (Cloudflare R2)
+
+Note/memo inline images + PDF attachments store their **bytes in R2**; only small
+metadata rows sync via the outbox. The gateway never holds the binary — it mints
+short-TTL, user-scoped, size/content-type-constrained **presigned URLs** and the
+desktop PUTs/GETs R2 directly (Apple-Notes / CloudKit-style direct-to-blob).
+
+Env (all five required together; the route fails closed with `503
+STORAGE_NOT_CONFIGURED` when any is missing):
+
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`
+- `R2_ENDPOINT` — `https://<accountid>.r2.cloudflarestorage.com`
+- `ATTACHMENT_MAX_UPLOAD_BYTES` (default 25 MB), `ATTACHMENT_PRESIGN_TTL_SECONDS` (default 300)
+
+Routes: `POST /attachments/upload-url` (this PR). `POST /attachments/:id/download-url`
+lands in PR2 with the synced `attachments` table it firm-scopes against.
+
+### Manual real-R2 smoke (run once per R2 config change)
+
+Automated tests mock the S3 presigner (hermetic). This is the ONE check that
+exercises a real bucket — catches presign-signature / bucket-CORS bugs the mocks
+can't:
+
+```bash
+# 1. With R2_* set, mint a dev JWT and request an upload URL:
+curl -sX POST http://127.0.0.1:8443/attachments/upload-url \
+  -H "authorization: Bearer $DEV_JWT" -H 'content-type: application/json' \
+  -d '{"attachmentId":"smoketest01","contentType":"image/png","sizeBytes":12}' | tee /tmp/presign.json
+# 2. PUT bytes straight to R2 using the signed URL (must echo the signed headers):
+URL=$(jq -r .url /tmp/presign.json)
+printf 'hello-png-12' | curl -sX PUT "$URL" -H 'content-type: image/png' --data-binary @- -w '%{http_code}\n'
+# Expect: 200. A 403 SignatureDoesNotMatch means the signed Content-Type/Length
+# headers weren't echoed; a CORS error means the bucket needs a CORS policy.
+```
+
 ## Runbooks
 
 - [runbooks/recording-stuck-finalize.md](../runbooks/recording-stuck-finalize.md)
