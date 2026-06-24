@@ -63,6 +63,18 @@ export interface ChatComposerProps {
   contextKind: ChatContextKind
   contextId: string
   contextLabel?: string | null
+  /**
+   * Resume a SPECIFIC session by id instead of find-or-creating the
+   * context's active one. When set, the `session-by-context` find-or-create
+   * query is skipped and the composer loads this session's detail directly.
+   * Used by the "recent chats" surfaces to reopen a prior (often archived)
+   * chat. When absent, behavior is unchanged (open/create the active
+   * session for contextKind+contextId).
+   */
+  sessionId?: string
+  /** Fires when the user sends a message (at send start). Lets the parent
+   *  collapse the recent-chats section so it stops taking space. */
+  onMessageSent?: () => void
   /** Optional empty-state node rendered when the session has zero messages. */
   emptyState?: ReactNode
   /** Placeholder shown inside the text input. */
@@ -89,7 +101,7 @@ interface PendingMessage {
 
 export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(
   function ChatComposer(
-    { contextKind, contextId, contextLabel, emptyState, placeholder },
+    { contextKind, contextId, contextLabel, sessionId: resumeSessionId, onMessageSent, emptyState, placeholder },
     ref,
   ): React.JSX.Element {
   const qc = useQueryClient()
@@ -97,6 +109,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(
   const [input, setInput] = useState('')
   const [pending, setPending] = useState<PendingMessage[]>([])
 
+  // Dual-mode: when a `sessionId` is supplied we resume that exact session
+  // and skip find-or-create; otherwise we open/create the active session for
+  // this context. A single `enabled` flag keeps the branching to one place.
   const sessionQuery = useQuery({
     queryKey: ['chat', 'session-by-context', contextKind, contextId],
     queryFn: () =>
@@ -105,11 +120,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(
         contextId,
         ...(contextLabel != null ? { contextLabel } : {}),
       }),
-    enabled: Boolean(contextKind && contextId),
+    enabled: !resumeSessionId && Boolean(contextKind && contextId),
     staleTime: 60_000,
   })
 
-  const sessionId = sessionQuery.data?.id
+  const sessionId = resumeSessionId ?? sessionQuery.data?.id
 
   const detailQuery = useQuery({
     queryKey: ['chat', 'session-detail', sessionId],
@@ -193,6 +208,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(
       }
       setPending((prev) => [...prev, userPending, assistantPending])
       setInput('')
+      // Tell the parent a send has started so it can collapse the recent-
+      // chats section. Fired here (not onSuccess) so the section yields
+      // space immediately, before the reply streams in.
+      onMessageSent?.()
 
       const ac = new AbortController()
       inflightAbortRef.current = ac

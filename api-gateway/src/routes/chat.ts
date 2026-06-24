@@ -188,6 +188,11 @@ export async function registerChatRoutes(
     schema: {
       querystring: z.object({
         contextKind: z.enum(CHAT_CONTEXT_KINDS).optional(),
+        // Optional exact-match filter on context_id (e.g. `company:<id>`).
+        // Used by the per-entity "recent chats" surfaces to list every
+        // session for a single entity (active + archived). Only narrows
+        // within the caller's own rows — never broadens access.
+        contextId: z.string().min(1).max(128).optional(),
         includeArchived: z.coerce.boolean().default(false),
         limit: z.coerce.number().int().min(1).max(100).default(30),
         offset: z.coerce.number().int().min(0).default(0),
@@ -202,7 +207,7 @@ export async function registerChatRoutes(
     handler: async (req) => {
       const user = req.requireFirm()
       const db = getDb(env.GATEWAY_DATABASE_URL)
-      const { contextKind, includeArchived, limit, offset } = req.query
+      const { contextKind, contextId, includeArchived, limit, offset } = req.query
 
       const where = [
         eq(schema.chatSessions.userId, user.sub),
@@ -216,6 +221,9 @@ export async function registerChatRoutes(
       ]
       if (contextKind) {
         where.push(eq(schema.chatSessions.contextKind, contextKind))
+      }
+      if (contextId) {
+        where.push(eq(schema.chatSessions.contextId, contextId))
       }
       if (!includeArchived) {
         where.push(eq(schema.chatSessions.isArchived, 0))

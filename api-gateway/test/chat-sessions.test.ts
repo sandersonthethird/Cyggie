@@ -65,6 +65,11 @@ async function insertSession(opts: {
   lamport?: string
   isPinned?: boolean
   isArchived?: boolean
+  // Defaults to active (schema default). Set false when seeding multiple
+  // sessions under the SAME contextId — only one may be active at a time
+  // (chat_sessions_active_idx unique-where-isActive=1), so the siblings must
+  // be inactive (the real-world "1 active + N archived" shape).
+  isActive?: boolean
   lastMessageAt?: Date
 }): Promise<string> {
   const id = TEST_PREFIX + 'sess-' + createId().slice(0, 8)
@@ -80,6 +85,7 @@ async function insertSession(opts: {
     lamport: opts.lamport ?? '1',
     isPinned: opts.isPinned ? 1 : 0,
     isArchived: opts.isArchived ? 1 : 0,
+    ...(opts.isActive === false ? { isActive: 0 } : {}),
     lastMessageAt: opts.lastMessageAt ?? new Date(),
     createdByUserId: opts.userId,
   })
@@ -160,6 +166,80 @@ describe('GET /chat/sessions', () => {
     const ids = (res.json() as { sessions: Array<{ id: string }> }).sessions.map((s) => s.id)
     expect(ids).toContain(meeting)
     expect(ids).not.toContain(crm)
+  })
+
+  test('contextId filter returns one entity\'s sessions (active + archived), excluding others', async () => {
+    const { userId, jwt } = await setupUser()
+    const companyCtx = `company:${TEST_PREFIX}co-A`
+    // One active + two archived chats for the same company (the real shape).
+    const active = await insertSession({ userId, contextKind: 'company', contextId: companyCtx })
+    const archived1 = await insertSession({
+      userId,
+      contextKind: 'company',
+      contextId: companyCtx,
+      isArchived: true,
+      isActive: false,
+    })
+    const archived2 = await insertSession({
+      userId,
+      contextKind: 'company',
+      contextId: companyCtx,
+      isArchived: true,
+      isActive: false,
+    })
+    // Noise that must NOT appear: a different company + a global chat.
+    const otherCompany = await insertSession({
+      userId,
+      contextKind: 'company',
+      contextId: `company:${TEST_PREFIX}co-B`,
+    })
+    const crm = await insertSession({ userId, contextKind: 'crm' })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/chat/sessions?contextKind=company&contextId=${encodeURIComponent(companyCtx)}&includeArchived=true`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const ids = (res.json() as { sessions: Array<{ id: string }> }).sessions.map((s) => s.id)
+    expect(ids).toEqual(expect.arrayContaining([active, archived1, archived2]))
+    expect(ids).not.toContain(otherCompany)
+    expect(ids).not.toContain(crm)
+  })
+
+  test('omitting contextId is unchanged: the broader list still includes other contexts', async () => {
+    const { userId, jwt } = await setupUser()
+    const a = await insertSession({ userId, contextKind: 'company', contextId: `company:${TEST_PREFIX}co-C` })
+    const b = await insertSession({ userId, contextKind: 'company', contextId: `company:${TEST_PREFIX}co-D` })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/chat/sessions?contextKind=company',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const ids = (res.json() as { sessions: Array<{ id: string }> }).sessions.map((s) => s.id)
+    expect(ids).toEqual(expect.arrayContaining([a, b]))
+  })
+
+  test('contextId filter cannot reach another user\'s sessions (no IDOR)', async () => {
+    const { userId: ownerId } = await setupUser()
+    const { jwt: strangerJwt } = await setupUser()
+    const companyCtx = `company:${TEST_PREFIX}co-shared`
+    const owned = await insertSession({
+      userId: ownerId,
+      contextKind: 'company',
+      contextId: companyCtx,
+    })
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/chat/sessions?contextKind=company&contextId=${encodeURIComponent(companyCtx)}&includeArchived=true`,
+      headers: { authorization: `Bearer ${strangerJwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const ids = (res.json() as { sessions: Array<{ id: string }> }).sessions.map((s) => s.id)
+    expect(ids).not.toContain(owned)
+    expect(ids).toHaveLength(0)
   })
 
   test('does not leak other users\' sessions', async () => {

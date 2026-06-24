@@ -99,6 +99,10 @@ export interface ChatSessionDetail {
 
 export interface ListChatSessionsParams {
   contextKind?: ChatContextKind
+  /** Exact-match filter on context_id (e.g. `company:<id>`) — lists every
+   *  session for one entity. Pairs with includeArchived to surface prior
+   *  (archived) chats for the "recent chats" surfaces. */
+  contextId?: string
   includeArchived?: boolean
   limit?: number
   offset?: number
@@ -116,6 +120,7 @@ export function fetchChatSessions(
 ): Promise<ListChatSessionsResult> {
   const qs = new URLSearchParams()
   if (params.contextKind) qs.set('contextKind', params.contextKind)
+  if (params.contextId) qs.set('contextId', params.contextId)
   if (params.includeArchived) qs.set('includeArchived', 'true')
   if (params.limit !== undefined) qs.set('limit', String(params.limit))
   if (params.offset !== undefined) qs.set('offset', String(params.offset))
