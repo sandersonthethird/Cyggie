@@ -11,6 +11,7 @@ import {
   speakers,
 } from '../schema/meetings'
 import { notes, noteFolders } from '../schema/notes'
+import { attachments } from '../schema/attachments'
 import { tasks } from '../schema/tasks'
 import { templates } from '../schema/templates'
 import { themes } from '../schema/themes'
@@ -198,6 +199,10 @@ export const WRITE_VALIDATORS: Record<string, ValidatorBundle> = {
   meeting_speaker_contact_links: bundleFor(meetingSpeakerContactLinks, 'meeting_speaker_contact_links'),
   notes: bundleFor(notes, 'notes'),
   note_folders: bundleFor(noteFolders, 'note_folders'),
+  // M5 — note/memo attachment metadata. user_id + firm_id are absent in the
+  // desktop payload (SQLite carries user_id but the gateway re-stamps both from
+  // JWT); drizzle-zod derives the rest from the Postgres schema.
+  attachments: bundleFor(attachments, 'attachments'),
   tasks: bundleFor(tasks, 'tasks'),
   chat_sessions: bundleFor(chatSessions, 'chat_sessions'),
   chat_session_messages: bundleFor(chatSessionMessages, 'chat_session_messages'),

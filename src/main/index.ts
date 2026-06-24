@@ -32,6 +32,7 @@ import { runTranscriptionEvalMigration } from './transcription-eval/repo/migrati
 import { runEvalBootCleanup } from './transcription-eval/service/boot-cleanup'
 import { backfillMissingSummariesOnLaunch } from './services/summary-backfill.service'
 import { backfillMemosForSyncOnLaunch } from './services/memo-sync-backfill.service'
+import { startAttachmentGc, stopAttachmentGc } from './services/attachment-gc.service'
 import { backfillEmailsForSyncOnLaunch } from './services/email-sync-backfill.service'
 import { backfillPreferencesForSyncOnLaunch } from './services/preference-sync.service'
 import { consolidateTargetStageFieldsOnLaunch } from './services/target-stage-consolidation-backfill.service'
@@ -351,6 +352,12 @@ app.whenReady().then(() => {
   // Idempotent: lamport='0' is the only candidate set.
   backfillMemosForSyncOnLaunch(startupUserId)
 
+  // Attachment GC (M5) — soft-deletes orphaned note/memo attachment rows (the
+  // `cyggie-attachment://{id}` reference removed from all content) past a 24h
+  // grace window, scoped to the current user's own rows. Deferred ~5s past sync
+  // bootstrap, then every 24h. Dark until attachments exist (PR3 wires the UI).
+  startAttachmentGc()
+
   // Email sync backfill (Part B) — email rows are written by ingest via raw
   // SQL (not wrapped repos), so they carry no outbox entry. This pass enqueues
   // one outbox INSERT per email_messages / email_company_links /
@@ -585,6 +592,7 @@ app.on('before-quit', (event) => {
 
   // Stop the SyncAgent's periodic timer so Node can exit cleanly.
   shutdownSync()
+  stopAttachmentGc()
 
   // Concern (1): active in-progress recording.
   const activeMeetingId = getActiveRecordingMeetingId()

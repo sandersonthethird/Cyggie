@@ -222,6 +222,12 @@ export const OWNED_TABLES: readonly OwnedTableSpec[] = [
   },
   { table: 'notes', primaryKey: ['id'], hasUserId: true },
   { table: 'note_folders', primaryKey: ['path'], hasUserId: true },
+  // M5 — note/memo image + PDF attachment METADATA (bytes live in R2). After
+  // notes + investment_memos (owner_id references either). firmScoped so a
+  // teammate can resolve an attachment in a firm-shared note/memo: the gateway
+  // stamps firm_id (and user_id) from JWT; the SQLite table carries user_id but
+  // no firm_id (single-firm desktop). Insert + soft-delete only → whole-row LWW.
+  { table: 'attachments', primaryKey: ['id'], hasUserId: true, firmScoped: true },
   // Phase 2 multiplayer — tasks are firm-shared with field-level LWW (same as
   // org_companies). hasUserId stays true (PG tasks.user_id is NOT NULL; the
   // gateway stamps it from JWT.sub — SQLite tasks has no user_id column).

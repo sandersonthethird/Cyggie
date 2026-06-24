@@ -61,6 +61,7 @@ import * as rawMeeting from './meeting.repo'
 import * as rawContact from './contact.repo'
 import * as rawOrgCompany from './org-company.repo'
 import * as rawNotes from './notes.repo'
+import * as rawAttachment from './attachment.repo'
 import {
   makeEntityNotesRepo,
   type EntityNotesRepo,
@@ -467,6 +468,34 @@ export const softDeleteNote = withSync(rawNotes.softDeleteNote, {
   table: 'notes',
   op: 'update',
 })
+
+// ── attachments ──────────────────────────────────────────────────────────────
+// Note/memo image + PDF metadata (bytes live in R2). createAttachment/
+// softDeleteAttachment return the full row, which the wrapper emits to the
+// outbox. softDelete is op:'update' (sets deleted_at) so the tombstone
+// replicates cross-device — same discipline as softDeleteNote.
+
+export const createAttachment = withSync(rawAttachment.createAttachment, {
+  table: 'attachments',
+  op: 'insert',
+})
+
+export const softDeleteAttachment = withSync(rawAttachment.softDeleteAttachment, {
+  table: 'attachments',
+  op: 'update',
+})
+
+// Reads — pass through (no outbox).
+export const getAttachment = rawAttachment.getAttachment
+export const listOwnActiveAttachmentsForGc = rawAttachment.listOwnActiveAttachmentsForGc
+export const collectReferencedAttachmentIds = rawAttachment.collectReferencedAttachmentIds
+export const extractAttachmentRefs = rawAttachment.extractAttachmentRefs
+export type {
+  Attachment,
+  AttachmentCreateData,
+  AttachmentKind,
+  AttachmentOwnerType,
+} from './attachment.repo'
 
 export const createFolder = withSync(rawNotes.createFolder, {
   table: 'note_folders',
