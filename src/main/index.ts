@@ -95,7 +95,11 @@ app.setAsDefaultProtocolClient('cyggie-desktop')
 // Single-instance lock: when the OS hands us a cyggie-desktop:// URL from a
 // second app launch (Windows / Linux protocol-launch path), the original
 // instance receives it via 'second-instance'. Bail if we lost the lock.
-const gotLock = app.requestSingleInstanceLock()
+// Skip the single-instance lock under the test storage override so an isolated
+// instance (CYGGIE_STORAGE_PATH) can run ALONGSIDE the real app.
+const gotLock = process.env['CYGGIE_STORAGE_PATH']
+  ? true
+  : app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 }
@@ -283,8 +287,17 @@ app.whenReady().then(() => {
     }
   }
 
-  // Initialize default storage paths and database
-  initializeStorage()
+  // Initialize storage paths and database. CYGGIE_STORAGE_PATH is a TEST-ONLY
+  // override: point a throwaway dir at it to run a fully isolated instance
+  // (fresh SQLite, signed-out, own flags/session) alongside the real app, which
+  // keeps using ~/Documents/MeetingIntelligence. Default behavior is unchanged.
+  const storageOverride = process.env['CYGGIE_STORAGE_PATH']
+  if (storageOverride) {
+    setStoragePath(storageOverride)
+    console.log(`[Startup] CYGGIE_STORAGE_PATH override → ${storageOverride} (isolated test instance)`)
+  } else {
+    initializeStorage()
+  }
   getDatabase()
 
   // Reset any meetings stuck in "recording" status from a previous session
@@ -298,10 +311,13 @@ app.whenReady().then(() => {
   // Clean up orphaned video temp files from previous crashes
   cleanupOrphanedTempFiles()
 
-  // Load user-configured storage path (DB must be ready first)
-  const savedStoragePath = settingsRepo.getSetting('storagePath')
-  if (savedStoragePath) {
-    setStoragePath(savedStoragePath)
+  // Load user-configured storage path (DB must be ready first). Skipped under
+  // the test override so an isolated instance never re-points at a saved path.
+  if (!storageOverride) {
+    const savedStoragePath = settingsRepo.getSetting('storagePath')
+    if (savedStoragePath) {
+      setStoragePath(savedStoragePath)
+    }
   }
 
   // Ensure a local current-user identity exists so new writes are attributable.
