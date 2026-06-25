@@ -15,7 +15,11 @@ export const FEATURE_FLAG_DEFAULTS = {
   // M5 — paste/drag/insert images into the note editor (bytes → object storage,
   // synced). Enabled now that storage (Fly Tigris) is provisioned on the gateway.
   // Still a flag so it stays killable via settings (set to '0').
-  ff_note_attachments_v1: true
+  ff_note_attachments_v1: true,
+  // M6 — desktop onboarding gate (welcome → sign-in → dispatcher → create/join).
+  // OFF by default so existing local installs aren't disrupted until the flow is
+  // built + verified; the "use locally" escape is the safety net.
+  ff_onboarding_v1: false
 } as const
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAG_DEFAULTS
