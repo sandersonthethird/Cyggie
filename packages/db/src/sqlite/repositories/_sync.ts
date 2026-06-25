@@ -227,6 +227,16 @@ export function withSync<
         const intentionalNoop = isFieldLwwWrite && emitRow == null
 
         if (emitRow != null && typeof emitRow === 'object') {
+          // Whole-row-LWW (non field-LWW) insert/update: stamp the local row's
+          // lamport so it doesn't sit at '0' until a pull echo heals it (the
+          // flicker fix). Field-LWW rows are already stamped inside
+          // stampFieldLww; DELETE has no row to stamp. MUST run here, inside the
+          // same db.transaction as appendOutboxRow — a stamped-but-unemitted row
+          // would be invisible to the `lamport='0'` backfill selectors and
+          // stranded. (Same helper the cascade engine's emitCascadeRow uses.)
+          if (!isFieldLwwWrite && (opts.op === 'insert' || opts.op === 'update')) {
+            stampWholeRowLww(db, spec, emitRow, lamport)
+          }
           appendOutboxRowWithSpec(db, spec, opts.op, emitRow)
         } else {
           // If we can't emit a primary row (e.g. fn returned null because
