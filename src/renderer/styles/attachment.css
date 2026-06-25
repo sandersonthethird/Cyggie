@@ -1,0 +1,35 @@
+/* In-flight image upload preview (ProseMirror widget decoration). Global, not a
+   CSS module, because the decoration DOM uses literal class names. See
+   attachment-upload-extension.ts. */
+
+.attachmentUploadPreview {
+  position: relative;
+  display: inline-block;
+  vertical-align: bottom;
+  opacity: 0.65;
+}
+
+.attachmentUploadPreviewImg {
+  max-width: 100%;
+  border-radius: 4px;
+  display: block;
+}
+
+.attachmentUploadSpinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: attachmentSpin 0.7s linear infinite;
+}
+
+@keyframes attachmentSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}

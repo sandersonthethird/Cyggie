@@ -43,6 +43,7 @@ import { backfillNotesPrivacyOnLaunch } from './services/notes-privacy-backfill.
 import { startExtractionWorker } from './services/flagged-file-extraction-worker'
 import { handleAuthCallback } from './auth/cyggie-auth'
 import { registerCyggieAuthIpc } from './ipc/cyggie-auth.ipc'
+import { registerAttachmentProtocol } from './attachments/attachment-protocol'
 
 // Register privileged schemes before app.whenReady:
 //   media:// — local video files (cross-origin blocked on file://)
@@ -60,6 +61,16 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: 'asset',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    }
+  },
+  {
+    // cyggie-attachment:// — note/memo attachments cached from R2 (M5).
+    scheme: 'cyggie-attachment',
     privileges: {
       standard: true,
       secure: true,
@@ -526,6 +537,11 @@ app.whenReady().then(() => {
     const body = Readable.toWeb(stream) as unknown as BodyInit
     return new Response(body, { status: 200, headers: { 'Content-Type': contentType } })
   })
+
+  // Handle cyggie-attachment:// — note/memo attachments resolved from the local
+  // cache (downloaded from R2 by id on a miss). Device-independent: the same
+  // reference resolves on any device (M5).
+  registerAttachmentProtocol()
 
   // Register IPC handlers
   registerAllHandlers()

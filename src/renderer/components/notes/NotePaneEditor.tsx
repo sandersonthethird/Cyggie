@@ -20,8 +20,15 @@ import { NoteTagger } from './NoteTagger'
 import { TagSuggestionBanner } from './TagSuggestionBanner'
 import { TiptapBubbleMenu } from '../common/TiptapBubbleMenu'
 import { api } from '../../api'
+import { useFeatureFlag } from '../../hooks/useFeatureFlags'
+import {
+  insertImageFiles,
+  imageFilesFromClipboard,
+  imageFilesFromDrop,
+} from '../../lib/attachment-insert'
 import { parseToDate } from '../../utils/format'
 import styles from './NotePaneEditor.module.css'
+import '../../styles/attachment.css'
 import type { Note, TagSuggestion } from '../../../shared/types/note'
 import type { Meeting } from '../../../shared/types/meeting'
 
@@ -74,6 +81,49 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
     deleteNote,
     readOnly,
   } = useNoteEditor(noteId, { onNoteUpdated, onNoteDeleted })
+
+  // M5 — image attachments (flag-gated; OFF until verified live).
+  const { enabled: attachmentsEnabled } = useFeatureFlag('ff_note_attachments_v1')
+  const canAttach = attachmentsEnabled && !readOnly
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [attachError, setAttachError] = useState<string | null>(null)
+  const attachErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showAttachError = useCallback((msg: string) => {
+    if (attachErrorTimer.current) clearTimeout(attachErrorTimer.current)
+    setAttachError(msg)
+    attachErrorTimer.current = setTimeout(() => setAttachError(null), 4000)
+  }, [])
+  useEffect(() => () => { if (attachErrorTimer.current) clearTimeout(attachErrorTimer.current) }, [])
+
+  const handlePasteImages = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (!canAttach || !editor) return
+      const files = imageFilesFromClipboard(e.clipboardData)
+      if (files.length === 0) return // let the editor's default paste run
+      e.preventDefault()
+      void insertImageFiles(editor, files, { ownerType: 'note', ownerId: noteId, onError: showAttachError })
+    },
+    [canAttach, editor, noteId, showAttachError],
+  )
+  const handleDropImages = useCallback(
+    (e: React.DragEvent) => {
+      if (!canAttach || !editor) return
+      const files = imageFilesFromDrop(e.dataTransfer)
+      if (files.length === 0) return
+      e.preventDefault()
+      void insertImageFiles(editor, files, { ownerType: 'note', ownerId: noteId, onError: showAttachError })
+    },
+    [canAttach, editor, noteId, showAttachError],
+  )
+  const handleFilePicked = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files ?? [])
+      e.target.value = '' // allow re-picking the same file
+      if (!canAttach || !editor || files.length === 0) return
+      void insertImageFiles(editor, files, { ownerType: 'note', ownerId: noteId, onError: showAttachError })
+    },
+    [canAttach, editor, noteId, showAttachError],
+  )
 
   const [findOpen, setFindOpen] = useState(false)
   const {
@@ -384,9 +434,25 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
       {/* Editor */}
       {(loadState === 'loaded' || loadState === 'loading') && (
         // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
-        <div className={styles.editor} onClick={() => editor?.commands.focus()}>
+        <div
+          className={styles.editor}
+          onClick={() => editor?.commands.focus()}
+          onPaste={canAttach ? handlePasteImages : undefined}
+          onDrop={canAttach ? handleDropImages : undefined}
+        >
           <EditorContent editor={editor} />
         </div>
+      )}
+      {attachError && <div className={styles.stateMsg}>{attachError}</div>}
+      {canAttach && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleFilePicked}
+        />
       )}
       <TiptapBubbleMenu editor={editor} />
 
@@ -404,6 +470,15 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
         </span>
         {!readOnly && (
           <div className={styles.footerActions}>
+            {canAttach && (
+              <button
+                className={styles.pinBtn}
+                onClick={() => fileInputRef.current?.click()}
+                title="Insert image"
+              >
+                🖼
+              </button>
+            )}
             <button
               className={`${styles.pinBtn} ${isPinned ? styles.pinBtnActive : ''}`}
               onClick={handlePinToggle}

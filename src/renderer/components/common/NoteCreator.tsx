@@ -40,6 +40,7 @@ import Image from '@tiptap/extension-image'
 import Placeholder from '@tiptap/extension-placeholder'
 import { useTiptapMarkdown } from '../../hooks/useTiptapMarkdown'
 import { TABLE_EXTENSIONS } from '../../lib/tiptap-extensions'
+import { AttachmentUpload } from '../../lib/attachment-upload-extension'
 import styles from './NoteCreator.module.css'
 
 interface NoteCreatorProps {
@@ -78,6 +79,7 @@ export function NoteCreator({ onSave, placeholder = 'Add a note…', draftKey }:
         Markdown,
         Link.configure({ openOnClick: true }),
         Image,
+        AttachmentUpload,
         ...TABLE_EXTENSIONS,
         Placeholder.configure({ placeholder }),
       ],

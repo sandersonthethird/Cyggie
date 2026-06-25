@@ -32,6 +32,7 @@ import { registerCrmChatHandlers } from './crm-chat.ipc'
 import { registerEntitiesChatHandlers } from './entities-chat.ipc'
 import { registerFileHandlers } from './file.ipc'
 import { registerChatSessionHandlers } from './chat-session.ipc'
+import { registerAttachmentHandlers } from './attachment.ipc'
 
 export function registerAllHandlers(): void {
   registerMeetingHandlers()
@@ -68,4 +69,5 @@ export function registerAllHandlers(): void {
   registerEntitiesChatHandlers()
   registerFileHandlers()
   registerChatSessionHandlers()
+  registerAttachmentHandlers()
 }
