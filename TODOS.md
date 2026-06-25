@@ -981,25 +981,22 @@ The 3 bulk contact ops (`mergeContacts` / `applyContactDedupDecisions` /
 run through it (contacts + contact_emails depth; FK children allow-listed). Engine
 + bulk-op tests in `cascade-snapshot-diff.test.ts` / `contact-bulk-ops-outbox.test.ts`.
 
-**Remaining (deferred) — migrate the 3 existing MANUAL emitters onto the engine.**
-`renameFolder` / `deleteFolder` (note_folders) and `syncMeetingCompanyLinks` /
-`createCompanyForMeeting` (org_companies/aliases/links) still hand-roll
-`appendOutboxRow`. Attempting the migration surfaced **two reasons it's NOT a clean
-byte-identical swap** (so it was pulled out of the engine PR):
-  1. **create-cascade misfit:** `createCompanyForMeeting` CREATEs rows whose ids
-     aren't known until after the fn runs, so there's no stable upfront scope
-     predicate for snapshot-diff. Manual `appendOutboxRow`-at-creation is the
-     correct pattern for create-with-fresh-id cascades — don't force these.
-  2. **payload-shape change:** the engine emits the full bare `SELECT *` row; the
-     manual note_folders emitters emit a minimal `{ path }`. Migrating
-     renameFolder/deleteFolder changes the payload and breaks the byte-identical
-     golden tests ([notes-folders-outbox.test.ts](src/tests/notes-folders-outbox.test.ts)).
-     Functionally fine (fuller payload), but it's a behavior change + loses the
-     golden safety net, so it needs its own focused PR + updated goldens.
-**How (if pursued):** only renameFolder/deleteFolder are good engine candidates
-(known note_folders scope); update their golden tests to the full-row payload.
-Leave the meeting→company emitters as manual.
-**Effort:** S–M. **Priority:** P3 (DRY-only; gap already closed). **Depends on:** Nothing.
+**Manual-emitter migration — ✅ folder ops done (2026-06-25); meeting→company stays manual by design.**
+`renameFolder` / `deleteFolder` now run through `runInSyncBatchWithCascade` scoped
+to `note_folders` (barrel `index.ts`); the hand-rolled `appendOutboxRow` + the temp
+`console.log` were removed from `notes.repo.ts`. Payload is now the full bare row
+(`created_at` + `lamport`) instead of minimal `{ path }` — verified safe: SQLite
+`note_folders` has no `user_id` column (no rejection gotcha), the gateway uses the
+ENVELOPE lamport (payload `lamport` is a metaCol) and stamps `user_id` from the JWT,
+and `created_at` maps to the real Neon column. Golden test
+([notes-folders-outbox.test.ts](src/tests/notes-folders-outbox.test.ts)) updated to
+assert `.path` (not the full payload) and green.
+
+**NOT migrated (intentional):** `syncMeetingCompanyLinks` / `createCompanyForMeeting`
+stay hand-rolled. `createCompanyForMeeting` CREATEs rows whose ids aren't known until
+after the fn runs, so there's no stable upfront scope predicate for snapshot-diff —
+`appendOutboxRow`-at-creation is the correct pattern for create-with-fresh-id
+cascades. **Priority:** done / closed (the remainder is not a snapshot-diff fit).
 
 ### Wrap the other 4 owned-table repos
 **What:** Extend the barrel to wrap task / template / pipeline-config /

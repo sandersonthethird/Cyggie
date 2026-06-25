@@ -64,7 +64,7 @@
 //      the inner fn removes it (the outbox payload needs the pre-delete state).
 // =============================================================================
 
-import { withSync, runInSyncBatch } from './_sync'
+import { withSync, runInSyncBatch, runInSyncBatchWithCascade } from './_sync'
 import * as rawMeeting from './meeting.repo'
 import * as rawContact from './contact.repo'
 import * as rawOrgCompany from './org-company.repo'
@@ -564,22 +564,31 @@ export const listFolders = rawNotes.listFolders
 export const getFolderCounts = rawNotes.getFolderCounts
 export const listImportSources = rawNotes.listImportSources
 
-// renameFolder: a PK rename is DELETE old + INSERT new in the outbox protocol.
-// The wrapper emits the INSERT for the new root path; the raw repo emits a
-// DELETE for each old path it removed (plus INSERTs for cascaded children).
-export const renameFolder = withSync(rawNotes.renameFolder, {
-  table: 'note_folders',
-  op: 'insert',
-  extractRow: ({ args }) => ({ path: args[1] }), // newPath
-})
+// renameFolder / deleteFolder rewire MANY note_folders rows (the folder + every
+// descendant). A single withSync primary emit can't express that, so they run
+// through the declared-scope snapshot-diff engine scoped to note_folders: the
+// diff auto-emits one delete per removed path + one insert per new path. The
+// scope covers both the old and new path subtrees so the pre/post diff sees the
+// full rename. (Emitted payloads are now the full bare row — `created_at` +
+// `lamport` — rather than the old minimal `{ path }`; both map cleanly to the
+// Neon note_folders columns, and the gateway stamps user_id from the JWT.)
+export const renameFolder = (oldPath: string, newPath: string): void =>
+  runInSyncBatchWithCascade(
+    [
+      {
+        table: 'note_folders',
+        where: 'path = ? OR path GLOB ? OR path = ? OR path GLOB ?',
+        params: [oldPath, `${oldPath}/*`, newPath, `${newPath}/*`],
+      },
+    ],
+    () => rawNotes.renameFolder(oldPath, newPath),
+  )
 
-// deleteFolder: wrapper emits the root delete; raw repo emits one cascade
-// delete per nested descendant path inside the same transaction.
-export const deleteFolder = withSync(rawNotes.deleteFolder, {
-  table: 'note_folders',
-  op: 'delete',
-  captureBeforeDelete: (_db, [path]) => ({ path }),
-})
+export const deleteFolder = (path: string): void =>
+  runInSyncBatchWithCascade(
+    [{ table: 'note_folders', where: 'path = ? OR path GLOB ?', params: [path, `${path}/*`] }],
+    () => rawNotes.deleteFolder(path),
+  )
 
 // ── chat sessions (T17a) ────────────────────────────────────────────────────
 //
