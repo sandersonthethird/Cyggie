@@ -100,7 +100,9 @@ describe('notes folders — sync-wrapped outbox emission', () => {
       const rows = folderOutbox()
       expect(rows).toHaveLength(1)
       expect(rows[0].op).toBe('delete')
-      expect(JSON.parse(rows[0].payload)).toEqual({ path: 'Skills' })
+      // Payload is now the full bare note_folders row (snapshot-diff engine),
+      // not the old minimal { path }. The PK is what the gateway keys on.
+      expect(JSON.parse(rows[0].payload).path).toBe('Skills')
     })
 
     it('emits one delete row per nested descendant path', () => {
