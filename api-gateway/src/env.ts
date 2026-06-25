@@ -80,22 +80,24 @@ const EnvSchema = z.object({
   // Hard cap on a single uploaded audio file. 200 MB ≈ 8 hours of 16 kHz mono AAC.
   RECORDING_MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(200 * 1024 * 1024),
 
-  // ─── Note/Memo attachments — Cloudflare R2 object storage ───────────────
-  // Inline images + PDF attachments in the desktop note/memo editor. The
-  // BYTES live in R2; only small metadata rows sync via the outbox. The
+  // ─── Note/Memo attachments — S3-compatible object storage ───────────────
+  // Inline images + PDF attachments in the desktop note/memo editor. The BYTES
+  // live in object storage; only small metadata rows sync via the outbox. The
   // gateway never holds the binary — it mints short-TTL, user-scoped,
-  // size/content-type-constrained presigned URLs and the desktop PUTs/GETs
-  // R2 directly (Apple-Notes/CloudKit-style direct-to-blob).
+  // content-type-constrained presigned URLs and the desktop PUTs/GETs directly
+  // (Apple-Notes/CloudKit-style direct-to-blob).
   //
-  // All five R2_* vars are optional so the gateway boots without R2 (parity
-  // with the APNs / Slack groups), but the /attachments routes FAIL CLOSED
-  // with a clear operator error when any is missing — see attachment-storage.ts.
-  //
-  //   R2_ACCOUNT_ID         — Cloudflare account id
-  //   R2_ACCESS_KEY_ID      — R2 API token access key
-  //   R2_SECRET_ACCESS_KEY  — R2 API token secret
-  //   R2_BUCKET             — bucket name (private; no public access)
-  //   R2_ENDPOINT           — https://<accountid>.r2.cloudflarestorage.com
+  // PRIMARY: Fly Tigris (`flyctl storage create`) sets these AWS-standard vars
+  // automatically. FALLBACK: the R2_* equivalents (Cloudflare R2). Both are S3
+  // v4 compatible — same SDK. All optional so the gateway boots without storage
+  // (parity with APNs/Slack); the /attachments routes FAIL CLOSED with a clear
+  // operator error when unconfigured. See attachment-storage.ts.
+  AWS_ENDPOINT_URL_S3: z.string().url().optional(), // https://fly.storage.tigris.dev
+  AWS_ACCESS_KEY_ID: z.string().min(1).optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  AWS_REGION: z.string().min(1).optional(), // 'auto' for Tigris/R2
+  BUCKET_NAME: z.string().min(1).optional(),
+  // Fallback: Cloudflare R2 names (unused when the Tigris vars above are set).
   R2_ACCOUNT_ID: z.string().min(1).optional(),
   R2_ACCESS_KEY_ID: z.string().min(1).optional(),
   R2_SECRET_ACCESS_KEY: z.string().min(1).optional(),

@@ -95,26 +95,35 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
   }, [])
   useEffect(() => () => { if (attachErrorTimer.current) clearTimeout(attachErrorTimer.current) }, [])
 
-  const handlePasteImages = useCallback(
-    (e: React.ClipboardEvent) => {
-      if (!canAttach || !editor) return
+  // Intercept image paste/drop at the CAPTURE phase on the editor's own DOM, so
+  // we run BEFORE ProseMirror's bubble-phase handlers (which would otherwise
+  // consume or ignore the event); stopPropagation keeps PM from also handling
+  // it. Only image files are claimed — text/other paste falls through to PM.
+  useEffect(() => {
+    if (!canAttach || !editor) return
+    const dom = editor.view.dom
+    const onPaste = (e: ClipboardEvent): void => {
       const files = imageFilesFromClipboard(e.clipboardData)
-      if (files.length === 0) return // let the editor's default paste run
+      if (files.length === 0) return
       e.preventDefault()
+      e.stopPropagation()
       void insertImageFiles(editor, files, { ownerType: 'note', ownerId: noteId, onError: showAttachError })
-    },
-    [canAttach, editor, noteId, showAttachError],
-  )
-  const handleDropImages = useCallback(
-    (e: React.DragEvent) => {
-      if (!canAttach || !editor) return
+    }
+    const onDrop = (e: DragEvent): void => {
       const files = imageFilesFromDrop(e.dataTransfer)
       if (files.length === 0) return
       e.preventDefault()
+      e.stopPropagation()
       void insertImageFiles(editor, files, { ownerType: 'note', ownerId: noteId, onError: showAttachError })
-    },
-    [canAttach, editor, noteId, showAttachError],
-  )
+    }
+    dom.addEventListener('paste', onPaste, true)
+    dom.addEventListener('drop', onDrop, true)
+    return () => {
+      dom.removeEventListener('paste', onPaste, true)
+      dom.removeEventListener('drop', onDrop, true)
+    }
+  }, [canAttach, editor, noteId, showAttachError])
+
   const handleFilePicked = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files ?? [])
@@ -434,12 +443,7 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
       {/* Editor */}
       {(loadState === 'loaded' || loadState === 'loading') && (
         // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
-        <div
-          className={styles.editor}
-          onClick={() => editor?.commands.focus()}
-          onPaste={canAttach ? handlePasteImages : undefined}
-          onDrop={canAttach ? handleDropImages : undefined}
-        >
+        <div className={styles.editor} onClick={() => editor?.commands.focus()}>
           <EditorContent editor={editor} />
         </div>
       )}

@@ -47,48 +47,53 @@ export function isAllowedAttachmentMime(mime: string): mime is AttachmentMimeTyp
 export class AttachmentStorageNotConfiguredError extends Error {
   constructor() {
     super(
-      'Attachment storage (R2) is not configured. Set R2_ACCOUNT_ID, ' +
-        'R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, and R2_ENDPOINT.',
+      'Attachment storage is not configured. Set the Fly Tigris vars ' +
+        '(AWS_ENDPOINT_URL_S3, BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) ' +
+        'or the R2_* equivalents.',
     )
     this.name = 'AttachmentStorageNotConfiguredError'
   }
 }
 
-interface R2Config {
+interface StorageConfig {
   endpoint: string
   bucket: string
   accessKeyId: string
   secretAccessKey: string
+  region: string
 }
 
-/** True only when every R2_* var the presign client needs is present. */
+/** True only when the S3-compatible storage client can be fully configured. */
 export function isAttachmentStorageConfigured(env: GatewayEnv): boolean {
-  return resolveR2Config(env) !== null
+  return resolveStorageConfig(env) !== null
 }
 
-function resolveR2Config(env: GatewayEnv): R2Config | null {
-  const { R2_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY } = env
-  if (!R2_ENDPOINT || !R2_BUCKET || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
-    return null
-  }
-  return {
-    endpoint: R2_ENDPOINT,
-    bucket: R2_BUCKET,
-    accessKeyId: R2_ACCESS_KEY_ID,
-    secretAccessKey: R2_SECRET_ACCESS_KEY,
-  }
+/**
+ * Resolve the S3-compatible storage config. Prefers the S3-standard vars that
+ * Fly Tigris sets automatically (AWS_ENDPOINT_URL_S3 / BUCKET_NAME / AWS_*),
+ * falling back to the R2_* names. Tigris and Cloudflare R2 are both S3 v4
+ * compatible, so the same @aws-sdk client + presigner drives either.
+ */
+function resolveStorageConfig(env: GatewayEnv): StorageConfig | null {
+  const endpoint = env.AWS_ENDPOINT_URL_S3 ?? env.R2_ENDPOINT
+  const bucket = env.BUCKET_NAME ?? env.R2_BUCKET
+  const accessKeyId = env.AWS_ACCESS_KEY_ID ?? env.R2_ACCESS_KEY_ID
+  const secretAccessKey = env.AWS_SECRET_ACCESS_KEY ?? env.R2_SECRET_ACCESS_KEY
+  // Tigris/R2 ignore region but the SDK requires one; 'auto' is the documented value.
+  const region = env.AWS_REGION ?? 'auto'
+  if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) return null
+  return { endpoint, bucket, accessKeyId, secretAccessKey, region }
 }
 
 // Lazily-built S3 client, keyed by endpoint+access-key so a config change in a
 // long-lived process (unlikely, but cheap to be correct) rebuilds it.
 let cachedClient: { key: string; client: S3Client } | null = null
 
-function getS3Client(cfg: R2Config): S3Client {
+function getS3Client(cfg: StorageConfig): S3Client {
   const key = `${cfg.endpoint}|${cfg.accessKeyId}`
   if (cachedClient && cachedClient.key === key) return cachedClient.client
   const client = new S3Client({
-    // R2 ignores region but the SDK requires one; 'auto' is the documented value.
-    region: 'auto',
+    region: cfg.region,
     endpoint: cfg.endpoint,
     credentials: {
       accessKeyId: cfg.accessKeyId,
@@ -111,9 +116,12 @@ export function attachmentStorageKey(userId: string, attachmentId: string): stri
 }
 
 /**
- * Mint a presigned PUT URL. The signature pins Content-Type and Content-Length,
- * so the desktop's PUT must send matching headers — R2 rejects a spoofed
- * type/size. TTL from ATTACHMENT_PRESIGN_TTL_SECONDS.
+ * Mint a presigned PUT URL. Signs only Content-Type (NOT Content-Length): a
+ * signed content-length is the most fragile part of the PUT handshake (the
+ * client must echo it exactly), so we drop it to minimize first-upload 403s.
+ * Size is already capped in the route (pre-sign validation) and desktop-side
+ * (bytes.length before PUT). `contentLength` is accepted for API symmetry but
+ * intentionally not signed. TTL from ATTACHMENT_PRESIGN_TTL_SECONDS.
  */
 export async function presignAttachmentPut(opts: {
   env: GatewayEnv
@@ -121,13 +129,12 @@ export async function presignAttachmentPut(opts: {
   contentType: string
   contentLength: number
 }): Promise<string> {
-  const cfg = resolveR2Config(opts.env)
+  const cfg = resolveStorageConfig(opts.env)
   if (!cfg) throw new AttachmentStorageNotConfiguredError()
   const command = new PutObjectCommand({
     Bucket: cfg.bucket,
     Key: opts.key,
     ContentType: opts.contentType,
-    ContentLength: opts.contentLength,
   })
   return getSignedUrl(getS3Client(cfg), command, {
     expiresIn: opts.env.ATTACHMENT_PRESIGN_TTL_SECONDS,
@@ -143,7 +150,7 @@ export async function presignAttachmentGet(opts: {
   env: GatewayEnv
   key: string
 }): Promise<string> {
-  const cfg = resolveR2Config(opts.env)
+  const cfg = resolveStorageConfig(opts.env)
   if (!cfg) throw new AttachmentStorageNotConfiguredError()
   const command = new GetObjectCommand({ Bucket: cfg.bucket, Key: opts.key })
   return getSignedUrl(getS3Client(cfg), command, {

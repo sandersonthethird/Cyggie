@@ -12,10 +12,10 @@ export const FEATURE_FLAG_DEFAULTS = {
   ff_email_ingest_v1: false,
   ff_crm_sync_read_v1: false,
   ff_crm_v2: true,
-  // M5 — paste/drag/insert images into the note editor (bytes → R2, synced).
-  // OFF until PR1/PR2 are confirmed live and the upload path is verified, so a
-  // `cyggie-attachment://` reference never enters synced markdown prematurely.
-  ff_note_attachments_v1: false
+  // M5 — paste/drag/insert images into the note editor (bytes → object storage,
+  // synced). Enabled now that storage (Fly Tigris) is provisioned on the gateway.
+  // Still a flag so it stays killable via settings (set to '0').
+  ff_note_attachments_v1: true
 } as const
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAG_DEFAULTS
