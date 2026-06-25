@@ -1,0 +1,1 @@
+ALTER TABLE "oauth_pending" ADD COLUMN "user_id" text;

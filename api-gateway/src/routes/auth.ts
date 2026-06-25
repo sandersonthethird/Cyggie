@@ -78,6 +78,10 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
         deviceId: device_id,
         deviceLabel: device_label ?? null,
         redirectTarget: redirect_target ?? 'mobile',
+        // Reconnect flow: the caller is already signed in (Bearer). Record who
+        // initiated so the callback can reject an identity swap. NULL for fresh
+        // public sign-ins (no Bearer) — those skip the check.
+        userId: req.user?.sub ?? null,
       })
       // If the caller is already signed in (Bearer in header — opportunistically
       // populated by plugins/auth), look up their email and pass to Google as
@@ -214,6 +218,28 @@ export async function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDe
           email: identity.email,
           displayName: identity.name,
           avatarUrl: identity.picture,
+        })
+      }
+
+      // Defense-in-depth: if this flow was initiated by an already-signed-in
+      // client (Bearer at /start → pending.userId set), the resolved Google
+      // identity MUST map to that same user. Otherwise a user who re-consents
+      // with a different Google account would silently swap their Cyggie
+      // identity. Mirrors the mobile-side guard in CalendarReauthState. Reject
+      // BEFORE minting any session/tokens. NULL pending.userId (fresh public
+      // sign-in) skips the check. A brand-new googleSub during a reconnect
+      // resolves to a fresh userId and so correctly fails the match.
+      if (pending.userId && pending.userId !== userId) {
+        req.log.warn(
+          { initiating_user: pending.userId, resolved_user: userId, state },
+          'oauth callback: userId mismatch — refusing to swap identity',
+        )
+        throw new GatewayError({
+          statusCode: 400,
+          code: 'OAUTH_USERID_MISMATCH',
+          message:
+            'This Google account belongs to a different Cyggie user. ' +
+            'Reconnect with your original Google account.',
         })
       }
 

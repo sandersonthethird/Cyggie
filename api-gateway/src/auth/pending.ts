@@ -40,6 +40,8 @@ export interface PendingOAuth {
   deviceId: string
   deviceLabel: string | null
   redirectTarget: RedirectTarget
+  /** The user who initiated the flow (Bearer present), or null for fresh sign-in. */
+  userId: string | null
 }
 
 export async function rememberPending(opts: {
@@ -49,6 +51,8 @@ export async function rememberPending(opts: {
   deviceId: string
   deviceLabel: string | null
   redirectTarget?: RedirectTarget
+  /** Set to the initiating user's id when the caller is already signed in. */
+  userId?: string | null
 }): Promise<void> {
   const db = getDb(opts.databaseUrl)
   await db.insert(schema.oauthPending).values({
@@ -57,6 +61,7 @@ export async function rememberPending(opts: {
     deviceId: opts.deviceId,
     deviceLabel: opts.deviceLabel,
     redirectTarget: opts.redirectTarget ?? 'mobile',
+    userId: opts.userId ?? null,
     expiresAt: new Date(Date.now() + TTL_MS),
   })
 }
@@ -81,6 +86,7 @@ export async function consumePending(opts: {
     deviceId: row.deviceId,
     deviceLabel: row.deviceLabel,
     redirectTarget: target,
+    userId: row.userId ?? null,
   }
 }
 
