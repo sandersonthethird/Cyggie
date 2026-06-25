@@ -24,6 +24,12 @@ import { merge as mergeClock } from './clock'
 
 const LAST_PULL_LAMPORT_KEY = 'sync.pull.lastLamport'
 
+// The gateway caps each /sync/pull page (SYNC_PULL_PAGE_SIZE) and sets hasMore.
+// A first launch on a heavy account spans several pages; drain them all in one
+// call. Cap the loop so a server bug (hasMore stuck true) can't spin forever —
+// whatever's left resumes on the next pull.
+const MAX_PULL_PAGES = 50
+
 interface PullStorage {
   getString(key: string): string | undefined
   set(key: string, value: string): void
@@ -69,9 +75,14 @@ function setLastPullLamport(v: string): void {
 }
 
 /**
- * Pull deltas since the last successful call. Returns the rows + the new
- * high-water-mark; persists the mark BEFORE returning so a partial
- * caller failure doesn't force a full re-pull next time.
+ * Pull deltas since the last successful call, DRAINING every gateway page
+ * (loops while the response says `hasMore`). Returns the accumulated rows + the
+ * new high-water-mark; persists the cursor after EACH page so a mid-drain
+ * failure resumes from the last drained page rather than re-pulling.
+ *
+ * Guards: the caller's AbortSignal is threaded through every page (navigate-away
+ * aborts mid-drain); a page cap stops a runaway loop (logs + resumes next pull);
+ * a cursor-advance check stops a degenerate `hasMore`-but-no-progress server.
  *
  * Errors propagate (caller decides whether to retry / surface).
  */
@@ -79,20 +90,61 @@ export async function pullSince(opts: {
   since?: string
   signal?: AbortSignal
 } = {}): Promise<PullResult> {
-  const since = opts.since ?? getLastPullLamport()
-  const res = await api.get<{
-    meetings: MeetingsFromPullRow[]
-    serverLamport: string
-  }>(`/sync/pull?since=${encodeURIComponent(since)}`, { signal: opts.signal })
+  let since = opts.since ?? getLastPullLamport()
+  const allMeetings: MeetingsFromPullRow[] = []
+  let lastServerLamport = since
+  let pages = 0
+  let cappedWithMore = false
 
-  if (res.serverLamport && res.serverLamport !== since) {
-    setLastPullLamport(res.serverLamport)
-    mergeClock(res.serverLamport)
+  for (;;) {
+    const res = await api.get<{
+      meetings: MeetingsFromPullRow[]
+      serverLamport: string
+      hasMore?: boolean
+    }>(`/sync/pull?since=${encodeURIComponent(since)}`, { signal: opts.signal })
+
+    allMeetings.push(...res.meetings)
+    pages += 1
+
+    // Persist + advance the clock per page so a later-page failure resumes here.
+    if (res.serverLamport && res.serverLamport !== since) {
+      setLastPullLamport(res.serverLamport)
+      mergeClock(res.serverLamport)
+      lastServerLamport = res.serverLamport
+    }
+
+    if (!res.hasMore) break
+
+    // Degenerate ceiling: server says there's more but the cursor didn't move
+    // past `since`. Draining again would loop forever — stop and let the next
+    // pull retry rather than hang.
+    if (!res.serverLamport || BigInt(res.serverLamport) <= BigInt(since)) {
+      console.warn(
+        `[sync.pull] hasMore=true but cursor did not advance past ${since}; stopping drain`,
+      )
+      break
+    }
+    since = res.serverLamport
+
+    if (pages >= MAX_PULL_PAGES) {
+      cappedWithMore = true
+      break
+    }
   }
+
+  if (cappedWithMore) {
+    console.warn(
+      `[sync.pull] drained ${pages} pages (${allMeetings.length} rows) and hit the ` +
+        `${MAX_PULL_PAGES}-page cap; more remain — resuming on the next pull`,
+    )
+  } else if (pages > 1) {
+    console.log(`[sync.pull] drained ${pages} pages, ${allMeetings.length} rows`)
+  }
+
   return {
-    meetings: res.meetings,
-    serverLamport: res.serverLamport,
-    changedIds: res.meetings.map((m) => m.id),
+    meetings: allMeetings,
+    serverLamport: lastServerLamport,
+    changedIds: allMeetings.map((m) => m.id),
   }
 }
 
