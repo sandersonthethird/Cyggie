@@ -132,6 +132,7 @@ import { runNotesSoftDeleteMigration } from './migrations/130-notes-soft-delete'
 import { runChatMessageCitationsMigration } from './migrations/132-chat-message-citations'
 import { runDropDeadCoInvestorsMigration } from './migrations/131-drop-dead-co-investors'
 import { runAttachmentsMigration } from './migrations/133-attachments'
+import { runAttachmentUploadsMigration } from './migrations/134-attachment-uploads'
 
 let db: Database.Database | null = null
 
@@ -355,4 +356,5 @@ export function runAllMigrations(db: Database.Database): void {
   runDropDeadCoInvestorsMigration(db)
   runChatMessageCitationsMigration(db)
   runAttachmentsMigration(db)
+  runAttachmentUploadsMigration(db)
 }

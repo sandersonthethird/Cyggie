@@ -30,6 +30,7 @@ import {
   statSync,
 } from 'node:fs'
 import { join } from 'node:path'
+import { listPendingUploadIds } from '@cyggie/db/sqlite/repositories'
 import { getStoragePath } from '../storage/paths'
 import { resolveUnder } from './path-guard'
 import { requestDownloadUrl, getBytes } from './attachment-transport'
@@ -161,8 +162,11 @@ export async function ensureCached(
 function enforceSizeCap(): void {
   try {
     const dir = getAttachmentCacheDir()
+    // NEVER evict bytes for an attachment still in the upload queue — they're the
+    // flusher's only source. (Imported lazily to avoid a load-order cycle.)
+    const pending = listPendingUploadIds()
     const entries = readdirSync(dir)
-      .filter((f) => !f.endsWith('.json') && !f.includes('.tmp-'))
+      .filter((f) => !f.endsWith('.json') && !f.includes('.tmp-') && !pending.has(f))
       .map((f) => {
         const full = join(dir, f)
         const st = statSync(full)

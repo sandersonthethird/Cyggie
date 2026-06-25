@@ -147,6 +147,15 @@ export async function handleAuthCallback(
     // sync-bootstrap not loaded yet (e.g. during tests). Safe to ignore;
     // the next 5s tick will drain.
   }
+  // Same for the attachment byte-outbox: drain any images queued while signed out.
+  try {
+    const { triggerAttachmentUploadFlush } = await import(
+      '../services/attachment-upload-flusher.service'
+    )
+    triggerAttachmentUploadFlush()
+  } catch {
+    // flusher not started yet — its next 5s tick will drain.
+  }
   return result
 }
 

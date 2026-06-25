@@ -33,6 +33,10 @@ import { runEvalBootCleanup } from './transcription-eval/service/boot-cleanup'
 import { backfillMissingSummariesOnLaunch } from './services/summary-backfill.service'
 import { backfillMemosForSyncOnLaunch } from './services/memo-sync-backfill.service'
 import { startAttachmentGc, stopAttachmentGc } from './services/attachment-gc.service'
+import {
+  startAttachmentUploadFlusher,
+  stopAttachmentUploadFlusher,
+} from './services/attachment-upload-flusher.service'
 import { backfillEmailsForSyncOnLaunch } from './services/email-sync-backfill.service'
 import { backfillPreferencesForSyncOnLaunch } from './services/preference-sync.service'
 import { consolidateTargetStageFieldsOnLaunch } from './services/target-stage-consolidation-backfill.service'
@@ -369,6 +373,12 @@ app.whenReady().then(() => {
   // bootstrap, then every 24h. Dark until attachments exist (PR3 wires the UI).
   startAttachmentGc()
 
+  // Attachment upload flusher (M5) — drains the local "byte outbox"
+  // (attachment_uploads) to object storage when signed in: paste writes bytes
+  // locally + enqueues; this uploads in the background + creates the synced
+  // metadata row. Mirrors the SyncAgent (5s tick + flush-on-sign-in).
+  startAttachmentUploadFlusher()
+
   // Email sync backfill (Part B) — email rows are written by ingest via raw
   // SQL (not wrapped repos), so they carry no outbox entry. This pass enqueues
   // one outbox INSERT per email_messages / email_company_links /
@@ -609,6 +619,7 @@ app.on('before-quit', (event) => {
   // Stop the SyncAgent's periodic timer so Node can exit cleanly.
   shutdownSync()
   stopAttachmentGc()
+  stopAttachmentUploadFlusher()
 
   // Concern (1): active in-progress recording.
   const activeMeetingId = getActiveRecordingMeetingId()

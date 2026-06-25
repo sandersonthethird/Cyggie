@@ -70,6 +70,7 @@ import * as rawContact from './contact.repo'
 import * as rawOrgCompany from './org-company.repo'
 import * as rawNotes from './notes.repo'
 import * as rawAttachment from './attachment.repo'
+import * as rawAttachmentUploads from './attachment-uploads.repo'
 import {
   makeEntityNotesRepo,
   type EntityNotesRepo,
@@ -505,6 +506,21 @@ export type {
   AttachmentKind,
   AttachmentOwnerType,
 } from './attachment.repo'
+
+// ── attachment uploads (LOCAL "byte outbox" — operational, NOT synced) ────────
+// Plain pass-throughs (no withSync): this queue never reaches Neon.
+export const enqueueUpload = rawAttachmentUploads.enqueueUpload
+export const listPendingUploads = rawAttachmentUploads.listPendingUploads
+export const markUploadResult = rawAttachmentUploads.markUploadResult
+export const deleteUpload = rawAttachmentUploads.deleteUpload
+export const deleteUploadByAttachmentId = rawAttachmentUploads.deleteUploadByAttachmentId
+export const listPendingUploadIds = rawAttachmentUploads.listPendingUploadIds
+export const countUploadsByStatus = rawAttachmentUploads.countUploadsByStatus
+export type {
+  AttachmentUpload,
+  AttachmentUploadStatus,
+  EnqueueUploadData,
+} from './attachment-uploads.repo'
 
 export const createFolder = withSync(rawNotes.createFolder, {
   table: 'note_folders',
