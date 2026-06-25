@@ -107,6 +107,14 @@ export async function joinFirm(token: string): Promise<FirmSummary> {
   return r.firm
 }
 
+/** Email-match join (no token) — the server matches a pending invite to the
+ *  caller's verified email. The "no email infra" path (M6). */
+export async function acceptByEmail(): Promise<FirmSummary> {
+  const r = await authedJson<JoinResult>('/auth/firms/accept-by-email', 'POST', {})
+  await applyFirmToken(r.access_token)
+  return r.firm
+}
+
 export async function listInvites(): Promise<Invite[]> {
   const r = await authedJson<{ invites: Invite[] }>('/firms/me/invites', 'GET')
   return r.invites ?? []

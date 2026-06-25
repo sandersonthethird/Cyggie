@@ -322,6 +322,106 @@ export async function registerFirmRoutes(
   })
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Flow B' — POST /auth/firms/accept-by-email
+  // Email-match join WITHOUT a token: an admin recorded an invite for this
+  // email; the caller signed in with that verified Google address. The server
+  // already knows the invite (same lookup as computeOnboardingAction), so the
+  // user just confirms — no magic-link needed (M6 "no email infra" path).
+  // ─────────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'POST',
+    url: '/auth/firms/accept-by-email',
+    schema: {
+      response: {
+        200: z.object({
+          access_token: z.string(),
+          firm: z.object({
+            id: z.string(),
+            name: z.string(),
+            slug: z.string(),
+            plan: z.string(),
+          }),
+        }),
+      },
+    },
+    handler: async (req) => {
+      const user = req.requireUser()
+      if (user.firm_id) {
+        throw new GatewayError({
+          statusCode: 409,
+          code: 'ALREADY_IN_FIRM',
+          message: 'User already belongs to a firm.',
+        })
+      }
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const userRow = await db.query.users.findFirst({ where: eq(schema.users.id, user.sub) })
+      if (!userRow) {
+        throw new GatewayError({ statusCode: 401, code: 'USER_NOT_FOUND', message: 'User no longer exists' })
+      }
+
+      // Live, unexpired invite for the caller's verified email (same predicate
+      // as computeOnboardingAction). Email match is implicit — we look up BY email.
+      const invite = await db.query.invites.findFirst({
+        where: and(
+          eq(schema.invites.email, userRow.email.toLowerCase()),
+          isNull(schema.invites.acceptedAt),
+          isNull(schema.invites.revokedAt),
+        ),
+      })
+      if (!invite || invite.expiresAt.getTime() < Date.now()) {
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'NO_PENDING_INVITE',
+          message: 'No pending invite for this email. Ask an admin to add you.',
+        })
+      }
+
+      const firm = await db.query.firms.findFirst({ where: eq(schema.firms.id, invite.firmId) })
+      if (!firm) {
+        throw new GatewayError({ statusCode: 410, code: 'FIRM_DELETED', message: 'The firm no longer exists' })
+      }
+
+      const now = new Date()
+      await db.transaction(async (tx) => {
+        await tx
+          .update(schema.users)
+          .set({
+            firmId: invite.firmId,
+            role: 'member',
+            invitedByUserId: invite.invitedByUserId,
+            updatedAt: now,
+          })
+          .where(eq(schema.users.id, user.sub))
+        await tx
+          .update(schema.invites)
+          .set({ acceptedAt: now, acceptedByUserId: user.sub })
+          .where(eq(schema.invites.id, invite.id))
+        await tx.insert(schema.auditLog).values({
+          userId: user.sub,
+          deviceId: user.device,
+          eventType: 'firm.invite.accept',
+          actor: 'user',
+          details: { firm_id: invite.firmId, invite_id: invite.id, via: 'email_match' },
+        })
+      })
+
+      const accessToken = await signAccessToken(env.JWT_SIGNING_SECRET, {
+        sub: user.sub,
+        sid: user.sid,
+        device: user.device,
+        scope: user.scope,
+        firm_id: invite.firmId,
+        role: 'member',
+      })
+      req.log.info({ userId: user.sub, firmId: invite.firmId, inviteId: invite.id }, 'firm.invite.accept.by_email')
+      return {
+        access_token: accessToken,
+        firm: { id: firm.id, name: firm.name, slug: firm.slug, plan: firm.plan },
+      }
+    },
+  })
+
+  // ─────────────────────────────────────────────────────────────────────────
   // GET /firms/me — current firm details. Auth + firm_id required.
   // ─────────────────────────────────────────────────────────────────────────
   fastifyTyped.route({

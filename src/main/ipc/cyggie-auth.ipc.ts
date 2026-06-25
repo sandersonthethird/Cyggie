@@ -9,6 +9,7 @@ import {
 import {
   claimWorkspace,
   joinFirm,
+  acceptByEmail,
   listInvites,
   createInvite,
   revokeInvite,
@@ -70,9 +71,11 @@ export function registerCyggieAuthIpc(mainWindow: BrowserWindow): void {
     },
   )
 
-  ipcMain.handle(IPC_CHANNELS.CYGGIE_FIRM_JOIN, async (_e, input: { token: string }) => {
+  ipcMain.handle(IPC_CHANNELS.CYGGIE_FIRM_JOIN, async (_e, input: { token?: string }) => {
     try {
-      return { ok: true as const, firm: await joinFirm(input.token) }
+      // token present → magic-link join; absent → email-match accept (no infra).
+      const firm = input?.token ? await joinFirm(input.token) : await acceptByEmail()
+      return { ok: true as const, firm }
     } catch (err) {
       return firmError(err)
     }
