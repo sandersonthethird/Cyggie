@@ -23,6 +23,10 @@ const ACCESS_TOKEN_KEY = 'cyggie_access_token'
 const REFRESH_TOKEN_KEY = 'cyggie_refresh_token'
 const USER_ID_KEY = 'cyggie_user_id'
 const USER_EMAIL_KEY = 'cyggie_user_email'
+// Onboarding action hint from the OAuth callback (returning|create_workspace|
+// join_firm). The dispatcher uses firm_id as the source of truth and this only
+// to disambiguate the firmless case (create vs join).
+const ACTION_KEY = 'cyggie_last_action'
 
 let accessTokenCache: string | null = null
 
@@ -81,6 +85,14 @@ export function getCyggieUserEmail(): string | null {
   return getCredential(USER_EMAIL_KEY)
 }
 
+/** Persist / read the onboarding action hint from the OAuth callback. */
+export function storeCyggieAction(action: string): void {
+  storeCredential(ACTION_KEY, action)
+}
+export function getCyggieAction(): string | null {
+  return getCredential(ACTION_KEY)
+}
+
 /**
  * Wipe all four artifacts. Called by signOut() and on persistent 401s. The
  * setSetting('') pattern is what credentials.ts callers use to clear (the
@@ -91,6 +103,7 @@ export function clearCyggieTokens(): void {
   settingsRepo.setSetting(REFRESH_TOKEN_KEY, '')
   settingsRepo.setSetting(USER_ID_KEY, '')
   settingsRepo.setSetting(USER_EMAIL_KEY, '')
+  settingsRepo.setSetting(ACTION_KEY, '')
   accessTokenCache = null
 }
 

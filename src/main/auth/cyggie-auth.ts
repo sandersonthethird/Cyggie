@@ -11,7 +11,29 @@ import {
   getCyggieUserId,
   getCyggieUserEmail,
   clearCyggieTokens,
+  storeCyggieAction,
+  getCyggieAction,
 } from './cyggie-auth-storage'
+import type { SignInAction } from '@cyggie/shared/auth-callback'
+
+/**
+ * Decode the `firm_id` claim from the stored Cyggie JWT without verifying it
+ * (it's our own token; verification happens server-side on every call). firm_id
+ * is the SOURCE OF TRUTH for onboarding routing — after claim/join the gateway
+ * rotates the token with firm_id set, while the stored `action` hint goes stale.
+ */
+function decodeFirmIdFromToken(token: string | null): string | null {
+  if (!token) return null
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return null
+    const json = Buffer.from(payload, 'base64url').toString('utf8')
+    const claims = JSON.parse(json) as { firm_id?: string | null }
+    return claims.firm_id ?? null
+  } catch {
+    return null
+  }
+}
 
 // =============================================================================
 // cyggie-auth.ts — orchestrator for the desktop's gateway-OAuth flow.
@@ -69,14 +91,21 @@ export interface CyggieAuthStatus {
   signedIn: boolean
   email: string | null
   userId: string | null
+  /** Decoded from the JWT — null until the user has a firm. Source of truth. */
+  firmId: string | null
+  /** Last OAuth-callback action hint (disambiguates the firmless create/join). */
+  action: SignInAction | null
 }
 
 export function getStatus(): CyggieAuthStatus {
   const token = getCyggieAccessTokenSync()
+  const stored = getCyggieAction()
   return {
     signedIn: token != null && token.length > 0,
     email: getCyggieUserEmail(),
     userId: getCyggieUserId(),
+    firmId: decodeFirmIdFromToken(token),
+    action: (stored as SignInAction | null) || null,
   }
 }
 
@@ -135,6 +164,7 @@ export async function handleAuthCallback(
     // and the renderer pill falls back to "Connected" until next sign-in.
     email: result.email ?? '',
   })
+  storeCyggieAction(result.action)
   broadcastStatus()
 
   // Trigger an immediate sync drain — the outbox may have rows pending from
