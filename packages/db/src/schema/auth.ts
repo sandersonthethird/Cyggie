@@ -138,6 +138,14 @@ export const oauthPending = pgTable(
     // redirects to after minting the JWT. Default 'mobile' for back-compat with
     // existing pending rows.
     redirectTarget: varchar('redirect_target', { length: 16 }).notNull().default('mobile'),
+    // Defense-in-depth: when the flow is initiated by an already-signed-in
+    // client (the "Reconnect Google" path sends a Bearer), we record the
+    // initiating user's id. The callback rejects (OAUTH_USERID_MISMATCH) if the
+    // resolved Google identity maps to a different user — so re-consenting with
+    // a different Google account can't silently swap the Cyggie identity. NULL
+    // for fresh public sign-ins (no Bearer) — those skip the check. No FK: the
+    // row is written before/independent of any user mutation and is ephemeral.
+    userId: text('user_id'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
