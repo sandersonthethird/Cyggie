@@ -528,6 +528,12 @@ export const IPC_CHANNELS = {
   CYGGIE_AUTH_STATUS: 'cyggie-auth:status',
   // Main → renderer push: signed-in/signed-out transitions.
   CYGGIE_AUTH_STATUS_CHANGED: 'cyggie-auth:status-changed',
+
+  // Note/memo attachments (M5). Bytes go to R2 via presigned URLs; the
+  // `cyggie-attachment://` protocol handler serves them locally on demand.
+  ATTACHMENT_UPLOAD: 'attachment:upload',
+  ATTACHMENT_OPEN_EXTERNAL: 'attachment:open-external',
+  ATTACHMENT_DELETE: 'attachment:delete',
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
