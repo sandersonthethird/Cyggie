@@ -81,7 +81,7 @@ function getOrCreateDeviceId(): string {
   return fresh
 }
 
-function broadcastStatus(): void {
+export function broadcastStatus(): void {
   const wc = broadcastTarget
   if (!wc || wc.isDestroyed()) return
   wc.send(IPC_CHANNELS.CYGGIE_AUTH_STATUS_CHANGED, getStatus())

@@ -529,6 +529,14 @@ export const IPC_CHANNELS = {
   // Main → renderer push: signed-in/signed-out transitions.
   CYGGIE_AUTH_STATUS_CHANGED: 'cyggie-auth:status-changed',
 
+  // Firm onboarding (M6) — main makes the authed gateway calls (renderer holds
+  // no token). claim/join store the fresh firm_id-bearing token.
+  CYGGIE_FIRM_CLAIM: 'cyggie-firm:claim',
+  CYGGIE_FIRM_JOIN: 'cyggie-firm:join',
+  CYGGIE_FIRM_INVITES_LIST: 'cyggie-firm:invites-list',
+  CYGGIE_FIRM_INVITE_CREATE: 'cyggie-firm:invite-create',
+  CYGGIE_FIRM_INVITE_REVOKE: 'cyggie-firm:invite-revoke',
+
   // Note/memo attachments (M5). Bytes go to R2 via presigned URLs; the
   // `cyggie-attachment://` protocol handler serves them locally on demand.
   ATTACHMENT_UPLOAD: 'attachment:upload',

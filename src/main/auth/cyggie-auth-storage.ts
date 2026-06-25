@@ -85,6 +85,16 @@ export function getCyggieUserEmail(): string | null {
   return getCredential(USER_EMAIL_KEY)
 }
 
+/**
+ * Replace ONLY the access token (after /auth/firms/claim|join, which return a
+ * fresh firm_id-bearing access token but NOT a new refresh token). Keeps the
+ * existing refresh/user/email intact.
+ */
+export function storeCyggieAccessToken(accessToken: string): void {
+  storeCredential(ACCESS_TOKEN_KEY, accessToken)
+  accessTokenCache = accessToken
+}
+
 /** Persist / read the onboarding action hint from the OAuth callback. */
 export function storeCyggieAction(action: string): void {
   storeCredential(ACTION_KEY, action)
