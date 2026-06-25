@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import Layout from './components/layout/Layout'
+import { OnboardingGate } from './components/onboarding/OnboardingGate'
 import Dashboard from './routes/Dashboard'
 import MeetingList from './routes/MeetingList' // kept for rollback
 import MeetingsPage from './routes/MeetingsPage'
@@ -177,7 +178,13 @@ export default function App() {
                 <Route path="*" element={null} />
               </>
             ) : (
-              <Route element={<Layout />}>
+              <Route
+                element={
+                  <OnboardingGate>
+                    <Layout />
+                  </OnboardingGate>
+                }
+              >
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/meetings" element={<MeetingsPage />} />
                 <Route path="/tasks" element={<Tasks />} />
