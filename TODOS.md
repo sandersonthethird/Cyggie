@@ -2857,7 +2857,24 @@ week of dogfooding.
 
 ## P2 — Mobile reliability / auth
 
-### Reconnect Google on Gmail / notes / meeting-detail screens
+### Reconnect Google on Gmail / notes / meeting-detail screens — ❌ CLOSED (no-op; premise was wrong)
+
+**Audit (2026-06-25):** the Google-reauth codes (`REAUTH_REQUIRED` /
+`NO_GOOGLE_TOKENS` / `NO_ACCESS_TOKEN` / `GOOGLE_AUTH_FAILED`) are emitted by
+**exactly one** gateway endpoint — `GET /calendar/events`
+([api-gateway/src/routes/calendar.ts](api-gateway/src/routes/calendar.ts)) — and the
+**only** mobile screen that calls it is `calendar.tsx`, which already gates on it
+(`CalendarReauthState`). Notes / contacts / companies / search / meeting-detail
+read Cyggie's own Neon data and never call Google, so they cannot surface these
+codes — wiring `GoogleReauthState` into them would be **dead code that never
+renders**. The "~8 screens" in the client comment refers to the *Cyggie-session*
+`redirect-on-reauthRequired` handler, a different mechanism (and `reauthRequired`
+is now always `false` for Google-side issues, so that handler doesn't fire for
+them either). **No work to do today.** Revisit only if a genuinely Google-backed
+mobile screen lands (e.g. a Gmail-derived view) — at that point rename
+`CalendarReauthState → GoogleReauthState` and gate that screen.
+
+**(Original framing below — superseded by the audit.)**
 
 **What:** Replicate the calendar tab's `REAUTH_REQUIRED → "Reconnect Google"` UX on every other mobile screen that surfaces this error code.
 **Why:** Calendar shipped a real escape hatch (this PR — `CalendarReauthState` + `reauthorizeGoogle()` helper in `mobile/lib/auth/oauth.ts`). The api client comment at [mobile/lib/api/client.ts:140-144](mobile/lib/api/client.ts#L140-L144) mentions "~8 screens" that surface REAUTH_REQUIRED. The other ~7 still dead-end at "Try again."
