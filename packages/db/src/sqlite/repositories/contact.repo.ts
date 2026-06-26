@@ -685,11 +685,11 @@ function buildContactOrderBy(sortBy: ContactSortBy | undefined, includeLastTouch
  * *EmailByContactId) with one indexed SQL pass, computed BEFORE pagination so
  * `last_touchpoint` is a real, orderable column.
  *
- *   contact_email_keys ─┬─► meeting_touch ──┐
- *   (contact_emails ∪   │   (attendee_emails │
- *    contacts.email)    │    ⋈ json_each)    ├─► last_touchpoint =
- *                       └─► email_touch ─────┘   COALESCE(MAX(meeting,email),
- *                           (participants.email ∪   c.updated_at)
+ *   contact_email_keys ─┬─► meeting_touch ──────┐
+ *   (contact_emails ∪   │   (⋈ meeting_attendee_ │
+ *    contacts.email)    │     emails, indexed)   ├─► last_touchpoint =
+ *                       └─► email_touch ─────────┘   COALESCE(MAX(meeting,email),
+ *                           (participants.email ∪       c.updated_at)
  *                            from_email ∪
  *                            email_contact_links ∪
  *                            participants.contact_id)
@@ -705,6 +705,17 @@ function buildContactOrderBy(sortBy: ContactSortBy | undefined, includeLastTouch
  * the golden test).
  *
  * Inject into a query's WITH chain (comma-joined). Joined as `mt` / `et`.
+ *
+ * PERF / DRIFT GUARD: `meeting_touch` joins `meeting_attendee_emails`, a derived
+ * lookup table maintained by triggers in migration
+ * `135-meeting-attendee-emails.ts`. That table stores `email_lc = lower(trim(...))`,
+ * which MUST match the `lower(trim(...))` normalization used to build
+ * `contact_email_keys` below — otherwise the join silently misses and meeting
+ * touchpoints regress to the `updated_at` fallback (no error). Edit both
+ * together. The earlier `json_each(attendee_emails)` form was O(contacts×meetings)
+ * and beachballed the app (~1s at ~5k meetings); the indexed join is ~3ms.
+ * `contact-touchpoint-plan.test.ts` asserts the join uses idx_mae_email and the
+ * golden test asserts touchpoint values are unchanged.
  */
 const TOUCHPOINT_CTES = `
       contact_email_keys AS (
@@ -719,11 +730,9 @@ const TOUCHPOINT_CTES = `
       meeting_touch AS (
         SELECT k.contact_id AS contact_id, MAX(m.date) AS last_meeting_at
         FROM contact_email_keys k
-        JOIN meetings m ON m.date IS NOT NULL AND EXISTS (
-          SELECT 1
-          FROM json_each(COALESCE(m.attendee_emails, '[]')) e
-          WHERE lower(trim(e.value)) = k.email
-        )
+        JOIN meeting_attendee_emails mae ON mae.email_lc = k.email
+        JOIN meetings m ON m.id = mae.meeting_id
+        WHERE m.date IS NOT NULL
         GROUP BY k.contact_id
       ),
       email_touch AS (

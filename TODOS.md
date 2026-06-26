@@ -3838,3 +3838,31 @@ within the firm and compare against the mobile login `sub` (and the desktop user
 `api-gateway/src/notes/visibility.ts` for the branch logic. Independent of the count-fix PR.
 **Effort:** M. **Priority:** P2.
 **Depends on / blocked by:** nothing; can start immediately.
+
+## Desktop — move SQLite reads off the Electron main thread
+
+**What:** Run `better-sqlite3` read queries in a worker_threads / `utilityProcess`
+worker instead of the main process event loop.
+
+**Why:** The Contacts-view freeze (beachball, force-quit; fixed 2026-06-25 by
+migration 135 `meeting_attendee_emails` + the `meeting_touch` rewrite) was a
+single slow synchronous query blocking the whole app. That fix removed the
+specific hot query, but the **root cause is structural**: `better-sqlite3` is
+synchronous on the main thread (single WAL connection, `packages/db/src/sqlite/connection.ts`),
+so ANY query that grows past ~100ms beachballs the entire app including window
+chrome. The next unindexed/aggregating query at scale will reproduce the class
+of bug.
+
+**Pros:** eliminates the whole class of main-thread-blocking freezes; lets list
+queries grow without UX risk. **Cons:** large rearchitecture — IPC result
+serialization, a read/write connection split, and coordination with the
+synchronous SyncAgent writer (`src/main/services/sync-agent.ts`), which must
+remain the single writer of record.
+
+**Context/where to start:** `packages/db/src/sqlite/connection.ts` (the singleton
+connection) + the IPC handlers in `src/main/ipc/*.ipc.ts` that call repo reads.
+Reads could move to a worker with its own read-only connection; writes stay on
+main to preserve the outbox/`withSync` transaction model. Profile candidates with
+the existing `[sql-perf]` ≥20ms dev instrumentation first to size the win.
+**Effort:** L. **Priority:** P2.
+**Depends on / blocked by:** nothing; independent but large.
