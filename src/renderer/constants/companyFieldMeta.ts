@@ -16,7 +16,6 @@
  */
 import type { PropertyRowType, PropertyRowOption } from '../components/crm/PropertyRow'
 import {
-  PORTFOLIO_FUND_OPTIONS,
   INVESTMENT_SECURITY_OPTIONS,
   STATUS_OPTIONS,
 } from '../../shared/types/company'
@@ -30,6 +29,7 @@ export interface CompanyOptionCtx {
   productStage: PropertyRowOption[]
   employeeRange: PropertyRowOption[]
   round: PropertyRowOption[]
+  portfolioFund: PropertyRowOption[]
   targetInvestmentStage: PropertyRowOption[]
   targetInvestmentSector: PropertyRowOption[]
 }
@@ -92,7 +92,7 @@ export const COMPANY_FIELD_META: Record<string, CompanyFieldMeta> = {
   priorInvestors: { type: 'text', complex: true },
   subsequentInvestors: { type: 'text', complex: true },
   // ── Investment ──
-  portfolioFund: { type: 'select', getOptions: () => [DASH, ...PORTFOLIO_FUND_OPTIONS.map((o) => ({ value: o.value, label: o.label }))] },
+  portfolioFund: { type: 'select', getOptions: (c) => [DASH, ...c.portfolioFund] },
   status: { type: 'select', getOptions: () => STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label })) },
   investmentSize: { type: 'text' },
   ownershipPct: { type: 'text' },

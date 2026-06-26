@@ -32,6 +32,7 @@ import {
   STAGES,
   PRIORITIES,
   ROUNDS,
+  PORTFOLIOS,
   EMPLOYEE_RANGES,
   TARGET_CUSTOMERS,
   BUSINESS_MODELS,
@@ -224,6 +225,7 @@ export function CompanyPropertiesPanel({
   const stageDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'pipelineStage')
   const priorityDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'priority')
   const roundDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'round')
+  const portfolioFundDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'portfolioFund')
   const targetCustomerDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'targetCustomer')
   const businessModelDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'businessModel')
   const productStageDef = companyDefs.find(d => d.isBuiltin && d.fieldKey === 'productStage')
@@ -236,6 +238,7 @@ export function CompanyPropertiesPanel({
   const stageOptions = mergeBuiltinOptions(STAGES, stageDef?.optionsJson ?? null)
   const priorityOptions = mergeBuiltinOptions(PRIORITIES, priorityDef?.optionsJson ?? null)
   const roundOptions = mergeBuiltinOptions(ROUNDS, roundDef?.optionsJson ?? null)
+  const portfolioFundOptions = mergeBuiltinOptions(PORTFOLIOS, portfolioFundDef?.optionsJson ?? null)
   const targetCustomerOptions = mergeBuiltinOptions(TARGET_CUSTOMERS, targetCustomerDef?.optionsJson ?? null)
   const businessModelOptions = mergeBuiltinOptions(BUSINESS_MODELS, businessModelDef?.optionsJson ?? null)
   const productStageOptions = mergeBuiltinOptions(PRODUCT_STAGES, productStageDef?.optionsJson ?? null)
@@ -416,6 +419,7 @@ export function CompanyPropertiesPanel({
       targetInvestmentSector: targetInvestmentSectorDef ? { id: targetInvestmentSectorDef.id, optionsJson: targetInvestmentSectorDef.optionsJson } : undefined,
       employeeCountRange: employeeCountDef ? { id: employeeCountDef.id, optionsJson: employeeCountDef.optionsJson } : undefined,
       round: roundDef ? { id: roundDef.id, optionsJson: roundDef.optionsJson } : undefined,
+      portfolioFund: portfolioFundDef ? { id: portfolioFundDef.id, optionsJson: portfolioFundDef.optionsJson } : undefined,
     }
     const d = defByKey[fieldKey]
     return d ? async (opt) => { await addCustomFieldOption(d.id, d.optionsJson, opt) } : undefined
@@ -527,6 +531,7 @@ export function CompanyPropertiesPanel({
       productStage: productStageOptions,
       employeeRange: employeeRangeOptions,
       round: roundOptions,
+      portfolioFund: portfolioFundOptions,
       targetInvestmentStage: targetInvestmentStageOptions,
       targetInvestmentSector: targetInvestmentSectorOptions,
     }
@@ -1231,6 +1236,7 @@ export function CompanyPropertiesPanel({
               productStage: productStageOptions,
               employeeRange: employeeRangeOptions,
               round: roundOptions,
+              portfolioFund: portfolioFundOptions,
               industry: industryOptions,
               targetInvestmentStage: targetInvestmentStageOptions,
               targetInvestmentSector: targetInvestmentSectorOptions,
@@ -1241,6 +1247,7 @@ export function CompanyPropertiesPanel({
               productStage: productStageDef ? { id: productStageDef.id, optionsJson: productStageDef.optionsJson } : undefined,
               employeeCount: employeeCountDef ? { id: employeeCountDef.id, optionsJson: employeeCountDef.optionsJson } : undefined,
               round: roundDef ? { id: roundDef.id, optionsJson: roundDef.optionsJson } : undefined,
+              portfolioFund: portfolioFundDef ? { id: portfolioFundDef.id, optionsJson: portfolioFundDef.optionsJson } : undefined,
               industry: industryDef ? { id: industryDef.id, optionsJson: industryDef.optionsJson } : undefined,
               targetInvestmentStage: targetInvestmentStageDef ? { id: targetInvestmentStageDef.id, optionsJson: targetInvestmentStageDef.optionsJson } : undefined,
               targetInvestmentSector: targetInvestmentSectorDef ? { id: targetInvestmentSectorDef.id, optionsJson: targetInvestmentSectorDef.optionsJson } : undefined,

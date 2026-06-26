@@ -59,6 +59,7 @@ interface OptionSet {
   productStage: { value: string; label: string }[]
   employeeRange: { value: string; label: string }[]
   round: { value: string; label: string }[]
+  portfolioFund: { value: string; label: string }[]
   industry: { value: string; label: string }[]
   targetInvestmentStage: { value: string; label: string }[]
   targetInvestmentSector: { value: string; label: string }[]
@@ -70,6 +71,7 @@ interface BuiltinDefs {
   productStage?: { id: string; optionsJson: string | null }
   employeeCount?: { id: string; optionsJson: string | null }
   round?: { id: string; optionsJson: string | null }
+  portfolioFund?: { id: string; optionsJson: string | null }
   industry?: { id: string; optionsJson: string | null }
   targetInvestmentStage?: { id: string; optionsJson: string | null }
   targetInvestmentSector?: { id: string; optionsJson: string | null }
@@ -615,7 +617,7 @@ export function CompanyFieldSections({
         if (!showInvestment) return null
 
         const investmentList: Array<{ key: string; visible: boolean; render: () => ReactNode }> = [
-          { key: 'portfolioFund', visible: show('portfolioFund', company.portfolioFund), render: () => <PropertyRow label="Portfolio" value={company.portfolioFund} type={M.portfolioFund.type} options={M.portfolioFund.getOptions!(options)} editMode={isEditing} onSave={(v) => save('portfolioFund', v)} /> },
+          { key: 'portfolioFund', visible: show('portfolioFund', company.portfolioFund), render: () => <PropertyRow label="Portfolio" value={company.portfolioFund} type={M.portfolioFund.type} options={M.portfolioFund.getOptions!(options)} editMode={isEditing} onSave={(v) => save('portfolioFund', v)} onAddOption={builtinDefs.portfolioFund ? async (opt) => addCustomFieldOption(builtinDefs.portfolioFund!.id, builtinDefs.portfolioFund!.optionsJson, opt) : undefined} /> },
           { key: 'status', visible: show('status', company.status), render: () => <PropertyRow label="Status" value={company.status} type={M.status.type} options={M.status.getOptions!(options)} editMode={isEditing} onSave={(v) => save('status', v)} /> },
           { key: 'investmentSize', visible: show('investmentSize', company.investmentSize), render: () => <PropertyRow label="Initial Investment" value={company.investmentSize} type={M.investmentSize.type} editMode={isEditing} onSave={(v) => save('investmentSize', v)} /> },
           { key: 'ownershipPct', visible: show('ownershipPct', company.ownershipPct), render: () => <PropertyRow label="Initial Ownership %" value={company.ownershipPct} type={M.ownershipPct.type} editMode={isEditing} onSave={(v) => save('ownershipPct', v)} /> },

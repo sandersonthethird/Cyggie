@@ -11,6 +11,7 @@ import { useChatStore } from '../../stores/chat.store'
 import { useChatPanelStore } from '../../stores/chat-panel.store'
 import { useSidebarMode } from '../../hooks/useSidebarMode'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
+import { useFirmTemplate } from '../../hooks/useFirmTemplate'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CalendarEvent } from '../../../shared/types/calendar'
 import type { Meeting } from '../../../shared/types/meeting'
@@ -22,6 +23,9 @@ const NOTIFY_BEFORE_MS = 2 * 60 * 1000 // 2 minutes
 
 export default function Layout() {
   const navigate = useNavigate()
+  // Idempotent, best-effort per-device firm-template seed (default views/labels/
+  // field options). Resolves to `vc` until firms.template_id rides the token.
+  useFirmTemplate()
   const { mode: sidebarMode } = useSidebarMode()
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const newMenuRef = useRef<HTMLDivElement>(null)

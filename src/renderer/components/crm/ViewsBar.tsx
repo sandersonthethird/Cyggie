@@ -104,6 +104,18 @@ function persistViews(storageKey: string, views: SavedView[]): void {
   }
 }
 
+/**
+ * Programmatically add a saved view if one with the same id isn't already
+ * present (add-if-id-absent). Returns true if it was added. Used by firm-template
+ * seeding to inject default views without going through the inline save UI.
+ */
+export function ensureView(storageKey: string, view: SavedView): boolean {
+  const views = loadViews(storageKey)
+  if (views.some((v) => v.id === view.id)) return false
+  persistViews(storageKey, [...views, view])
+  return true
+}
+
 export const ViewsBar = forwardRef<ViewsBarHandle, ViewsBarProps>(function ViewsBar(
   { storageKey, currentParams, currentColumns, defaultColumns, onApply, hideSaveButton, entityLabel },
   ref

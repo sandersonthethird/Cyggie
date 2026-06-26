@@ -23,6 +23,17 @@ export const ENTITY_TYPE_OPTIONS: { value: CompanyEntityType; label: string }[] 
   { value: 'other',     label: 'Other'     },
 ]
 
+/**
+ * The Portfolio bucket value. The values below are Red Swan's defaults, but the
+ * field is now user-extensible: each firm can add its own options inline, which
+ * are stored (as arbitrary strings, cast to this type — same as CompanyRound) on
+ * the builtin `portfolioFund` custom-field definition seeded by SQLite migration
+ * 136. The shipped defaults stay here as the base option set.
+ *
+ * TODO(multi-firm): the Fund I…Fund V / Personal defaults are Red-Swan-specific.
+ * When per-firm-type column/option presets land, move these out of shared code
+ * into firm-seeded config so a non-VC firm starts with its own buckets.
+ */
 export type CompanyPortfolioFund = 'fund_i' | 'fund_ii' | 'fund_iii' | 'fund_iv' | 'fund_v' | 'personal'
 
 export const PORTFOLIO_FUND_OPTIONS: { value: CompanyPortfolioFund; label: string }[] = [
