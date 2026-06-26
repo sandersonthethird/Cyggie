@@ -51,6 +51,15 @@
   --cv-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
   --cv-shadow-lg: 0 4px 16px rgba(0,0,0,0.1);
 
+  /* Navy accent (sampled from build/icon.png) — page wash, input wells, and the
+     *incomplete* progress states. Crimson stays the action/active color. */
+  --cv-navy: #0F172A;
+  --cv-navy-700: #1E293B;
+  --cv-navy-300: #94A3B8;
+  --cv-navy-tint: #EDF1F8;
+  --cv-navy-line: #E2E8F1;
+  --cv-navy-wash: #F4F6FB;
+
   /* ── Cyggie Design Tokens (oklch warm neutrals) ──────────────────────────
    * New token layer for the Company/Contact Detail redesign.
    * Prefixed --cy- to coexist with legacy --color-* and --cv-* tokens.
@@ -140,6 +149,14 @@
     --chip-process-bg:  #3B0764;  --chip-process-text:  #D8B4FE;
     --chip-neutral-bg:  #1F2937;  --chip-neutral-text:  #9CA3AF;
     --chip-low-bg:      #1E3A8A;  --chip-low-text:      #BFDBFE;
+
+    /* Navy accent — dark mode: lift the wash/tints off near-black surfaces. */
+    --cv-navy: #0F172A;
+    --cv-navy-700: #CBD5E1;
+    --cv-navy-300: #64748B;
+    --cv-navy-tint: #1E293B;
+    --cv-navy-line: #2A3346;
+    --cv-navy-wash: #11151C;
   }
 }
 

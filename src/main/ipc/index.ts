@@ -1,6 +1,7 @@
 import { registerMeetingHandlers } from './meeting.ipc'
 import { registerRecordingHandlers } from './recording.ipc'
 import { registerSettingsHandlers } from './settings.ipc'
+import { registerOnboardingHandlers } from './onboarding.ipc'
 import { registerTemplateHandlers } from './template.ipc'
 import { registerSearchHandlers } from './search.ipc'
 import { registerSummaryHandlers } from './summary.ipc'
@@ -70,4 +71,5 @@ export function registerAllHandlers(): void {
   registerFileHandlers()
   registerChatSessionHandlers()
   registerAttachmentHandlers()
+  registerOnboardingHandlers()
 }
