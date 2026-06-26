@@ -6,6 +6,7 @@ import type { CompanyDecisionLog } from '../../../shared/types/company'
 import { DecisionLogModal } from '../crm/DecisionLogModal'
 import type { SavedDecisionRef } from '../crm/DecisionLogModal'
 import styles from './ContactDecisions.module.css'
+import { useVoiceLine, useLoadingLine } from '../../hooks/useVoice'
 
 interface ContactDecisionsProps {
   contactId: string
@@ -23,6 +24,8 @@ export function ContactDecisions({ contactId, primaryCompanyId, primaryCompanyNa
   const [contactLogs, setContactLogs] = useState<ContactDecisionLog[]>([])
   const [companyLogs, setCompanyLogs] = useState<CompanyDecisionLog[]>([])
   const [loaded, setLoaded] = useState(false)
+  const decisionsEmptyLine = useVoiceLine('emptyState', 'decisions')
+  const decisionsLoadingLine = useLoadingLine('generic', new Date().getHours())
 
   // Modal state
   const [modalMode, setModalMode] = useState<'contact' | 'company' | null>(null)
@@ -91,7 +94,7 @@ export function ContactDecisions({ contactId, primaryCompanyId, primaryCompanyNa
     setModalLogId(undefined)
   }, [])
 
-  if (!loaded) return <div className={styles.loading}>Loading…</div>
+  if (!loaded) return <div className={styles.loading}>{decisionsLoadingLine}</div>
 
   return (
     <div className={styles.root}>
@@ -108,7 +111,7 @@ export function ContactDecisions({ contactId, primaryCompanyId, primaryCompanyNa
         </div>
 
         {contactLogs.length === 0 && (
-          <div className={styles.empty}>No decisions logged yet.</div>
+          <div className={styles.empty}>{decisionsEmptyLine}</div>
         )}
 
         {contactLogs.map((log) => (

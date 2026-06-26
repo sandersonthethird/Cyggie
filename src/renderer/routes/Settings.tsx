@@ -83,6 +83,7 @@ import { GatewayModelSection } from '../components/settings/GatewayModelSection'
 import { EmailContextSection } from '../components/settings/EmailContextSection'
 import { TranscriptionProviderSection } from '../components/settings/TranscriptionProviderSection'
 import { AppearanceSection } from '../components/settings/AppearanceSection'
+import { BrandVoiceSection } from '../components/settings/BrandVoiceSection'
 
 interface SettingsState {
   deepgramApiKey: MaskedKey
@@ -1953,7 +1954,10 @@ export default function Settings() {
       )}
 
       {activeTab === 'appearance' && (
-        <AppearanceSection />
+        <>
+          <AppearanceSection />
+          <BrandVoiceSection />
+        </>
       )}
 
       {activeTab === 'custom-fields' && (

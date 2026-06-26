@@ -29,6 +29,7 @@ import { useRunForCompany, useRuns } from '../../contexts/RunsContext'
 import FindBar from '../common/FindBar'
 import { Spinner } from '../common/Spinner'
 import styles from './CompanyMemo.module.css'
+import { useVoiceLine } from '../../hooks/useVoice'
 import { api } from '../../api'
 
 import type { StoredMemoEvidence } from '../../../shared/types/memo-evidence'
@@ -40,6 +41,7 @@ interface CompanyMemoProps {
 
 export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
   const notice = useNotice()
+  const memoEmptyLine = useVoiceLine('emptyState', 'memo')
   const [memo, setMemo] = useState<InvestmentMemoWithLatest | null>(null)
   const [latestGenerateMeta, setLatestGenerateMeta] = useState<MemoGenerateMeta | null>(null)
   // Pre-flight modal: when generation context will be large, show file
@@ -956,7 +958,7 @@ export function CompanyMemo({ companyId, className }: CompanyMemoProps) {
         ) : loadingVersion ? (
           <div className={styles.loading}>Loading version…</div>
         ) : isUntouchedTemplate || !displayedVersion?.contentMarkdown ? (
-          <div className={styles.empty}>No memo yet. Click Generate with AI to create one.</div>
+          <div className={styles.empty}>{memoEmptyLine}</div>
         ) : (
           <EditorContent editor={memoEditor} />
         )}

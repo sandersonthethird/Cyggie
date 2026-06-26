@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SafeMarkdown } from '../SafeMarkdown'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
@@ -7,6 +7,8 @@ import { useEmailSync } from '../../hooks/useEmailSync'
 import { EmailDetailModal } from '../crm/EmailDetailModal'
 import { ContactNoteDetailModal } from '../crm/ContactNoteDetailModal'
 import { parseToDate } from '../../utils/format'
+import { useVoiceLine, useLoadingLine, useBrandVoiceIntensity } from '../../hooks/useVoice'
+import { voice } from '@shared/voice'
 import styles from './ContactTimeline.module.css'
 
 interface ContactTimelineProps {
@@ -36,6 +38,9 @@ export function ContactTimeline({ contactId, hasEmail = true, className }: Conta
   const [loaded, setLoaded] = useState(false)
   const [selectedItem, setSelectedItem] = useState<ContactTimelineItem | null>(null)
   const [filter, setFilter] = useState<TimelineFilter>('all')
+  const timelineEmptyLine = useVoiceLine('emptyState', 'timeline')
+  const timelineLoadingLine = useLoadingLine('generic', new Date().getHours())
+  const voiceIntensity = useBrandVoiceIntensity()
 
   const {
     isSyncing,
@@ -79,7 +84,9 @@ export function ContactTimeline({ contactId, hasEmail = true, className }: Conta
     setSelectedItem(null)
   }, [])
 
-  function getSyncResultMsg() {
+  // Recomputed only when a sync completes (new syncResult) — so the random
+  // voice line is stable across renders but varies per sync. Counts stay literal.
+  const syncResultMsg = useMemo(() => {
     if (!syncResult) return null
     if (syncResult.aborted) {
       return syncResult.insertedMessageCount > 0
@@ -88,10 +95,8 @@ export function ContactTimeline({ contactId, hasEmail = true, className }: Conta
     }
     return syncResult.insertedMessageCount > 0
       ? `+${syncResult.insertedMessageCount} new`
-      : 'Up to date'
-  }
-
-  const syncResultMsg = getSyncResultMsg()
+      : voice('toast', 'syncUpToDate', { intensity: voiceIntensity })
+  }, [syncResult, voiceIntensity])
   const visibleItems = filter === 'all' ? items : items.filter((i) => i.type === filter)
 
   return (
@@ -141,9 +146,9 @@ export function ContactTimeline({ contactId, hasEmail = true, className }: Conta
           )}
         </div>
       )}
-      {!loaded && <div className={styles.loading}>Loading…</div>}
+      {!loaded && <div className={styles.loading}>{timelineLoadingLine}</div>}
       {loaded && items.length === 0 && (
-        <div className={styles.empty}>No timeline activity yet.</div>
+        <div className={styles.empty}>{timelineEmptyLine}</div>
       )}
       {loaded && items.length > 0 && visibleItems.length === 0 && (
         <div className={styles.empty}>No {filter}s found.</div>

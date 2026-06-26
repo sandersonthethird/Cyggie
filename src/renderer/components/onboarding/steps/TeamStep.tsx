@@ -4,6 +4,7 @@ import { api } from '../../../api'
 import { IPC_CHANNELS } from '../../../../shared/constants/channels'
 import { isValidEmail } from '../onboarding-logic'
 import { StepLinks } from '../StepLinks'
+import { useVoiceLine } from '../../../hooks/useVoice'
 import styles from '../Onboarding.module.css'
 
 /**
@@ -27,6 +28,7 @@ export function TeamStep({
 }) {
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const sub = useVoiceLine('onboarding', 'team')
 
   const add = (): void => {
     const value = email.trim().toLowerCase()
@@ -48,9 +50,7 @@ export function TeamStep({
     <div className={styles.card}>
       <div className={styles.headBlock}>
         <h1 className={styles.heading}>Invite your team</h1>
-        <p className={styles.sub}>
-          Add teammates by email. They’ll sign in to Cyggie with the same address.
-        </p>
+        <p className={styles.sub}>{sub}</p>
       </div>
 
       <div className={styles.stack}>

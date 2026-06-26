@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../../api'
 import { IPC_CHANNELS } from '../../../../shared/constants/channels'
 import appIcon from '../../../assets/app-icon.png'
+import { useVoiceLine } from '../../../hooks/useVoice'
 import styles from '../Onboarding.module.css'
 
 interface AuthStatus {
@@ -24,6 +25,7 @@ export function SignInStep({
 }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const sub = useVoiceLine('onboarding', 'signIn')
 
   useEffect(() => {
     let alive = true
@@ -68,9 +70,7 @@ export function SignInStep({
         <img src={appIcon} alt="Cyggie" className={styles.heroIcon} />
         <div className={styles.headBlock}>
           <h1 className={styles.heading}>Welcome to Cyggie</h1>
-          <p className={styles.sub}>
-            Sign in to sync your work across devices — or use Cyggie locally on this Mac.
-          </p>
+          <p className={styles.sub}>{sub}</p>
         </div>
       </div>
 

@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import { useChatPanelStore } from '../../stores/chat-panel.store'
 import type { ChatSessionRow } from '../../hooks/useChatActions'
 import { parseTimestamp, parseToDate } from '../../utils/format'
+import { useVoiceLine } from '../../hooks/useVoice'
 import styles from './PanelSwitcher.module.css'
 
 interface PanelSwitcherProps {
@@ -35,6 +36,7 @@ export function PanelSwitcher({ sessions, loading, onSelectSession, onNewChat, o
   const [searchResults, setSearchResults] = useState<SearchHit[] | null>(null)
   const [newChatDraft, setNewChatDraft] = useState('')
   const debounceRef = useRef<number | null>(null)
+  const emptyChatsLine = useVoiceLine('emptyState', 'chats')
 
   // Debounced search via FTS5
   useEffect(() => {
@@ -129,7 +131,7 @@ export function PanelSwitcher({ sessions, loading, onSelectSession, onNewChat, o
         {!loading && searchResults === null && (
           <>
             {sortedSessions.length === 0 ? (
-              <div className={styles.empty}>No chats yet. Start one below.</div>
+              <div className={styles.empty}>{emptyChatsLine}</div>
             ) : (
               sortedSessions.map((s) =>
                 renderRow(

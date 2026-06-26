@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../../api'
 import { IPC_CHANNELS } from '../../../../shared/constants/channels'
 import { StepLinks } from '../StepLinks'
+import { useVoiceLine } from '../../../hooks/useVoice'
 import styles from '../Onboarding.module.css'
 
 /**
@@ -24,6 +25,7 @@ export function KeysStep({
   const [deepgram, setDeepgram] = useState('')
   const [anthropic, setAnthropic] = useState('')
   const [busy, setBusy] = useState(false)
+  const sub = useVoiceLine('onboarding', 'keys')
 
   useEffect(() => {
     void api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL).then((all) => {
@@ -53,9 +55,7 @@ export function KeysStep({
     <div className={styles.card}>
       <div className={styles.headBlock}>
         <h1 className={styles.heading}>Add your API keys</h1>
-        <p className={styles.sub}>
-          Deepgram transcribes meetings; Anthropic powers AI. You can add these later in Settings.
-        </p>
+        <p className={styles.sub}>{sub}</p>
       </div>
 
       <div className={styles.stack}>

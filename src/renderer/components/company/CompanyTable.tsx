@@ -65,6 +65,7 @@ import { DecisionLogModal } from '../crm/DecisionLogModal'
 import { shouldPromptDecisionLog, defaultDecisionType } from '../../utils/decisionLogTrigger'
 import type { CompanyPipelineStage } from '../../../shared/types/company'
 import styles from './CompanyTable.module.css'
+import { useVoiceLine, useLoadingLine } from '../../hooks/useVoice'
 import { api } from '../../api'
 
 const CHECKBOX_WIDTH = 40
@@ -146,6 +147,14 @@ export function CompanyTable({
   const { getJSON, setJSON } = usePreferencesStore()
   const { companyDefs } = useCustomFieldStore()
   const summaryKeys = getJSON<string[]>('cyggie:company-summary-fields', [])
+
+  // Brand voice: empty/loading copy. "filtered" when any filter is narrowing.
+  const isFiltered =
+    Object.keys(columnFilters).length > 0 ||
+    Object.keys(rangeFilters ?? {}).length > 0 ||
+    Object.keys(textFilters ?? {}).length > 0
+  const emptyLine = useVoiceLine('emptyState', 'companies', isFiltered ? 'filtered' : 'empty')
+  const loadingLine = useLoadingLine('generic', new Date().getHours())
 
   function toggleSummaryField(key: string) {
     const next = summaryKeys.includes(key)
@@ -646,10 +655,10 @@ export function CompanyTable({
           style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
         >
           {loading && companies.length === 0 && (
-            <div className={styles.emptyRow}>Loading…</div>
+            <div className={styles.emptyRow}>{loadingLine}</div>
           )}
           {!loading && companies.length === 0 && (
-            <div className={styles.emptyRow}>No companies found.</div>
+            <div className={styles.emptyRow}>{emptyLine}</div>
           )}
 
           {virtualRows.map((vrow) => {

@@ -9,6 +9,7 @@ import { EmailDetailModal } from '../crm/EmailDetailModal'
 import { NoteDetailModal } from '../crm/NoteDetailModal'
 import { DecisionLogModal } from '../crm/DecisionLogModal'
 import styles from './CompanyTimeline.module.css'
+import { useVoiceLine, useLoadingLine } from '../../hooks/useVoice'
 
 interface CompanyTimelineProps {
   companyId: string
@@ -61,6 +62,8 @@ export function CompanyTimeline({ companyId, className, refreshKey, noteSyncKey,
   const [selectedItem, setSelectedItem] = useState<CompanyTimelineItem | null>(null)
   const [filter, setFilter] = useState<TimelineFilter>('all')
   const [selectMode, setSelectMode] = useState(false)
+  const timelineEmptyLine = useVoiceLine('emptyState', 'timeline')
+  const timelineLoadingLine = useLoadingLine('generic', new Date().getHours())
   const [selectedThreadGroups, setSelectedThreadGroups] = useState<Set<string>>(new Set())
 
   const {
@@ -249,9 +252,9 @@ export function CompanyTimeline({ companyId, className, refreshKey, noteSyncKey,
           </button>
         </div>
       )}
-      {!loaded && <div className={styles.loading}>Loading…</div>}
+      {!loaded && <div className={styles.loading}>{timelineLoadingLine}</div>}
       {loaded && items.length === 0 && (
-        <div className={styles.empty}>No timeline activity yet.</div>
+        <div className={styles.empty}>{timelineEmptyLine}</div>
       )}
       {loaded && items.length > 0 && visibleItems.length === 0 && (
         <div className={styles.empty}>No {filter}s found.</div>

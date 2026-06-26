@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react'
 import appIcon from '../../../assets/app-icon.png'
+import { useVoiceLine } from '../../../hooks/useVoice'
 import styles from '../Onboarding.module.css'
 
 export interface DoneSummary {
@@ -20,6 +21,8 @@ export function DoneStep({
   summary: DoneSummary
   onEnter: () => void
 }) {
+  // Voice the trailing sentence; keep the "<workspace> is ready." lead-in literal.
+  const sub = useVoiceLine('onboarding', 'done')
   const row = (label: string, done: boolean, doneText: string) => (
     <div className={styles.summaryRow}>
       <span className={styles.summaryLabel}>{label}</span>
@@ -40,9 +43,7 @@ export function DoneStep({
         <div className={styles.headBlock}>
           <h1 className={styles.heading}>You’re all set</h1>
           <p className={styles.sub}>
-            {summary.workspace
-              ? `${summary.workspace} is ready. You can finish anything you skipped in Settings.`
-              : 'Cyggie is ready. You can finish anything you skipped in Settings.'}
+            {`${summary.workspace || 'Cyggie'} is ready. ${sub}`}
           </p>
         </div>
       </div>

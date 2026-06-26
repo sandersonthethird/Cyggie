@@ -1,5 +1,6 @@
 import { slugify } from '../onboarding-logic'
 import { StepLinks } from '../StepLinks'
+import { useVoiceLine } from '../../../hooks/useVoice'
 import styles from '../Onboarding.module.css'
 
 /**
@@ -23,6 +24,7 @@ export function WorkspaceStep({
   onBack: () => void
   onNext: () => void
 }) {
+  const sub = useVoiceLine('onboarding', 'workspace')
   const handleName = (value: string): void => {
     // Pass the auto-derived slug only while the user hasn't hand-edited it.
     onFirmName(value, slugEdited ? null : slugify(value))
@@ -32,7 +34,7 @@ export function WorkspaceStep({
     <div className={styles.card}>
       <div className={styles.headBlock}>
         <h1 className={styles.heading}>Name your workspace</h1>
-        <p className={styles.sub}>This is how your firm shows up across Cyggie.</p>
+        <p className={styles.sub}>{sub}</p>
       </div>
 
       <div className={styles.field}>
