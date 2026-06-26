@@ -1,6 +1,11 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
 import { appendOutboxRow, currentSyncContext } from '../sync-wrapper'
+import {
+  runInSyncBatchWithCascade,
+  withCascadeUnderDeclarationGuard,
+  type CascadeScope,
+} from './_sync'
 import { jaroWinkler } from '@main/utils/jaroWinkler'
 import { UnionFind } from '@main/utils/unionFind'
 import { splitCamelCase } from '@main/utils/string-utils'
@@ -2207,6 +2212,94 @@ export function getCompanyMergePreview(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// mergeCompanies sync cascade (T42)
+//
+// The merge mutates 9 OWNED tables. To propagate every write to Neon/mobile/
+// other desktops we wrap the whole transaction in the declared-scope snapshot-
+// diff engine: it SELECTs each scope before + after tx(), diffs by PK column-
+// wise, and emits one outbox row per insert/update/delete (whole-row vs field-
+// LWW stamped automatically).
+//
+//   scopes ─▶ PRE snapshot ─▶ tx() (relink + delete source) ─▶ POST ─▶ diff ─▶ emit
+//
+// Scope-bounding trick: rows that MOVE source→target (their FK column flips —
+// contacts.primary_company_id, org_companies.lead_investor_company_id,
+// notes/investment_memos.company_id) are caught by `<fkcol> IN (source,target)`
+// — they match the WHERE in BOTH snapshots (=source pre, =target post), so the
+// diff sees the same stable `id` and emits an update. No id precomputation.
+//
+// Composite-PK link tables (meeting/email_company_links) relink as delete(source
+// PK)+insert(target PK) → one delete + one insert each.
+//
+// NOT scoped: org_company_contacts/themes, deals, theses, artifacts, the
+// `companies` cache — none are owned tables. Every owned table that CASCADE-
+// deletes from org_companies (org_company_aliases, meeting/email_company_links,
+// investment_memos, company_investors) is already in the 9 declared scopes. The
+// remaining owned children (contacts, notes, tasks) are ON DELETE SET NULL —
+// pure UPDATEs that don't change row counts, so the count-based dev guard never
+// flags them, and a remote converges by re-running its own SET NULL when it
+// applies the org_companies delete. Hence the guard allow-list is empty.
+const DECLARED_MERGE_TABLES = [
+  'org_companies',
+  'contacts',
+  'meetings',
+  'org_company_aliases',
+  'company_investors',
+  'meeting_company_links',
+  'email_company_links',
+  'notes',
+  'investment_memos',
+] as const
+const MERGE_CASCADE_ALLOWLIST: readonly string[] = [] // see note above — all CASCADE children are declared
+
+function mergeCascadeScopes(
+  db: ReturnType<typeof getDatabase>,
+  sourceCompanyId: string,
+  targetCompanyId: string,
+  affectedMeetingIds: readonly string[],
+): CascadeScope[] {
+  const st = [sourceCompanyId, targetCompanyId]
+  // lead_investor_company_id (migration 076) + company_investors (056) are added
+  // by later migrations — introspect so older DBs / minimal fixtures don't 500
+  // on a scope referencing a missing column/table.
+  const hasLeadInvestorCol = (db
+    .prepare(`PRAGMA table_info(org_companies)`)
+    .all() as Array<{ name: string }>)
+    .some((c) => c.name === 'lead_investor_company_id')
+  const hasCompanyInvestors = !!db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='company_investors'`)
+    .get()
+
+  const scopes: CascadeScope[] = [
+    {
+      table: 'org_companies',
+      where: hasLeadInvestorCol
+        ? 'id IN (?, ?) OR lead_investor_company_id IN (?, ?)'
+        : 'id IN (?, ?)',
+      params: hasLeadInvestorCol ? [...st, ...st] : st,
+    },
+    { table: 'contacts', where: 'primary_company_id IN (?, ?)', params: st },
+    { table: 'org_company_aliases', where: 'company_id IN (?, ?)', params: st },
+    { table: 'meeting_company_links', where: 'company_id IN (?, ?)', params: st },
+    { table: 'email_company_links', where: 'company_id IN (?, ?)', params: st },
+    { table: 'notes', where: 'company_id IN (?, ?)', params: st },
+    { table: 'investment_memos', where: 'company_id IN (?, ?)', params: st },
+  ]
+  if (hasCompanyInvestors) {
+    scopes.push({
+      table: 'company_investors',
+      where: 'company_id IN (?, ?) OR investor_company_id IN (?, ?)',
+      params: [...st, ...st],
+    })
+  }
+  if (affectedMeetingIds.length > 0) {
+    const ph = affectedMeetingIds.map(() => '?').join(', ')
+    scopes.push({ table: 'meetings', where: `id IN (${ph})`, params: [...affectedMeetingIds] })
+  }
+  return scopes
+}
+
 export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string, fieldOverrides?: MergeFieldOverrides): CompanyMergeResult {
   if (!targetCompanyId || !sourceCompanyId) {
     throw new Error('Both targetCompanyId and sourceCompanyId are required')
@@ -2291,12 +2384,14 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string,
     aliases: 0
   }
 
-  const tx = db.transaction(() => {
-    // Capture affected meeting IDs before relinking (for denormalized cache update)
-    const affectedMeetingIds = db
-      .prepare('SELECT meeting_id FROM meeting_company_links WHERE company_id = ?')
-      .all(sourceCompanyId) as { meeting_id: string }[]
+  // Hoisted out of `tx` so the meetings cascade scope can target these ids: the
+  // snapshot engine reads scopes BEFORE running tx(). This SELECT is a pre-merge
+  // read of source's linked meetings (auto-commit; safe outside the txn).
+  const affectedMeetingIds = db
+    .prepare('SELECT meeting_id FROM meeting_company_links WHERE company_id = ?')
+    .all(sourceCompanyId) as { meeting_id: string }[]
 
+  const tx = db.transaction(() => {
     db.prepare(`
       INSERT INTO meeting_company_links (
         meeting_id, company_id, confidence, linked_by, created_at
@@ -2539,7 +2634,28 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string,
     db.prepare('DELETE FROM org_companies WHERE id = ?').run(sourceCompanyId)
   })
 
-  tx()
+  // Run the whole merge inside the declared-scope cascade engine so every owned-
+  // table mutation reaches the outbox (the source-company delete, the target
+  // field-merge, every relinked child). The dev under-declaration guard asserts
+  // no UNdeclared owned table's row count changed (chat_sessions + its messages
+  // cascade-delete from the source row → allow-listed; the remote re-runs that
+  // cascade when it applies the org_companies delete). Both wrappers no-op when
+  // sync globals aren't configured (offline / minimal-fixture tests), so tx()
+  // just runs directly there.
+  withCascadeUnderDeclarationGuard(
+    [...DECLARED_MERGE_TABLES],
+    [...MERGE_CASCADE_ALLOWLIST],
+    () =>
+      runInSyncBatchWithCascade(
+        mergeCascadeScopes(
+          db,
+          sourceCompanyId,
+          targetCompanyId,
+          affectedMeetingIds.map((m) => m.meeting_id),
+        ),
+        () => tx(),
+      ),
+  )
 
   return {
     targetCompanyId,

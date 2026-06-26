@@ -8,6 +8,7 @@ import * as companyRepo from '@cyggie/db/sqlite/repositories'
 import { upsert as upsertCompanyCache } from '@cyggie/db/sqlite/repositories/company.repo'
 import * as contactRepo from '@cyggie/db/sqlite/repositories'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
+import { runInSyncBatchWithCascade } from '@cyggie/db/sqlite/repositories/_sync'
 import * as meetingRepo from '@cyggie/db/sqlite/repositories'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import * as decisionRepo from '@cyggie/db/sqlite/repositories/company-decision-log.repo'
@@ -495,15 +496,24 @@ export function registerCompanyHandlers(): void {
         db.prepare('UPDATE companies SET display_name = ? WHERE display_name = ? COLLATE NOCASE')
           .run(targetRow.canonical_name, sourceRow.canonical_name)
 
-        // 2. Replace old name in meetings.companies JSON arrays
-        db.prepare(`
-          UPDATE meetings
-          SET companies = REPLACE(companies, ?, ?)
-          WHERE companies LIKE ?
-        `).run(
-          JSON.stringify(sourceRow.canonical_name).slice(1, -1),
-          JSON.stringify(targetRow.canonical_name).slice(1, -1),
-          `%${sourceRow.canonical_name}%`
+        // 2. Replace old name in meetings.companies JSON arrays. `meetings` is an
+        //    owned field-LWW table, so run this under the cascade engine scoped to
+        //    the name-matched meetings — otherwise the JSON-cache rename for
+        //    meetings that mention the source by name (but aren't formally linked,
+        //    so mergeCompanies didn't touch them) would never reach the outbox.
+        runInSyncBatchWithCascade(
+          [{ table: 'meetings', where: 'companies LIKE ?', params: [`%${sourceRow.canonical_name}%`] }],
+          () => {
+            db.prepare(`
+              UPDATE meetings
+              SET companies = REPLACE(companies, ?, ?)
+              WHERE companies LIKE ?
+            `).run(
+              JSON.stringify(sourceRow.canonical_name).slice(1, -1),
+              JSON.stringify(targetRow.canonical_name).slice(1, -1),
+              `%${sourceRow.canonical_name}%`
+            )
+          },
         )
       }
 
