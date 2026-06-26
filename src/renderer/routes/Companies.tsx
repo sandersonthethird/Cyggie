@@ -101,6 +101,9 @@ function normalizeSortKey(value: string | null | undefined): string {
 // Backend-sortable column keys — all others are sorted client-side
 const BACKEND_SORT_KEYS = new Set(['name', 'lastTouchpoint'])
 
+// Stable empty ref for gating the table while a saved-view restore is pending.
+const EMPTY_ROWS: never[] = []
+
 
 // Maps ColumnDef.field → URL param name for backwards-compat with existing saved views.
 // Must be a stable module-level const (passed to useTableFilters as fieldToParamMap).
@@ -158,7 +161,7 @@ export default function Companies() {
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => loadColumnConfig())
 
   // ── Persist & restore last-active view for sidebar navigation ──────────────
-  useLastView('cyggie:companies-last-view', '/companies', searchParams, visibleKeys, navigate, setVisibleKeys, saveColumnConfig)
+  const { restorePending } = useLastView('cyggie:companies-last-view', '/companies', searchParams, visibleKeys, navigate, setVisibleKeys, saveColumnConfig)
 
   // ── Data ────────────────────────────────────────────────────────────────────
   const [companies, setCompanies] = useState<CompanySummary[]>([])
@@ -418,6 +421,12 @@ export default function Companies() {
   }, [companies, columnFilters, rangeFilters, textFilters, customFieldValues, customFieldTypes, sort])
 
   const groupedRows = useGroupedRows<CompanySummary>(displayCompanies, groupBy, COMPANY_GROUPABLE_FIELDS, collapsedGroups)
+
+  // While a saved-view restore is pending the URL is still bare (filter reads as
+  // "All"); render the table as empty+loading so the full unfiltered list never
+  // flashes for a frame. See useLastView's restorePending.
+  const tableCompanies = restorePending ? EMPTY_ROWS : displayCompanies
+  const tableRows = restorePending ? EMPTY_ROWS : groupedRows
 
   const dedupActionableGroups = dedupGroups
     ? dedupGroups.filter((group) => {
@@ -785,11 +794,11 @@ export default function Companies() {
 
       {/* Table — flex: 1 fills remaining height */}
       <CompanyTable
-        companies={displayCompanies}
-        rows={groupedRows}
+        companies={tableCompanies}
+        rows={tableRows}
         groupBy={groupBy}
         onToggleGroup={handleToggleGroup}
-        loading={loading}
+        loading={loading || restorePending}
         sort={sort}
         onSort={handleSort}
         onPatch={handlePatch}

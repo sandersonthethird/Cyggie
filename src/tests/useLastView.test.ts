@@ -170,6 +170,61 @@ describe('useLastView', () => {
     })
   })
 
+  // ── restorePending (anti-flash gate) ────────────────────────────────────────
+
+  describe('restorePending gate', () => {
+    function renderWith(initial: URLSearchParams) {
+      return renderHook(
+        ({ params }: { params: URLSearchParams }) =>
+          useLastView(KEY, PATH, params, [], navigate, setVisibleKeys, saveColumnConfig),
+        { initialProps: { params: initial } },
+      )
+    }
+
+    it('is true on a bare URL when a non-empty saved view will be restored', () => {
+      localStorage.setItem(KEY, JSON.stringify({ urlParams: 'scope=founders', columns: [] }))
+      const { result } = renderWith(makeParams(''))
+      expect(result.current.restorePending).toBe(true)
+    })
+
+    it('flips to false once the restored params land (URL no longer bare)', () => {
+      localStorage.setItem(KEY, JSON.stringify({ urlParams: 'scope=founders', columns: [] }))
+      const { result, rerender } = renderWith(makeParams(''))
+      expect(result.current.restorePending).toBe(true)
+      // Simulate the restore navigation committing (mock navigate doesn't mutate
+      // searchParams, so we feed the restored params via rerender).
+      rerender({ params: makeParams('scope=founders') })
+      expect(result.current.restorePending).toBe(false)
+    })
+
+    it('is false when the URL already has params at mount (no gating)', () => {
+      localStorage.setItem(KEY, JSON.stringify({ urlParams: 'scope=founders', columns: [] }))
+      const { result } = renderWith(makeParams('scope=investors'))
+      expect(result.current.restorePending).toBe(false)
+    })
+
+    it('is false on a bare URL with no saved view', () => {
+      const { result } = renderWith(makeParams(''))
+      expect(result.current.restorePending).toBe(false)
+    })
+
+    it('is false when the saved view normalizes to empty (only transient params) — no navigate, must not gate forever', () => {
+      localStorage.setItem(KEY, JSON.stringify({ urlParams: 'new=1', columns: [] }))
+      const { result } = renderWith(makeParams(''))
+      expect(result.current.restorePending).toBe(false)
+    })
+
+    it('does not re-gate after the user later clears filters back to "All" (latch)', () => {
+      localStorage.setItem(KEY, JSON.stringify({ urlParams: 'scope=founders', columns: [] }))
+      const { result, rerender } = renderWith(makeParams(''))
+      expect(result.current.restorePending).toBe(true)
+      rerender({ params: makeParams('scope=founders') }) // restore landed
+      expect(result.current.restorePending).toBe(false)
+      rerender({ params: makeParams('') })               // user clears to All (bare)
+      expect(result.current.restorePending).toBe(false)  // stays released
+    })
+  })
+
   describe('restore strips transient params from stale saves', () => {
     it('strips "new" param from a pre-fix saved view so the add-modal does not re-open', () => {
       localStorage.setItem(KEY, JSON.stringify({

@@ -50,6 +50,10 @@ import { selectMergeKeepId } from '../utils/contactMerge'
 
 // ─── Helpers (dedup dialog only) ──────────────────────────────────────────────
 
+// Stable empty ref for gating the table while a saved-view restore is pending
+// (avoids a fresh [] each render).
+const EMPTY_ROWS: never[] = []
+
 const SQLITE_DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
 
 function parseTimestamp(value: string | null | undefined): number {
@@ -218,7 +222,7 @@ export default function Contacts() {
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => loadContactColumnConfig())
 
   // ── Persist & restore last-active view for sidebar navigation ──────────────
-  useLastView('cyggie:contacts-last-view', '/contacts', searchParams, visibleKeys, navigate, setVisibleKeys, saveContactColumnConfig)
+  const { restorePending } = useLastView('cyggie:contacts-last-view', '/contacts', searchParams, visibleKeys, navigate, setVisibleKeys, saveContactColumnConfig)
 
   // ── Custom fields ───────────────────────────────────────────────────────────
   const { contactDefs, refresh: refreshCustomFields } = useCustomFieldStore()
@@ -975,6 +979,12 @@ export default function Contacts() {
 
   const groupedRows = useGroupedRows<ContactSummary>(filteredContacts, groupBy, CONTACT_GROUPABLE_FIELDS, collapsedGroups)
 
+  // While a saved-view restore is pending the URL is still bare (filter reads as
+  // "All"); render the table as empty+loading so the full unfiltered list never
+  // flashes for a frame. See useLastView's restorePending.
+  const tableContacts = restorePending ? EMPTY_ROWS : filteredContacts
+  const tableRows = restorePending ? EMPTY_ROWS : groupedRows
+
   const dedupEditActive = Boolean(editingDedupContactId) || savingDedupContact
 
   const dedupActionableGroups = dedupGroups
@@ -1375,7 +1385,7 @@ export default function Contacts() {
       />
 
       {/* ── Table ── */}
-      {!flagsLoading && !loading && contacts.length === 0 && !query && !showCreate ? (
+      {!flagsLoading && !loading && !restorePending && contacts.length === 0 && !query && !showCreate ? (
         <EmptyState
           title="No contacts yet"
           description="Contacts are synced from meeting attendees. Click 'Sync from Meetings' to populate."
@@ -1383,11 +1393,11 @@ export default function Contacts() {
         />
       ) : (
         <ContactTable
-          contacts={filteredContacts}
-          rows={groupedRows}
+          contacts={tableContacts}
+          rows={tableRows}
           groupBy={groupBy}
           onToggleGroup={handleToggleGroup}
-          loading={loading}
+          loading={loading || restorePending}
           sort={sort}
           onSort={handleSort}
           onPatch={handlePatch}
