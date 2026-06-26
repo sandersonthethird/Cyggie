@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { HashRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import Layout from './components/layout/Layout'
+import { Onboarding } from './components/onboarding/Onboarding'
 import Dashboard from './routes/Dashboard'
 import MeetingList from './routes/MeetingList' // kept for rollback
 import MeetingsPage from './routes/MeetingsPage'
@@ -158,6 +159,12 @@ function NotificationListener() {
 
 export default function App() {
   const isPopOut = new URLSearchParams(window.location.search).get('popout') === 'true'
+  // First-run gate: render the onboarding flow full-window before the app until
+  // `onboardingComplete` is set. Wait for prefs to hydrate first (avoid a flash);
+  // popout windows are never gated.
+  const prefsLoaded = usePreferencesStore((s) => s.loaded)
+  const onboardingComplete = usePreferencesStore((s) => s.prefs['onboardingComplete'] === 'true')
+  const showOnboarding = !isPopOut && prefsLoaded && !onboardingComplete
   return (
     <ErrorBoundary fallback={() => <RootErrorFallback />}>
       <NoticeModalProvider>
@@ -169,38 +176,41 @@ export default function App() {
           {!isPopOut && <CalendarInit />}
           {!isPopOut && <NotificationPermissionInit />}
           {!isPopOut && <NotificationListener />}
-          <Routes>
-            {isPopOut ? (
-              <>
-                <Route path="/note/new" element={<NoteDetail />} />
-                <Route path="/note/:id" element={<NoteDetailLoaded />} />
-                <Route path="*" element={null} />
-              </>
+          {isPopOut ? (
+            <Routes>
+              <Route path="/note/new" element={<NoteDetail />} />
+              <Route path="/note/:id" element={<NoteDetailLoaded />} />
+              <Route path="*" element={null} />
+            </Routes>
+          ) : !prefsLoaded ? null /* wait for prefs to hydrate — avoids a flash */
+            : showOnboarding ? (
+              <Onboarding />
             ) : (
-              <Route element={<Layout />}>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/meetings" element={<MeetingsPage />} />
-                <Route path="/tasks" element={<Tasks />} />
-                <Route path="/recycle" element={<RecycleBin />} />
-                <Route path="/search" element={<SearchResults />} />
-                <Route path="/notes" element={<Notes />} />
-                <Route path="/note/new" element={<NoteDetail />} />
-                <Route path="/note/:id" element={<NoteDetailLoaded />} />
-                <Route path="/recording" element={<LiveRecording />} />
-                <Route path="/pipeline" element={<Pipeline />} />
-                <Route path="/meeting/:id" element={<MeetingDetail />} />
-                <Route path="/companies" element={<Companies />} />
-                <Route path="/company/:companyId" element={<CompanyDetail />} />
-                <Route path="/contacts" element={<Contacts />} />
-                <Route path="/contact/:contactId" element={<ContactDetail />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/partner-meeting" element={<PartnerMeeting />} />
-                <Route path="/ai-chats" element={<AIChats />} />
-                <Route path="/ai-chats/:id" element={<AIChatFullscreen />} />
-                <Route path="/dev/agent-runs" element={<DevAgentRuns />} />
-              </Route>
+              <Routes>
+                <Route element={<Layout />}>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/meetings" element={<MeetingsPage />} />
+                  <Route path="/tasks" element={<Tasks />} />
+                  <Route path="/recycle" element={<RecycleBin />} />
+                  <Route path="/search" element={<SearchResults />} />
+                  <Route path="/notes" element={<Notes />} />
+                  <Route path="/note/new" element={<NoteDetail />} />
+                  <Route path="/note/:id" element={<NoteDetailLoaded />} />
+                  <Route path="/recording" element={<LiveRecording />} />
+                  <Route path="/pipeline" element={<Pipeline />} />
+                  <Route path="/meeting/:id" element={<MeetingDetail />} />
+                  <Route path="/companies" element={<Companies />} />
+                  <Route path="/company/:companyId" element={<CompanyDetail />} />
+                  <Route path="/contacts" element={<Contacts />} />
+                  <Route path="/contact/:contactId" element={<ContactDetail />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="/partner-meeting" element={<PartnerMeeting />} />
+                  <Route path="/ai-chats" element={<AIChats />} />
+                  <Route path="/ai-chats/:id" element={<AIChatFullscreen />} />
+                  <Route path="/dev/agent-runs" element={<DevAgentRuns />} />
+                </Route>
+              </Routes>
             )}
-          </Routes>
           </RunsProvider>
         </AudioCaptureProvider>
       </HashRouter>

@@ -436,6 +436,10 @@ export const IPC_CHANNELS = {
   USER_PREF_GET_ALL: 'user-pref:get-all',
   USER_PREF_SET: 'user-pref:set',
 
+  // Onboarding — team invites. STUB on this branch (no gateway invite endpoint
+  // here); the handler just acks. TODO: wire to the real invite endpoint.
+  ONBOARDING_TEAM_INVITE: 'onboarding:team-invite',
+
   // Maintenance
   MEETING_NOTES_BACKFILL: 'maintenance:meeting-notes-backfill',
 

@@ -91,8 +91,12 @@ export function registerCalendarHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.CALENDAR_CONNECT,
     async (_event, clientId: string, clientSecret: string) => {
-      // Store credentials first
-      storeGoogleClientCredentials(clientId, clientSecret)
+      // Store credentials only when provided — empty args mean "connect using the
+      // already-stored client creds" (the onboarding one-click path), which must
+      // NOT overwrite saved creds with blanks.
+      if (clientId && clientId.trim().length > 0) {
+        storeGoogleClientCredentials(clientId, clientSecret)
+      }
       // Run OAuth flow
       await authorize()
       // Start polling
