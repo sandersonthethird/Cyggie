@@ -76,3 +76,45 @@ the string. New codes are forward-compatible (clients that don't
 recognize them fall back to the message).
 
 Mirror the `withSync` discipline: when in doubt, add rather than mutate.
+
+# Brand voice — bold & irreverent UI copy
+
+Cyggie's user-facing **ambient copy** (empty states, loading rows, success
+toasts, onboarding subtext) carries a deliberately bold, irreverent brand voice
+— it's a competitive differentiator. The copy lives in one place, the catalog at
+[`src/shared/voice/catalog.ts`](src/shared/voice/catalog.ts), and is reached
+through the hook and helpers in [`src/shared/voice/index.ts`](src/shared/voice/index.ts).
+
+```tsx
+// ✓ Empty/loading copy rendered in JSX — picks once per mount, reads the
+//   user's intensity setting, never flickers.
+const empty = useVoiceLine('emptyState', 'contacts')          // from @renderer hooks/useVoice
+
+// ✓ A new empty state — prefer the voice-aware shared component, which is
+//   on-brand by default:
+<EmptyState voiceKey="companies" variant={isFiltered ? 'filtered' : 'empty'} />
+
+// ✓ Event-handler copy (toasts computed once, not in render):
+const speak = useVoiceFn(); speak('toast', 'syncUpToDate')
+
+// ✗ NEVER call voice()/pickRandom in a render path — Math.random() re-rolls on
+//   every render and the copy flickers while typing/scrolling.
+<div>{voice('emptyState', 'contacts')}</div>   // wrong
+```
+
+Each catalog slot has three tiers — `plain` (the neutral original, also what the
+`off` intensity renders), `subtle`, and `full` (bold). The user picks the level
+in Settings → Appearance → Personality (`brandVoiceIntensity`).
+
+**The straight path — keep these PLAIN, never route them through the catalog:**
+- Destructive confirmations (`ConfirmDialog` `variant:'danger'` — deletes, purges).
+- Failures that need user action or carry a count ("2 of 5 updates failed").
+- Security / auth / sign-in / API-key errors.
+- Operational status indicators (e.g. the sync-engine state pill).
+- Any number/outcome the user must read — append flavor around data, never
+  bury data inside a joke.
+
+When adding a new ambient surface, reach for `useVoiceLine` / `EmptyState`
+voiceKey / `LoadingRow` so it's on-brand for free. AI-generated text
+(meeting digests, memos, partner-meeting notes) is **out of scope** — no joke
+may ever reach a work-product a partner forwards to LPs.

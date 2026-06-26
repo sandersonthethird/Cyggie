@@ -5,6 +5,7 @@ import { SYSTEM_DECISION_TYPES } from '../../../shared/types/company'
 import { DecisionLogModal } from '../crm/DecisionLogModal'
 import type { SavedDecisionRef } from '../crm/DecisionLogModal'
 import styles from './CompanyDecisions.module.css'
+import { useVoiceLine } from '../../hooks/useVoice'
 
 interface CompanyDecisionsProps {
   companyId: string
@@ -25,6 +26,8 @@ export function CompanyDecisions({ companyId }: CompanyDecisionsProps) {
   const [logs, setLogs] = useState<CompanyDecisionLog[]>([])
   const [loaded, setLoaded] = useState(false)
   const [modalLogId, setModalLogId] = useState<string | undefined>(undefined)
+  const noHistoryLine = useVoiceLine('emptyState', 'deals')
+  const noDecisionsLine = useVoiceLine('emptyState', 'decisions')
   const [showModal, setShowModal] = useState(false)
 
   useEffect(() => {
@@ -118,10 +121,10 @@ export function CompanyDecisions({ companyId }: CompanyDecisionsProps) {
       </div>
 
       {userDecisions.length === 0 && stageEntries.length === 0 && (
-        <div className={styles.empty}>No decisions or pipeline history yet.</div>
+        <div className={styles.empty}>{noHistoryLine}</div>
       )}
       {userDecisions.length === 0 && stageEntries.length > 0 && (
-        <div className={styles.empty}>No decisions logged yet.</div>
+        <div className={styles.empty}>{noDecisionsLine}</div>
       )}
 
       {userDecisions.map((log) => (

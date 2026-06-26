@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../../api'
 import { IPC_CHANNELS } from '../../../../shared/constants/channels'
 import { StepLinks } from '../StepLinks'
+import { useVoiceLine } from '../../../hooks/useVoice'
 import styles from '../Onboarding.module.css'
 
 /**
@@ -28,6 +29,7 @@ export function GoogleStep({
   const [clientSecret, setClientSecret] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const sub = useVoiceLine('onboarding', 'google')
 
   useEffect(() => {
     void api.invoke<string | null>(IPC_CHANNELS.SETTINGS_GET, 'google_client_id').then((v) => {
@@ -71,9 +73,7 @@ export function GoogleStep({
     <div className={styles.card}>
       <div className={styles.headBlock}>
         <h1 className={styles.heading}>Connect Google</h1>
-        <p className={styles.sub}>
-          Cyggie reads your calendar to build your firm’s companies and contacts automatically.
-        </p>
+        <p className={styles.sub}>{sub}</p>
       </div>
 
       {connected ? (

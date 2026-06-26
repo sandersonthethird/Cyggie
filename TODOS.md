@@ -3926,3 +3926,66 @@ main to preserve the outbox/`withSync` transaction model. Profile candidates wit
 the existing `[sql-perf]` ≥20ms dev instrumentation first to size the win.
 **Effort:** L. **Priority:** P2.
 **Depends on / blocked by:** nothing; independent but large.
+
+## Brand voice — milestone toasts (first contact / first company / 100th meeting)
+
+**What:** Fire a celebratory irreverent toast on milestone events — first contact
+added, first company added, 100th meeting recorded — drawing from the existing
+`milestone` slots in [`src/shared/voice/catalog.ts`](src/shared/voice/catalog.ts)
+(`firstContact`, `firstCompany`, `meetingCentury`), which are already written.
+
+**Why:** High "they thought of that" delight. Deferred from the brand-voice PR
+because the inline-create flow (`handleCreateInline` in `src/renderer/routes/Contacts.tsx`
+and `Companies.tsx`) navigates straight to the new detail page, so a toast on the
+list view unmounts immediately — and there's no global lightweight toast surface
+to land it on. The CEO review cautioned against adding a 3rd toast pattern, so
+this needs the surface first.
+
+**Pros:** cheap copy (already authored); memorable brand moment. **Cons:** needs
+a global, navigation-surviving toast surface that doesn't exist yet; building one
+ad hoc would fork toast patterns further.
+
+**Context/where to start:** introduce one shared `useToast`/global toast host
+(consolidating the inline `undoToast` in `ContactTable.tsx` and the per-file
+`showToast` callbacks), then fire `voice('milestone', …)` from the create
+handlers when the post-insert count is 1 (or a round number for meetings). The
+catalog slots and `useVoiceFn` are ready.
+**Effort:** M. **Priority:** P3.
+**Depends on / blocked by:** a unified toast surface (currently none).
+
+## Brand voice — reactive roast lines (account-age / count aware)
+
+**What:** Make empty-state copy react to real state — e.g. "6 months in, 0 deals"
+gets a harder roast than a brand-new account. Extends the `variant` plumbing
+(`empty` | `filtered`) already landed in the brand-voice PR with a richer context
+object (account age, entity counts).
+
+**Why:** The biggest delight in the original vision; the static catalog can't tell
+a fresh install from a long-dormant one. **Pros:** copy that feels alive and
+specific. **Cons:** threads a context object through every empty-state call site;
+more test surface; risk of mean-spirited lines if not tuned.
+
+**Context/where to start:** add an optional `context` arg to `voiceFor`/`useVoiceLine`
+that can bump into dedicated catalog pools; source account age from the workspace
+created-at and counts from the list data already in hand at each call site.
+**Effort:** M. **Priority:** P3. **Depends on / blocked by:** nothing.
+
+## Brand voice — voice gallery dev route + ESLint flicker guard
+
+**What:** (1) A dev-only route that renders the whole voice catalog at all three
+intensities so a human can curate tone in one place. (2) An ESLint
+`no-restricted-imports`-style rule blocking `voice()` / `pickRandom` in `.tsx`
+render scope (they re-roll on every render and flicker).
+
+**Why:** The catalog is large and subjective — a gallery makes review/iteration
+fast. The lint rule turns the "never call `voice()` in render" convention (today
+documented in `CLAUDE.md` and the module header) into an enforced guard, mirroring
+`scripts/check-repo-imports.mjs`. **Pros:** faster copy iteration; flicker
+regressions caught in CI. **Cons:** the lint rule needs tuning to allow
+`voice()` inside event handlers / `useMemo`.
+
+**Context/where to start:** gallery = a route importing `voiceCatalog` and mapping
+over surfaces × sub-keys × intensities via `resolve()`. Lint = a custom rule or
+`no-restricted-syntax` scoped to `.tsx`, allow-listing event-handler usage.
+**Effort:** S (each). **Priority:** P2.
+**Depends on / blocked by:** nothing.

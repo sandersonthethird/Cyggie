@@ -47,6 +47,7 @@ import { HeaderFilter } from '../crm/HeaderFilter'
 import { RangeFilter } from '../crm/RangeFilter'
 import { TextFilter } from '../crm/TextFilter'
 import { usePreferencesStore } from '../../stores/preferences.store'
+import { useVoiceLine, useLoadingLine } from '../../hooks/useVoice'
 import styles from './ContactTable.module.css'
 import { api } from '../../api'
 
@@ -143,6 +144,15 @@ export function ContactTable({
   const { getJSON, setJSON } = usePreferencesStore()
   const { contactDefs } = useCustomFieldStore()
   const summaryKeys = getJSON<string[]>('cyggie:contact-summary-fields', [])
+
+  // Brand voice: empty/loading copy. "filtered" when a column/range/text filter
+  // is narrowing the list, so the line reads as a search-miss, not "no data".
+  const isFiltered =
+    Object.keys(columnFilters).length > 0 ||
+    Object.keys(rangeFilters ?? {}).length > 0 ||
+    Object.keys(textFilters ?? {}).length > 0
+  const emptyLine = useVoiceLine('emptyState', 'contacts', isFiltered ? 'filtered' : 'empty')
+  const loadingLine = useLoadingLine('generic', new Date().getHours())
 
   function toggleSummaryField(key: string) {
     const next = summaryKeys.includes(key)
@@ -773,10 +783,10 @@ export function ContactTable({
           style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
         >
           {loading && contacts.length === 0 && (
-            <div className={styles.emptyRow}>Loading…</div>
+            <div className={styles.emptyRow}>{loadingLine}</div>
           )}
           {!loading && contacts.length === 0 && (
-            <div className={styles.emptyRow}>No contacts found.</div>
+            <div className={styles.emptyRow}>{emptyLine}</div>
           )}
 
           {virtualRows.map((vrow) => {

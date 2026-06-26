@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import type { ContactMeetingRef } from '../../../shared/types/contact'
 import { parseToDate } from '../../utils/format'
+import { useVoiceLine } from '../../hooks/useVoice'
 import styles from './ContactMeetings.module.css'
 
 interface ContactMeetingsProps {
@@ -10,11 +11,12 @@ interface ContactMeetingsProps {
 
 export function ContactMeetings({ meetings, className }: ContactMeetingsProps) {
   const navigate = useNavigate()
+  const emptyLine = useVoiceLine('emptyState', 'meetings')
 
   return (
     <div className={`${styles.root} ${className ?? ''}`}>
       {meetings.length === 0 && (
-        <div className={styles.empty}>No meetings found.</div>
+        <div className={styles.empty}>{emptyLine}</div>
       )}
       {meetings.map((meeting) => {
         const isCalendarOnly = meeting.id.startsWith('cal:')

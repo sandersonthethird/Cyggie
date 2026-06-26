@@ -7,6 +7,7 @@ import { useAppStore } from '../../stores/app.store'
 import { FeedTopBar } from './FeedTopBar'
 import { DayGroup } from './DayGroup'
 import { MeetingsCalendar } from './MeetingsCalendar'
+import { useVoiceLine } from '../../hooks/useVoice'
 import styles from './MeetingsFeed.module.css'
 
 const UPCOMING_BUCKETS = new Set(['all', 'today', 'upcoming'])
@@ -22,6 +23,7 @@ export function MeetingsFeed({ groupedMeetings, filtered }: MeetingsFeedProps) {
   const searchRef = useRef<HTMLInputElement>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const searchQuery = searchParams.get('q') ?? ''
+  const emptyTitle = useVoiceLine('emptyState', 'meetings', searchQuery ? 'filtered' : 'empty')
   const activeView = searchParams.get('view') === 'calendar' ? 'calendar' : 'timeline'
   const activeBucket = searchParams.get('bucket') ?? 'all'
   const calendarConnected = useAppStore((s) => s.calendarConnected)
@@ -99,7 +101,7 @@ export function MeetingsFeed({ groupedMeetings, filtered }: MeetingsFeedProps) {
           )}
           {groupedMeetings.length === 0 ? (
             <div className={styles.empty}>
-              <div className={styles.emptyTitle}>No meetings found</div>
+              <div className={styles.emptyTitle}>{emptyTitle}</div>
               <div className={styles.emptyDesc}>
                 {searchQuery ? 'Try adjusting your search or filters.' : 'No meetings match the current filter.'}
               </div>

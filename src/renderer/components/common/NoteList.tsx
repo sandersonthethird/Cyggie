@@ -10,6 +10,7 @@
 import type { ReactNode } from 'react'
 import { SafeMarkdown } from '../SafeMarkdown'
 import { stripMarkdownPreview } from '../../utils/format'
+import { useVoiceLine, useLoadingLine } from '../../hooks/useVoice'
 import styles from './NoteList.module.css'
 
 export interface NoteListItem {
@@ -39,10 +40,13 @@ export function NoteList<T extends NoteListItem>({
   onTogglePin,
   togglingIds,
   onDelete,
-  emptyMessage = 'No notes yet.',
+  emptyMessage,
 }: NoteListProps<T>) {
-  if (!loaded) return <div className={styles.loading}>Loading…</div>
-  if (notes.length === 0) return <div className={styles.empty}>{emptyMessage}</div>
+  // Brand voice: when a parent doesn't override the copy, speak it.
+  const voicedEmpty = useVoiceLine('emptyState', 'notes')
+  const loadingLine = useLoadingLine('generic', new Date().getHours())
+  if (!loaded) return <div className={styles.loading}>{loadingLine}</div>
+  if (notes.length === 0) return <div className={styles.empty}>{emptyMessage ?? voicedEmpty}</div>
 
   return (
     <>
