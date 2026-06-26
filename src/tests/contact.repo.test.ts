@@ -22,6 +22,7 @@ vi.mock('@cyggie/db/sqlite/connection', () => ({
 }))
 
 const { listContacts, listContactsLight, resolveContactsByEmails, resolveContactsByLowercasedNames, getContact, updateContact, getContactEmailRow } = await import('@cyggie/db/sqlite/repositories/contact.repo')
+const { runMeetingAttendeeEmailsMigration } = await import('@cyggie/db/sqlite/migrations/135-meeting-attendee-emails')
 
 function buildDb(): Database.Database {
   const db = new Database(':memory:')
@@ -183,6 +184,7 @@ describe('listContacts — keeps manual/tagged no-email CRM contacts', () => {
     const db = new Database(':memory:')
     db.pragma('foreign_keys = ON')
     db.exec(`
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE org_companies (
         id TEXT PRIMARY KEY,
         canonical_name TEXT NOT NULL
@@ -268,6 +270,9 @@ describe('listContacts — keeps manual/tagged no-email CRM contacts', () => {
         -- Tags column with empty array string should not count as tagged
         ('empty-tags', 'Eve Empty', 'eveempty', NULL, NULL, '[]')
     `)
+    // listContacts injects TOUCHPOINT_CTES, whose meeting_touch now joins
+    // meeting_attendee_emails (migration 135).
+    runMeetingAttendeeEmailsMigration(db)
     testDb = db
   })
 
@@ -606,6 +611,7 @@ function buildTouchpointDb(): Database.Database {
   const db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   db.exec(`
+    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE org_companies (id TEXT PRIMARY KEY, canonical_name TEXT NOT NULL);
     CREATE TABLE contacts (
       id TEXT PRIMARY KEY,
@@ -683,6 +689,10 @@ function buildTouchpointDb(): Database.Database {
     INSERT INTO email_contact_links (id, message_id, contact_id) VALUES
       ('lC', 'eC', 'cC');
   `)
+  // meeting_touch now joins meeting_attendee_emails (migration 135). Run the real
+  // migration so the derived table + triggers exist and existing meetings (mA,
+  // mF) are backfilled — exercises the actual migration, not a hand-rolled copy.
+  runMeetingAttendeeEmailsMigration(db)
   return db
 }
 

@@ -133,6 +133,7 @@ import { runChatMessageCitationsMigration } from './migrations/132-chat-message-
 import { runDropDeadCoInvestorsMigration } from './migrations/131-drop-dead-co-investors'
 import { runAttachmentsMigration } from './migrations/133-attachments'
 import { runAttachmentUploadsMigration } from './migrations/134-attachment-uploads'
+import { runMeetingAttendeeEmailsMigration } from './migrations/135-meeting-attendee-emails'
 
 let db: Database.Database | null = null
 
@@ -357,4 +358,5 @@ export function runAllMigrations(db: Database.Database): void {
   runChatMessageCitationsMigration(db)
   runAttachmentsMigration(db)
   runAttachmentUploadsMigration(db)
+  runMeetingAttendeeEmailsMigration(db)
 }
