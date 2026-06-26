@@ -1482,8 +1482,20 @@ column may be derivable rather than added fresh. Plan:
 egress measurement. Also blocked by understanding whether outbox/origin
 tracking exists in current schema.
 
-### T42 — Make `mergeCompanies` fully sync-aware (the merge is wholly un-synced)
-**What:** Wrap the entire destructive `mergeCompanies` transaction
+### T42 — Make `mergeCompanies` fully sync-aware ✅ shipped
+**STATUS:** ✅ shipped (commit `1dff5de`, 2026-06-26). `mergeCompanies` now
+runs inside `runInSyncBatchWithCascade` under the dev under-declaration guard,
+with `mergeCascadeScopes()` declaring one bounded scope per owned table (rows
+that move source→target caught by `<fkcol> IN (source,target)`; composite-PK
+link tables relink as delete+insert). Allow-list is empty — every owned CASCADE
+child of org_companies is declared; the rest (tasks/contacts/notes) are SET NULL
+(count-invariant, guard-invisible, converge via the remote's own SET NULL). The
+IPC COMPANY_MERGE handler's name-based meetings-JSON rewrite is wrapped in its
+own cascade too. Coverage: `src/tests/company-merge-outbox.test.ts`. Both
+wrappers no-op without configured sync globals, so the minimal-fixture merge
+tests are unchanged.
+
+**What (original):** Wrap the entire destructive `mergeCompanies` transaction
 ([packages/db/src/sqlite/repositories/org-company.repo.ts:2210](packages/db/src/sqlite/repositories/org-company.repo.ts#L2210))
 in a sync context (`runInSyncBatchWithCascade`) and emit an outbox row for
 **every** owned-table mutation it performs, so a merge propagates to
