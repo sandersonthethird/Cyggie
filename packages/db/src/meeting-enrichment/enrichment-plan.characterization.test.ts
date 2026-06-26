@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { runAllMigrations } from '@cyggie/db/sqlite/connection'
+import { runAllMigrations } from '../sqlite/connection'
 import {
   planMeetingEnrichment,
   type ExistingCompany,

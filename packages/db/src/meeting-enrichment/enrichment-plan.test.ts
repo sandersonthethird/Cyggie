@@ -3,6 +3,10 @@ import {
   createEmptyPlan,
   EMPTY_PLAN,
   planCompanyNameUpdates,
+  buildCandidates,
+  planCompanyLinks,
+  planContactDecisions,
+  planContacts,
   planMeetingEnrichment,
   type AttendeeInput,
   type PlanOptions,
@@ -28,6 +32,42 @@ describe('planMeetingEnrichment (golden cases)', () => {
   it.each(ENRICHMENT_CASES)('$name', (c) => {
     const plan = planMeetingEnrichment(toExistingState(c.existing), c.attendees, c.opts)
     expect(plan).toEqual(c.expectedPlan)
+  })
+})
+
+// G1 (T3 Slice 0): the gateway's single call must deep-equal the spread of the two
+// desktop halves, and each half must populate ONLY its own arrays (independence).
+describe('planMeetingEnrichment ≡ compose(planContacts, planCompanyLinks)', () => {
+  it.each(ENRICHMENT_CASES)('compose holds for $name', (c) => {
+    const existing = toExistingState(c.existing)
+    const contacts = planContacts(existing, c.attendees, c.opts)
+    const companies = planCompanyLinks(existing, c.attendees, c.opts)
+    expect(planMeetingEnrichment(existing, c.attendees, c.opts)).toEqual({
+      ...contacts,
+      ...companies,
+      companyNameUpdates: [],
+    })
+    // independence: the contact half emits no company arrays and vice-versa
+    expect(Object.keys(contacts).sort()).toEqual([
+      'contactNameUpdates',
+      'contactsToCreate',
+      'emailsToAdd',
+      'meetingContactLinks',
+    ])
+    expect(Object.keys(companies).sort()).toEqual([
+      'companiesToCreate',
+      'companyLinksToPrune',
+      'meetingCompanyLinks',
+    ])
+  })
+
+  it('planContacts(x) === planContactDecisions(buildCandidates(x)) — the bulk-path seam', () => {
+    const c = ENRICHMENT_CASES.find((x) => x.expectedPlan.contactsToCreate.length > 0)!
+    const existing = toExistingState(c.existing)
+    const candidates = buildCandidates(c.attendees.attendees, c.attendees.attendeeEmails, c.opts.ownerEmail)
+    expect(planContacts(existing, c.attendees, c.opts)).toEqual(
+      planContactDecisions(existing, candidates, c.opts),
+    )
   })
 })
 

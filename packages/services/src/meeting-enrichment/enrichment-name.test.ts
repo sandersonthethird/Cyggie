@@ -6,7 +6,7 @@ import {
   extractDomainsFromEmails,
   parseCompanyName,
   isPlausibleCompanyName,
-} from './helpers'
+} from '@cyggie/db/meeting-enrichment/helpers'
 import { resolveCompanyName, type ResolveCompanyNameDeps } from './name'
 import type { LLMProvider } from '../llm/provider'
 

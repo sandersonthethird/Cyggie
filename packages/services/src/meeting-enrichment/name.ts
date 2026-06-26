@@ -16,7 +16,9 @@
 //                                              domainToTitleCase(domain)  ◀───┘  (always non-null)
 
 import type { LLMProvider } from '../llm/provider'
-import { domainToTitleCase, isPlausibleCompanyName, parseCompanyName } from './helpers'
+// helpers relocated to @cyggie/db (T3 Slice 0 — kept the planner db-side to avoid a
+// db→services package cycle). services→db is allowed, so this stays here for Slice 0b.
+import { domainToTitleCase, isPlausibleCompanyName, parseCompanyName } from '@cyggie/db/meeting-enrichment/helpers'
 
 export interface ResolveCompanyNameDeps {
   /**

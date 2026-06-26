@@ -324,47 +324,60 @@ function derivePrimaryDomain(attendeeEmails: string[] | null | undefined): strin
 
 // ─── THE PLANNER ─────────────────────────────────────────────────────────────
 
+// ── T3 Slice 0: split into two independent halves the desktop calls from its own
+//    input-driven triggers, composed back for the gateway's single call ─────────
+//
+//   planContacts ─┐  (steps 1–2: contacts; depends only on attendees+contacts)
+//                 ├─▶ planMeetingEnrichment = {…contacts, …companyLinks}  (gateway)
+//   planCompanyLinks ┘  (steps 3–4+prune: companies; depends only on companies+domains)
+//
+// No data flows between the halves — the contact→company link is a DB read the
+// PERSISTER does at apply time, not modelled here. So `planMeetingEnrichment`
+// deep-equals the spread of the two halves (asserted by the compose test).
+
+/** Contact-write subset of a WritePlan (planContacts / planContactDecisions output). */
+export type ContactPlan = Pick<
+  WritePlan,
+  'contactsToCreate' | 'emailsToAdd' | 'contactNameUpdates' | 'meetingContactLinks'
+>
+/** Company-write subset of a WritePlan (planCompanyLinks output). */
+export type CompanyPlan = Pick<
+  WritePlan,
+  'companiesToCreate' | 'meetingCompanyLinks' | 'companyLinksToPrune'
+>
+
 /**
- * Plan every CRM write a meeting's attendee list implies, given already-fetched
- * existing state. Pure and synchronous. `companyNameUpdates` is always [] here —
- * it's filled post-persist by planCompanyNameUpdates once names resolve.
+ * Contact decisions over an ALREADY-BUILT candidate list (steps 1–2). The desktop
+ * bulk path (syncContactsFromMeetings) calls this directly with candidates merged
+ * across many meetings; the per-meeting path goes through planContacts.
  */
-export function planMeetingEnrichment(
+export function planContactDecisions(
   existing: ExistingState,
-  attendees: AttendeeInput,
+  candidates: CandidateContact[],
   opts: PlanOptions,
-): WritePlan {
-  const plan = createEmptyPlan()
-
-  // Step 0 — group / empty guards. The planner TRUSTS opts.isGroupEvent.
-  if (opts.isGroupEvent) return plan
-
-  const attendeeList = attendees.attendees
-  const attendeeEmails = attendees.attendeeEmails
-  const seedNamesRaw = opts.companies ?? deriveSeedCompanyNames(attendeeList, attendeeEmails)
-  const hasAttendees =
-    (attendeeList?.length ?? 0) > 0 || (attendeeEmails?.length ?? 0) > 0
-  if (!hasAttendees && seedNamesRaw.length === 0) return plan
-
+): ContactPlan {
+  const out: ContactPlan = {
+    contactsToCreate: [],
+    emailsToAdd: [],
+    contactNameUpdates: [],
+    meetingContactLinks: [],
+  }
+  if (opts.isGroupEvent) return out
   const { meetingId } = opts
 
-  // Step 1 — contact candidates.
-  const candidates = buildCandidates(attendeeList, attendeeEmails, opts.ownerEmail)
-
-  // Step 2 — contact decisions (port of applyCandidates, minus DB/outbox/tombstones).
   for (const candidate of candidates) {
     const match = existing.contactsByEmail.get(candidate.email)
 
     if (!match) {
       const split = splitFullNameParts(candidate.fullName)
-      plan.contactsToCreate.push({
+      out.contactsToCreate.push({
         email: candidate.email,
         fullName: candidate.fullName,
         normalizedName: candidate.normalizedName,
         firstName: split.firstName,
         lastName: split.lastName,
       })
-      plan.meetingContactLinks.push({ meetingId, email: candidate.email, contactId: null })
+      out.meetingContactLinks.push({ meetingId, email: candidate.email, contactId: null })
       continue
     }
 
@@ -393,7 +406,7 @@ export function planMeetingEnrichment(
       split.firstName !== match.firstName ||
       split.lastName !== match.lastName
     ) {
-      plan.contactNameUpdates.push({
+      out.contactNameUpdates.push({
         contactId: match.id,
         fullName: nextName,
         normalizedName: nextNormalized,
@@ -404,11 +417,50 @@ export function planMeetingEnrichment(
 
     // Primary-email backfill: the contact matched by this email but stored no primary.
     if (!match.primaryEmail || !match.primaryEmail.trim()) {
-      plan.emailsToAdd.push({ contactId: match.id, email: candidate.email, isPrimary: true })
+      out.emailsToAdd.push({ contactId: match.id, email: candidate.email, isPrimary: true })
     }
 
-    plan.meetingContactLinks.push({ meetingId, email: candidate.email, contactId: match.id })
+    out.meetingContactLinks.push({ meetingId, email: candidate.email, contactId: match.id })
   }
+
+  return out
+}
+
+/** Contact half (steps 1–2): build candidates from raw attendee inputs, then decide. */
+export function planContacts(
+  existing: ExistingState,
+  attendees: AttendeeInput,
+  opts: PlanOptions,
+): ContactPlan {
+  if (opts.isGroupEvent) {
+    return { contactsToCreate: [], emailsToAdd: [], contactNameUpdates: [], meetingContactLinks: [] }
+  }
+  const candidates = buildCandidates(attendees.attendees, attendees.attendeeEmails, opts.ownerEmail)
+  return planContactDecisions(existing, candidates, opts)
+}
+
+/** Company half (steps 3–4 + prune): match/derive/link companies and prune stale links. */
+export function planCompanyLinks(
+  existing: ExistingState,
+  attendees: AttendeeInput,
+  opts: PlanOptions,
+): CompanyPlan {
+  const out: CompanyPlan = {
+    companiesToCreate: [],
+    meetingCompanyLinks: [],
+    companyLinksToPrune: [],
+  }
+  if (opts.isGroupEvent) return out
+
+  const attendeeList = attendees.attendees
+  const attendeeEmails = attendees.attendeeEmails
+  const seedNamesRaw = opts.companies ?? deriveSeedCompanyNames(attendeeList, attendeeEmails)
+  const hasAttendees =
+    (attendeeList?.length ?? 0) > 0 || (attendeeEmails?.length ?? 0) > 0
+  // Match the original combined guard: nothing to do AND nothing to prune from.
+  if (!hasAttendees && seedNamesRaw.length === 0) return out
+
+  const { meetingId } = opts
 
   // Step 3 — seed company names (trim/dedup/drop-empty; mirrors syncMeetingCompanyLinks:260).
   const seedNames = [...new Set(seedNamesRaw.map((name) => name.trim()).filter(Boolean))]
@@ -420,7 +472,7 @@ export function planMeetingEnrichment(
     const matchId = matchExistingCompany(existing.companies, seedName, attendeeEmails)
     if (matchId) {
       resolvedCompanyIds.add(matchId)
-      plan.meetingCompanyLinks.push({
+      out.meetingCompanyLinks.push({
         meetingId,
         companyId: matchId,
         seedKey: null,
@@ -438,7 +490,7 @@ export function planMeetingEnrichment(
     if (!createdSeedKeys.has(seedKey)) {
       createdSeedKeys.add(seedKey)
       const primaryDomain = derivePrimaryDomain(attendeeEmails)
-      plan.companiesToCreate.push({
+      out.companiesToCreate.push({
         seedKey,
         canonicalName: trimmed,
         normalizedName: normalized,
@@ -447,7 +499,7 @@ export function planMeetingEnrichment(
         domainAliases: primaryDomain ? getDomainLookupCandidates(primaryDomain) : [],
       })
     }
-    plan.meetingCompanyLinks.push({
+    out.meetingCompanyLinks.push({
       meetingId,
       companyId: null,
       seedKey,
@@ -460,12 +512,29 @@ export function planMeetingEnrichment(
   // can't be in currentMeetingCompanyLinkIds, so they're never pruned).
   for (const companyId of existing.currentMeetingCompanyLinkIds) {
     if (!resolvedCompanyIds.has(companyId)) {
-      plan.companyLinksToPrune.push({ meetingId, companyId })
+      out.companyLinksToPrune.push({ meetingId, companyId })
     }
   }
 
-  // Step 5 — companyNameUpdates filled later (see planCompanyNameUpdates).
-  return plan
+  return out
+}
+
+/**
+ * Plan every CRM write a meeting's attendee list implies, given already-fetched
+ * existing state. Pure and synchronous — the GATEWAY's single call. Composes the
+ * two independent halves. `companyNameUpdates` is always [] here — it's filled
+ * post-persist by planCompanyNameUpdates once names resolve.
+ */
+export function planMeetingEnrichment(
+  existing: ExistingState,
+  attendees: AttendeeInput,
+  opts: PlanOptions,
+): WritePlan {
+  return {
+    ...planContacts(existing, attendees, opts),
+    ...planCompanyLinks(existing, attendees, opts),
+    companyNameUpdates: [],
+  }
 }
 
 // ─── POST-RESOLUTION NAME UPDATES ────────────────────────────────────────────
