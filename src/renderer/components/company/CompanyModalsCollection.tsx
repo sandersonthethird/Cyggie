@@ -38,6 +38,10 @@ interface CompanyModalsCollectionProps {
   // Merge picker (first step)
   mergePickerOpen: boolean
   setMergePickerOpen: (v: boolean) => void
+  // "Same as…" picker — reuses the merge search results, non-destructive link
+  sameAsPickerOpen: boolean
+  setSameAsPickerOpen: (v: boolean) => void
+  onAddSameAs: (target: MergeTarget) => void
   mergeQuery: string
   setMergeQuery: (q: string) => void
   mergeResults: MergeTarget[]
@@ -72,6 +76,9 @@ export function CompanyModalsCollection({
   company,
   mergePickerOpen,
   setMergePickerOpen,
+  sameAsPickerOpen,
+  setSameAsPickerOpen,
+  onAddSameAs,
   mergeQuery,
   setMergeQuery,
   mergeResults,
@@ -108,6 +115,20 @@ export function CompanyModalsCollection({
         onQueryChange={setMergeQuery}
         results={mergeResults}
         onSelect={target => { setMergeTarget(target); setMergePickerOpen(false) }}
+      />
+
+      {/* Non-destructive "Same as…" — same picker UI, but onSelect records a
+          same_as link (surfaces in the dedup list) instead of opening merge. */}
+      <MergePicker
+        open={sameAsPickerOpen}
+        onClose={() => setSameAsPickerOpen(false)}
+        entityNoun="company"
+        title={`Mark “${company.canonicalName}” as the same company as:`}
+        currentEntityName={company.canonicalName}
+        query={mergeQuery}
+        onQueryChange={setMergeQuery}
+        results={mergeResults}
+        onSelect={onAddSameAs}
       />
 
       {showDecisionModal && (

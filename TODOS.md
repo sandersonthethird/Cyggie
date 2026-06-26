@@ -1482,6 +1482,54 @@ column may be derivable rather than added fresh. Plan:
 egress measurement. Also blocked by understanding whether outbox/origin
 tracking exists in current schema.
 
+### T42 — Make `mergeCompanies` fully sync-aware (the merge is wholly un-synced)
+**What:** Wrap the entire destructive `mergeCompanies` transaction
+([packages/db/src/sqlite/repositories/org-company.repo.ts:2210](packages/db/src/sqlite/repositories/org-company.repo.ts#L2210))
+in a sync context (`runInSyncBatchWithCascade`) and emit an outbox row for
+**every** owned-table mutation it performs, so a merge propagates to
+Neon/mobile/other desktops instead of stranding locally.
+**Why:** `mergeCompanies` currently calls **no** `appendOutboxRow` /
+`currentSyncContext` / `runInSyncBatch` anywhere, and the IPC handler
+([src/main/ipc/company.ipc.ts](src/main/ipc/company.ipc.ts), `COMPANY_MERGE`)
+invokes it raw. The result: the target's merged field values, the source
+**delete**, and all relinked rows (aliases, meeting/email links, investors,
+notes, memos, contacts' primary_company_id, meetings JSON cache) never reach
+the outbox. On any other device the source company **reappears** after sync
+and the merge silently un-does itself. This is the same "owned write skips
+the outbox" bug class the T1–T4 hardening batch fixed everywhere else —
+merge is the last un-synced destructive path.
+**Pros:** Closes the last owned-write sync gap; merge becomes durable
+across devices; removes a confusing "ghost company comes back" failure mode.
+**Cons:** Non-trivial. The merge touches **9 owned tables** and the
+`org_companies` writes have an **unbounded dynamic scope**:
+`UPDATE org_companies SET lead_investor_company_id = target WHERE
+lead_investor_company_id = source` can touch *any* company that referenced
+the source as its lead investor, plus a 3-part `company_investors` relink
+and the source row delete. `runInSyncBatchWithCascade` requires every owned
+write to fall inside a **declared scope** or the dev-mode under-declaration
+guard throws — so the scope set must be computed *before* the transaction
+(SELECT the affected `lead_investor_company_id` company ids + the dynamic
+`affectedMeetingIds` for the meetings JSON cache). Mixed whole-row-LWW
+(aliases) and field-LWW (contacts, meetings) tables in one cascade. Hard to
+fully verify without on-device merge testing.
+**Context:** Split out of the "Same as…" PR (feat/company-same-as) on
+2026-06-26 after the un-synced merge was discovered mid-implementation; the
+user chose to ship the Same-as feature and defer this. The Same-as PR
+already did the **contained** half of the original Decision C — fixed
+`upsertCompanyAlias` to emit ([org-company.repo.ts:241](packages/db/src/sqlite/repositories/org-company.repo.ts#L241))
+and excluded `same_as` rows from the merge alias-copy
+([org-company.repo.ts:2445](packages/db/src/sqlite/repositories/org-company.repo.ts#L2445)).
+Start by enumerating every write statement inside the `tx` closure and its
+owned-table classification (the summary in the PR description lists all 9);
+declare a scope per table; compute the two dynamic id sets up front; then
+lean on the dev under-declaration guard + the existing `company-merge-fields`
+/ `company-merge-cache` suites, and add a merge-outbox test mirroring
+[src/tests/meeting-company-cascade-outbox.test.ts](src/tests/meeting-company-cascade-outbox.test.ts).
+**Effort:** L. **Priority:** P2 (correctness gap, but merge is
+low-frequency and single-firm beta limits blast radius today).
+**Depends on / blocked by:** None technically; benefits from on-device merge
+QA since it can't be fully validated in-process.
+
 ---
 
 ## P2 — Contacts (Performance)

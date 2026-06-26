@@ -249,12 +249,105 @@ function upsertCompanyAlias(
     : (aliasValue || '').trim()
   if (!normalizedAlias) return
 
-  db.prepare(`
+  // org_company_aliases is an OWNED whole-row-LWW table. createCompany /
+  // updateCompany call this inside a withSync context, so emit the row to the
+  // outbox (previously these name/domain aliases were stranded on desktop —
+  // never reached Neon/mobile). Emit only on a real insert (INSERT OR IGNORE
+  // can no-op on the unique constraint).
+  const ctx = currentSyncContext()
+  const lamport = ctx?.lamport ?? '0'
+  const id = randomUUID()
+  const createdAt = new Date().toISOString()
+  const res = db.prepare(`
     INSERT OR IGNORE INTO org_company_aliases (
-      id, company_id, alias_value, alias_type, created_at
+      id, company_id, alias_value, alias_type, created_at, lamport
     )
-    VALUES (?, ?, ?, ?, datetime('now'))
-  `).run(randomUUID(), companyId, normalizedAlias, aliasType)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, companyId, normalizedAlias, aliasType, createdAt, lamport)
+  if (ctx && res.changes > 0) {
+    appendOutboxRow(db, {
+      table: 'org_company_aliases',
+      op: 'insert',
+      row: { id, companyId, aliasValue: normalizedAlias, aliasType, createdAt, lamport },
+    })
+  }
+}
+
+// ── User-asserted "same as" company links ────────────────────────────────────
+// Non-destructive duplicate marking, stored in org_company_aliases with
+// alias_type='same_as'. NOTE the overload: for these rows `alias_value` holds the
+// OTHER company's id, not a name/domain string. Every name/domain alias lookup in
+// this file already filters by alias_type ('name'|'domain'), so same_as rows can't
+// pollute resolution. Canonical edge: one row per unordered pair, stored as
+// (company_id=min(a,b), alias_value=max(a,b)) so asserting from either company is
+// idempotent under UNIQUE(company_id, alias_type, alias_value).
+const SAME_AS_ALIAS_TYPE = 'same_as'
+function canonicalSameAsPair(a: string, b: string): { lo: string; hi: string } {
+  return a < b ? { lo: a, hi: b } : { lo: b, hi: a }
+}
+
+/**
+ * Mark two companies as the same. Idempotent (re-asserting either direction
+ * hits the canonical row). Emits the synced alias row to the outbox — DO NOT
+ * fall back to the raw `upsertCompanyAlias` (un-synced). Returns whether a new
+ * link was created.
+ */
+export function addSameAsAlias(companyId: string, otherCompanyId: string): { linked: boolean } {
+  const a = (companyId || '').trim()
+  const b = (otherCompanyId || '').trim()
+  if (!a || !b || a === b) return { linked: false }
+  const db = getDatabase()
+  const exists = db.prepare('SELECT 1 AS x FROM org_companies WHERE id = ?')
+  if (!exists.get(a) || !exists.get(b)) return { linked: false }
+
+  const { lo, hi } = canonicalSameAsPair(a, b)
+  const already = db
+    .prepare('SELECT 1 AS x FROM org_company_aliases WHERE company_id = ? AND alias_type = ? AND alias_value = ?')
+    .get(lo, SAME_AS_ALIAS_TYPE, hi)
+  if (already) return { linked: false } // idempotent no-op (no second emit)
+
+  const ctx = currentSyncContext()
+  const lamport = ctx?.lamport ?? '0'
+  const id = randomUUID()
+  const createdAt = new Date().toISOString()
+  db.prepare(
+    `INSERT OR IGNORE INTO org_company_aliases (id, company_id, alias_value, alias_type, created_at, lamport)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, lo, hi, SAME_AS_ALIAS_TYPE, createdAt, lamport)
+  if (ctx) {
+    appendOutboxRow(db, {
+      table: 'org_company_aliases',
+      op: 'insert',
+      row: { id, companyId: lo, aliasValue: hi, aliasType: SAME_AS_ALIAS_TYPE, createdAt, lamport },
+    })
+  }
+  return { linked: true }
+}
+
+/**
+ * Remove a "same as" link (undo). Deletes the canonical row AND any stray
+ * reverse/non-canonical rows for the pair, emitting a delete per removed row.
+ */
+export function removeSameAsAlias(companyId: string, otherCompanyId: string): { removed: number } {
+  const a = (companyId || '').trim()
+  const b = (otherCompanyId || '').trim()
+  if (!a || !b) return { removed: 0 }
+  const db = getDatabase()
+  const { lo, hi } = canonicalSameAsPair(a, b)
+  const rows = db
+    .prepare(
+      `SELECT id FROM org_company_aliases WHERE alias_type = ?
+         AND ((company_id = ? AND alias_value = ?) OR (company_id = ? AND alias_value = ?))`
+    )
+    .all(SAME_AS_ALIAS_TYPE, lo, hi, hi, lo) as Array<{ id: string }>
+  if (rows.length === 0) return { removed: 0 }
+  const ctx = currentSyncContext()
+  const del = db.prepare('DELETE FROM org_company_aliases WHERE id = ?')
+  for (const { id } of rows) {
+    del.run(id)
+    if (ctx) appendOutboxRow(db, { table: 'org_company_aliases', op: 'delete', row: { id } })
+  }
+  return { removed: rows.length }
 }
 
 function normalizeEntityType(value: string | null | undefined): CompanyEntityType {
@@ -2356,7 +2449,13 @@ export function mergeCompanies(targetCompanyId: string, sourceCompanyId: string,
       SELECT lower(hex(randomblob(16))), ?, alias_value, alias_type, created_at
       FROM org_company_aliases
       WHERE company_id = ?
+        AND alias_type IN ('name', 'domain')
     `).run(targetCompanyId, sourceCompanyId)
+    // same_as rows are deliberately NOT copied: alias_value holds a company id,
+    // not a name/domain string, so re-homing it onto the target would mint a
+    // bogus self-or-cross link. The source's same_as rows are dropped by the
+    // DELETE below; any reverse edge (company_id=other → alias_value=source)
+    // survives but is filtered as dangling by the tier-0 dedup pass.
     relinked.aliases = db
       .prepare('DELETE FROM org_company_aliases WHERE company_id = ?')
       .run(sourceCompanyId).changes
@@ -2513,8 +2612,70 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
     note_count: number
   }>
 
+  // rowsById + buildSummary are shared by tier 0 (below) and the fuzzy pass.
+  const rowsById = new Map<string, typeof rows[0]>()
+  for (const row of rows) rowsById.set(row.id, row)
+  const buildSummary = (id: string): CompanyDuplicateSummary | null => {
+    const row = rowsById.get(id)
+    if (!row) return null
+    return {
+      id: row.id,
+      canonicalName: row.canonical_name,
+      primaryDomain: row.primary_domain,
+      websiteUrl: row.website_url,
+      entityType: row.entity_type,
+      pipelineStage: row.pipeline_stage,
+      updatedAt: row.updated_at,
+      populatedFieldCount: row.populated_field_count,
+      meetingCount: row.meeting_count,
+      emailCount: row.email_count,
+      noteCount: row.note_count,
+    }
+  }
+
+  // ── Tier 0: user-asserted "same as" links (always shown, sorted first) ───────
+  // Cluster same_as edges transitively (undirected). Drop dangling edges whose
+  // endpoint no longer exists (FK cascade only cleans the company_id side, so an
+  // alias_value→deleted-company edge can survive — must not render a phantom).
+  // Members go in `sameAsCovered` so the domain/fuzzy passes below skip them.
+  const sameAsCovered = new Set<string>()
+  const sameAsGroups: CompanyDuplicateGroup[] = []
+  // Resilient to minimal DBs/fixtures lacking the table (mirrors the column
+  // introspection above).
+  const hasAliasTable = db
+    .prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'org_company_aliases'`)
+    .get()
+  if (hasAliasTable) {
+    const edges = db
+      .prepare(`SELECT company_id, alias_value FROM org_company_aliases WHERE alias_type = ?`)
+      .all(SAME_AS_ALIAS_TYPE) as Array<{ company_id: string; alias_value: string }>
+    const sameAsUf = new UnionFind()
+    for (const e of edges) {
+      if (!rowsById.has(e.company_id) || !rowsById.has(e.alias_value)) continue // drop dangling
+      sameAsUf.union(e.company_id, e.alias_value)
+    }
+    for (const [, ids] of sameAsUf.clusters()) {
+      if (ids.length < 2) continue
+      const summaries = ids
+        .map(buildSummary)
+        .filter((s): s is CompanyDuplicateSummary => s != null)
+        .sort(compareDuplicateCompanies)
+      if (summaries.length < 2) continue
+      summaries.forEach((s) => sameAsCovered.add(s.id))
+      sameAsGroups.push({
+        key: `same_as:${[...ids].sort().join('|')}`,
+        domain: null,
+        reason: 'User confirmed — same company',
+        confidence: 100,
+        suggestedKeepCompanyId: summaries[0]!.id,
+        companies: summaries,
+      })
+    }
+  }
+
   const groupsByDomain = new Map<string, CompanyDuplicateSummary[]>()
   for (const row of rows) {
+    if (sameAsCovered.has(row.id)) continue // tier 0 owns these
     const domainKey = normalizeDomain(row.primary_domain) || normalizeDomain(row.website_url)
     if (!domainKey) continue
     const summary: CompanyDuplicateSummary = {
@@ -2538,7 +2699,7 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
     }
   }
 
-  const groups: CompanyDuplicateGroup[] = []
+  const groups: CompanyDuplicateGroup[] = [...sameAsGroups]
   const domainGroupedIds = new Set<string>()
 
   for (const [domainKey, companies] of groupsByDomain.entries()) {
@@ -2579,9 +2740,6 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
   // Dedup invariant: emittedCompanyIds Set ensures a company appears in at
   // most one output group.
 
-  const rowsById = new Map<string, typeof rows[0]>()
-  for (const row of rows) rowsById.set(row.id, row)
-
   const normalizedToIds = new Map<string, string[]>()
   for (const row of rows) {
     const norm = normalizeCompanyName(row.canonical_name || '')
@@ -2592,7 +2750,7 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
   }
   const candidateNames = [...normalizedToIds.keys()]
 
-  const emittedCompanyIds = new Set<string>(domainGroupedIds)
+  const emittedCompanyIds = new Set<string>([...domainGroupedIds, ...sameAsCovered])
   const companyToDomainGroupIdx = new Map<string, number>()
   groups.forEach((g, idx) => {
     for (const c of g.companies) companyToDomainGroupIdx.set(c.id, idx)
@@ -2601,24 +2759,6 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
   const allInDomainGroup = (name: string): boolean => {
     const ids = normalizedToIds.get(name) || []
     return ids.length > 0 && ids.every((id) => domainGroupedIds.has(id))
-  }
-
-  const buildSummary = (id: string): CompanyDuplicateSummary | null => {
-    const row = rowsById.get(id)
-    if (!row) return null
-    return {
-      id: row.id,
-      canonicalName: row.canonical_name,
-      primaryDomain: row.primary_domain,
-      websiteUrl: row.website_url,
-      entityType: row.entity_type,
-      pipelineStage: row.pipeline_stage,
-      updatedAt: row.updated_at,
-      populatedFieldCount: row.populated_field_count,
-      meetingCount: row.meeting_count,
-      emailCount: row.email_count,
-      noteCount: row.note_count
-    }
   }
 
   if (candidateNames.length > 0 && candidateNames.length <= MAX_FUZZY_CANDIDATES) {
@@ -2719,6 +2859,10 @@ export function listSuspectedDuplicateCompanies(limitGroups = 30): CompanyDuplic
   }
 
   groups.sort((a, b) => {
+    // Tier 0 (user-confirmed "same as") always sorts first.
+    const aSame = a.key.startsWith('same_as:') ? 0 : 1
+    const bSame = b.key.startsWith('same_as:') ? 0 : 1
+    if (aSame !== bSame) return aSame - bSame
     if (a.companies.length !== b.companies.length) {
       return b.companies.length - a.companies.length
     }

@@ -13,6 +13,9 @@ export type AuditAction =
   | 'untag_speaker_contact'
   | 'link_company'
   | 'unlink_company'
+  // User-asserted "same as" company links (company.ipc.ts)
+  | 'link_same_as'
+  | 'unlink_same_as'
   | 'dismiss_company_suggestion'
   | 'swap_company'
   // Bulk task ops (task.ipc.ts), partner-meeting reconcile, memo export

@@ -557,6 +557,38 @@ export function registerCompanyHandlers(): void {
     }
   )
 
+  // Non-destructive "Same as…" assertion: mark two companies as the same without
+  // merging. Surfaces as a user-confirmed tier in COMPANY_DEDUP_SUSPECTED.
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_ADD_SAME_AS,
+    (_event, companyId: string, otherCompanyId: string) => {
+      if (!companyId?.trim() || !otherCompanyId?.trim()) {
+        throw new Error('Both companyId and otherCompanyId are required')
+      }
+      const userId = getCurrentUserId()
+      const result = companyRepo.addSameAsAlias(companyId, otherCompanyId)
+      if (result.linked) {
+        logAudit(userId, 'company', companyId, 'link_same_as', { otherCompanyId })
+      }
+      return result
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.COMPANY_REMOVE_SAME_AS,
+    (_event, companyId: string, otherCompanyId: string) => {
+      if (!companyId?.trim() || !otherCompanyId?.trim()) {
+        throw new Error('Both companyId and otherCompanyId are required')
+      }
+      const userId = getCurrentUserId()
+      const result = companyRepo.removeSameAsAlias(companyId, otherCompanyId)
+      if (result.removed > 0) {
+        logAudit(userId, 'company', companyId, 'unlink_same_as', { otherCompanyId })
+      }
+      return result
+    }
+  )
+
   // Phase 3: "Delete" is now a SOFT delete (moves to the Recycle Bin) that syncs
   // to teammates via field-LWW. Permanent removal is the admin purge (Phase 3 C2).
   ipcMain.handle(IPC_CHANNELS.COMPANY_DELETE, (_event, companyId: string) => {

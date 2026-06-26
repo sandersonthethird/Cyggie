@@ -104,6 +104,10 @@ export const IPC_CHANNELS = {
   COMPANY_MERGE_PREVIEW: 'company:merge-preview',
   COMPANY_DEDUP_SUSPECTED: 'company:dedup-suspected',
   COMPANY_DEDUP_APPLY: 'company:dedup-apply',
+  // Non-destructive "Same as…" assertions (alias_type='same_as' in
+  // org_company_aliases). Surface as a user-confirmed tier in dedup-suspected.
+  COMPANY_ADD_SAME_AS: 'company:add-same-as',
+  COMPANY_REMOVE_SAME_AS: 'company:remove-same-as',
   COMPANY_DELETE: 'company:delete',
   // Recycle bin (Phase 3) — COMPANY_DELETE now soft-deletes; restore + list the
   // firm's trashed companies. COMPANY_PURGE (admin hard-delete) lands in C2.

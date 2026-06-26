@@ -394,51 +394,6 @@ export default function Companies() {
     void fetchCompanies()
   })
 
-  // ── Ensure default saved views exist ─────────────────────────────────────────
-  useEffect(() => {
-    const STORAGE_KEY = 'cyggie:company-views'
-    let existing: Array<{ id: string; name: string; urlParams: string; columns: string[] }> = []
-    try { existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') } catch { /* corrupt — reset */ }
-    const fundIvColumns = [
-      'name', 'description', 'primaryDomain', 'industry', 'location', 'status',
-      'totalInvested', 'investmentMark', 'investmentRound', 'investmentSize',
-      'initialInvestmentSecurity', 'dateOfInitialInvestment', 'ownershipPct',
-      'initialRoundSize', 'postMoneyValuation', 'lastCompanyValuation', 'round',
-      'followonCheck', 'followonDate', 'followonCheck2', 'followonDate2',
-      'coInvestorNames', 'subsequentInvestorNames'
-    ]
-    const fundIv = existing.find(v => v.id === 'fund-iv-default')
-    let mutated = false
-    if (!fundIv) {
-      existing.push({
-        id: 'fund-iv-default',
-        name: 'Fund IV',
-        urlParams: 'type=portfolio&fund=fund_iv',
-        columns: fundIvColumns
-      })
-      mutated = true
-    } else {
-      // Migrate legacy column keys (industriesCsv/sector → industry) on existing saved views.
-      const legacyIdx = fundIv.columns.findIndex(c => c === 'industriesCsv' || c === 'sector')
-      if (legacyIdx >= 0) {
-        if (fundIv.columns.includes('industry')) {
-          fundIv.columns.splice(legacyIdx, 1)
-        } else {
-          fundIv.columns[legacyIdx] = 'industry'
-        }
-        mutated = true
-      }
-      if (!fundIv.columns.includes('status')) {
-        // Patch existing saved view: insert 'status' after 'location' (or at end).
-        const locIdx = fundIv.columns.indexOf('location')
-        const insertAt = locIdx >= 0 ? locIdx + 1 : fundIv.columns.length
-        fundIv.columns.splice(insertAt, 0, 'status')
-        mutated = true
-      }
-    }
-    if (mutated) localStorage.setItem(STORAGE_KEY, JSON.stringify(existing))
-  }, [])
-
   // ── Custom field types for filter dispatch ────────────────────────────────
   // applyCustomRangeFilter needs to know if a custom value should be compared
   // numerically or as a date string. Build a stable Record<defId, fieldType>
@@ -588,6 +543,24 @@ export default function Companies() {
     setDedupGroups(null)
     setDedupSelectedByGroup({})
   }, [applyingDedup])
+
+  // Undo a user-asserted "same as" link. For a transitive cluster, extract the
+  // member by dropping every edge between it and the other group members, then
+  // refresh so the now-smaller (or dissolved) group re-renders.
+  const handleRemoveSameAs = useCallback(
+    async (group: CompanyDuplicateGroup, companyId: string) => {
+      const others = group.companies.filter((c) => c.id !== companyId)
+      try {
+        for (const other of others) {
+          await api.invoke(IPC_CHANNELS.COMPANY_REMOVE_SAME_AS, companyId, other.id)
+        }
+        await reviewDuplicates(true)
+      } catch (err) {
+        setError(String(err))
+      }
+    },
+    [reviewDuplicates]
+  )
 
   const applyDedupActions = useCallback(async () => {
     if (!dedupGroups || dedupGroups.length === 0) return
@@ -878,6 +851,7 @@ export default function Companies() {
                 <tbody>
                   {dedupGroups.map((group) => {
                     const selectedAction = dedupActionsByGroup[group.key] || 'skip'
+                    const isSameAs = group.key.startsWith('same_as:')
                     const validCompanyIds = new Set(group.companies.map((c) => c.id))
                     const selectedCompanyIds = (dedupSelectedByGroup[group.key] || [])
                       .filter((id) => validCompanyIds.has(id))
@@ -891,7 +865,9 @@ export default function Companies() {
                         <td>
                           <div className={styles.dedupReason}>
                             {group.reason}
-                            {group.confidence != null && (
+                            {isSameAs ? (
+                              <span className={styles.sameAsBadge}>Same as</span>
+                            ) : group.confidence != null && (
                               <span className={styles.confidenceBadge}>{group.confidence}% match</span>
                             )}
                           </div>
@@ -926,6 +902,17 @@ export default function Companies() {
                                     />
                                     <span className={styles.dedupContactName}>{company.canonicalName}</span>
                                   </label>
+                                  {isSameAs && (
+                                    <button
+                                      type="button"
+                                      className={styles.dedupRemoveLink}
+                                      onClick={() => void handleRemoveSameAs(group, company.id)}
+                                      disabled={applyingDedup}
+                                      title="Remove this company from the user-confirmed link"
+                                    >
+                                      Remove link
+                                    </button>
+                                  )}
                                 </div>
                                 <span className={styles.dedupContactMeta}>
                                   {[

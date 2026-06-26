@@ -64,6 +64,7 @@ interface CompanyHeaderCardProps {
   hasEnrich: boolean
   onEnrichClick: () => void
   onMerge: () => void
+  onSameAs: () => void
   onDelete: () => void
 
   // Edit mode actions
@@ -126,6 +127,7 @@ export function CompanyHeaderCard({
   hasEnrich,
   onEnrichClick,
   onMerge,
+  onSameAs,
   onDelete,
   sessionNewFields,
   applyPromptLabel,
@@ -197,7 +199,10 @@ export function CompanyHeaderCard({
                   { label: 'Edit record', onClick: onStartEditing },
                   ...(hasEnrich ? [{ label: 'Enrich', onClick: onEnrichClick }] : []),
                 ],
-                [{ label: 'Merge', onClick: onMerge }],
+                [
+                  { label: 'Merge', onClick: onMerge },
+                  { label: 'Same as…', onClick: onSameAs },
+                ],
                 [{ label: 'Delete company', onClick: onDelete, destructive: true }],
               ]} />
             </div>

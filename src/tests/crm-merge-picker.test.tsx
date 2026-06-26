@@ -137,6 +137,40 @@ describe('MergePicker', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('defaults to the merge header, but a `title` override replaces it (Same as… flow)', () => {
+    const { container, rerender } = render(
+      <MergePicker
+        open={true}
+        onClose={vi.fn()}
+        entityNoun="company"
+        currentEntityName="Twitter"
+        query=""
+        onQueryChange={vi.fn()}
+        results={[]}
+        onSelect={vi.fn()}
+      />,
+    )
+    // default merge phrasing
+    expect(container.textContent).toContain('Merge')
+    expect(container.textContent).toContain('Twitter')
+
+    rerender(
+      <MergePicker
+        open={true}
+        onClose={vi.fn()}
+        entityNoun="company"
+        currentEntityName="Twitter"
+        title="Mark “Twitter” as the same company as:"
+        query=""
+        onQueryChange={vi.fn()}
+        results={[]}
+        onSelect={vi.fn()}
+      />,
+    )
+    expect(container.textContent).toContain('same company')
+    expect(container.textContent).not.toContain('Merge')
+  })
+
   it('typing fires onQueryChange', () => {
     const onQueryChange = vi.fn()
     const { container } = render(

@@ -410,6 +410,14 @@ export const getEntityTypeByNameOrDomain = rawOrgCompany.getEntityTypeByNameOrDo
 export const upsertCompanyClassification = rawOrgCompany.upsertCompanyClassification
 export const getCompanyMergePreview = rawOrgCompany.getCompanyMergePreview
 export const mergeCompanies = rawOrgCompany.mergeCompanies
+// User-asserted "same as" links write org_company_aliases (an owned table) but
+// have no primary entity row to hang a withSync wrapper on, so — like
+// syncContactsFromAttendees — they establish their own context via
+// runInSyncBatch and emit the outbox row themselves.
+export const addSameAsAlias: typeof rawOrgCompany.addSameAsAlias = (...args) =>
+  runInSyncBatch(() => rawOrgCompany.addSameAsAlias(...args))
+export const removeSameAsAlias: typeof rawOrgCompany.removeSameAsAlias = (...args) =>
+  runInSyncBatch(() => rawOrgCompany.removeSameAsAlias(...args))
 export const listSuspectedDuplicateCompanies =
   rawOrgCompany.listSuspectedDuplicateCompanies
 export const applyCompanyDedupDecisions = rawOrgCompany.applyCompanyDedupDecisions

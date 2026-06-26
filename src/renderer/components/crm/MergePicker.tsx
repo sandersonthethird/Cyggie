@@ -29,6 +29,12 @@ interface MergePickerProps {
   entityNoun: 'contact' | 'company'
   /** Used in the header: "Merge \"X\" into:". */
   currentEntityName: string
+  /**
+   * Optional header override. Defaults to the merge phrasing
+   * (`Merge "X" into:`). The "Same as…" flow passes its own copy so the same
+   * picker reads as a non-destructive link, not a merge.
+   */
+  title?: string
   query: string
   onQueryChange: (q: string) => void
   results: MergePickerTarget[]
@@ -40,6 +46,7 @@ export function MergePicker({
   onClose,
   entityNoun,
   currentEntityName,
+  title,
   query,
   onQueryChange,
   results,
@@ -56,7 +63,7 @@ export function MergePicker({
     <div className={styles.mergePickerOverlay} onClick={onClose}>
       <div className={styles.mergePicker} onClick={e => e.stopPropagation()}>
         <p className={styles.mergePickerTitle}>
-          Merge &ldquo;{currentEntityName}&rdquo; into:
+          {title ?? <>Merge &ldquo;{currentEntityName}&rdquo; into:</>}
         </p>
         <input
           autoFocus

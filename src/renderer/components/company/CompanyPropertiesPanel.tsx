@@ -151,6 +151,10 @@ export function CompanyPropertiesPanel({
   const deleteError = useTimedError()
   const optionError = useTimedError(4000)
   const [mergePickerOpen, setMergePickerOpen] = useState(false)
+  // "Same as…" reuses the merge picker's search (query/results) but its own
+  // open flag — only one picker is shown at a time, so the shared results list
+  // is safe. onSelect creates a non-destructive same_as link instead of merging.
+  const [sameAsPickerOpen, setSameAsPickerOpen] = useState(false)
   const [mergeQuery, setMergeQuery] = useState('')
   const [mergeResults, setMergeResults] = useState<{ id: string; name: string }[]>([])
   const [mergeTarget, setMergeTarget] = useState<{ id: string; name: string } | null>(null)
@@ -859,7 +863,7 @@ export function CompanyPropertiesPanel({
   }
 
   useEffect(() => {
-    if (!mergePickerOpen) return
+    if (!mergePickerOpen && !sameAsPickerOpen) return
     api.invoke<{ id: string; canonicalName: string }[]>(IPC_CHANNELS.COMPANY_LIST, {
       query: mergeQuery || undefined,
       limit: 10,
@@ -871,7 +875,16 @@ export function CompanyPropertiesPanel({
           .map(c => ({ id: c.id, name: c.canonicalName }))
       ))
       .catch(() => setMergeResults([]))
-  }, [mergeQuery, mergePickerOpen, company.id])
+  }, [mergeQuery, mergePickerOpen, sameAsPickerOpen, company.id])
+
+  async function handleAddSameAs(target: { id: string; name: string }) {
+    setSameAsPickerOpen(false)
+    try {
+      await api.invoke(IPC_CHANNELS.COMPANY_ADD_SAME_AS, company.id, target.id)
+    } catch (err) {
+      optionError.show(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   function handleNameKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter') void handleDone()
@@ -1041,6 +1054,7 @@ export function CompanyPropertiesPanel({
           hasEnrich={!!onEnrich}
           onEnrichClick={() => setEnrichMethodModalOpen(true)}
           onMerge={() => { setMergeQuery(''); setMergePickerOpen(true) }}
+          onSameAs={() => { setMergeQuery(''); setSameAsPickerOpen(true) }}
           onDelete={() => setConfirmDelete(true)}
           sessionNewFields={sessionNewFields}
           applyPromptLabel={applyPromptLabel}
@@ -1322,6 +1336,9 @@ export function CompanyPropertiesPanel({
         company={company}
         mergePickerOpen={mergePickerOpen}
         setMergePickerOpen={setMergePickerOpen}
+        sameAsPickerOpen={sameAsPickerOpen}
+        setSameAsPickerOpen={setSameAsPickerOpen}
+        onAddSameAs={handleAddSameAs}
         mergeQuery={mergeQuery}
         setMergeQuery={setMergeQuery}
         mergeResults={mergeResults}
