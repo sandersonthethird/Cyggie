@@ -284,6 +284,17 @@ export function bootstrapSync(): void {
   // 3. Wire IPC handlers (status / force-flush / retry-dead-letters).
   registerSyncIpc(agent)
 
+  // Dev/test escape hatch: CYGGIE_LOCAL_ONLY=1 keeps everything on the local drive.
+  // The agent + IPC are constructed (so the Cloud Sync panel still renders) but we do
+  // NOT start push ticks, the pull service, the one-time re-pulls, or the firm-directory
+  // pull. Combined with withSync's skip-emit, no data flows to or from Neon this session.
+  if (process.env['CYGGIE_LOCAL_ONLY'] === '1') {
+    console.warn(
+      '[sync] CYGGIE_LOCAL_ONLY active — push & pull disabled; all writes stay on the local drive.',
+    )
+    return
+  }
+
   // 4. Kick off the periodic tick.
   agent.start()
 

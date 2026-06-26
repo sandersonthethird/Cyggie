@@ -136,6 +136,13 @@ export function withSync<
   }
 
   return (...args: TArgs): TResult => {
+    // Dev/test escape hatch (CYGGIE_LOCAL_ONLY=1): write to local SQLite but never
+    // emit an outbox row, so imported/edited data for a signed-in test firm stays on
+    // the local drive and can never push to Neon — even via a manual force-flush or a
+    // later restart without the flag. Read at call-time so tests can toggle it.
+    if (process.env['CYGGIE_LOCAL_ONLY'] === '1') {
+      return fn(...args)
+    }
     if (!configured) {
       throw new Error(
         `[sync] withSync(${opts.table}) called before configureSyncGlobals(). ` +
