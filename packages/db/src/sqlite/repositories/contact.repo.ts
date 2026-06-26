@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto'
 import { getDatabase } from '../connection'
-import { appendOutboxRow, currentSyncContext } from '../sync-wrapper'
 import {
   runInSyncBatchWithCascade,
   withCascadeUnderDeclarationGuard,
@@ -33,7 +32,6 @@ import {
   NAME_STOP_WORDS,
   LINKEDIN_URL_RE,
   normalizePersonNameCandidate,
-  nameQualityScore,
   isLikelyLowQualityStoredName,
   pickBestNameCandidate,
   normalizeLinkedinUrl,
@@ -43,6 +41,8 @@ import {
   compareDuplicateCandidates,
 } from './contact-utils'
 import { getUser } from './user.repo'
+import { buildCandidates, planContactDecisions } from '../../meeting-enrichment/plan'
+import { loadContactExistingState, applyContactWritePlan } from './enrichment-store'
 import type {
   ContactSummary,
   ContactSortBy,
@@ -238,7 +238,7 @@ function rowToContactSummary(row: ContactRow): ContactSummary {
   }
 }
 
-function ensurePrimaryCompanyLink(
+export function ensurePrimaryCompanyLink(
   db: ReturnType<typeof getDatabase>,
   contactId: string,
   companyId: string,
@@ -270,7 +270,7 @@ function ensurePrimaryCompanyLink(
   return updateResult.changes > 0
 }
 
-function findCompanyIdByEmail(email: string | null | undefined): string | null {
+export function findCompanyIdByEmail(email: string | null | undefined): string | null {
   const domain = extractDomainFromEmail(email)
   if (!domain) return null
   return findCompanyIdByDomain(domain)
@@ -344,7 +344,7 @@ function listContactEmailAddresses(
   return [...new Set(emails)]
 }
 
-function attachEmailToContact(
+export function attachEmailToContact(
   db: ReturnType<typeof getDatabase>,
   contactId: string,
   email: string,
@@ -381,256 +381,43 @@ function isNotificationEmail(email: string): boolean {
   return NOTIFICATION_EMAIL_RE.test(email)
 }
 
-function buildCandidateMap(
+// Candidate construction + contact decisions now live in the shared planner
+// (@cyggie/db meeting-enrichment: buildCandidates + planContactDecisions), applied
+// by the SqliteEnrichmentStore. This counter preserves the ContactSyncStats.invalid
+// telemetry the planner doesn't track — it mirrors the old buildCandidateMap's
+// invalid increments (unnormalizable email OR empty normalized name), two-pass, so
+// the returned stat is unchanged.
+function countInvalidAttendeeEmails(
   attendees: string[] | null | undefined,
   attendeeEmails: string[] | null | undefined,
-  ownerEmail: string | null = null
-): { candidates: CandidateContact[]; invalid: number } {
-  const map = new Map<string, CandidateContact>()
-  const attendeeList = attendees || []
-  const attendeeEmailList = attendeeEmails || []
-  let invalid = 0
-
+  ownerEmail: string | null,
+): number {
   const normalizedOwnerEmail = ownerEmail ? normalizeEmail(ownerEmail) : null
-
-  const addCandidate = (emailValue: string, nameValue: string | null, explicitName: boolean) => {
+  let invalid = 0
+  const check = (emailValue: string, nameValue: string | null): void => {
     const email = normalizeEmail(emailValue)
     if (!email) {
       invalid += 1
       return
     }
-    // Never create a contact for the app owner
     if (normalizedOwnerEmail && email === normalizedOwnerEmail) return
-
-    // Skip known notification/bot addresses — these are never real people
     if (isNotificationEmail(email)) return
-
     const fullName = nameValue || inferNameFromEmail(email)
-    const normalizedName = normalizeName(fullName)
-    if (!normalizedName) {
-      invalid += 1
-      return
-    }
-
-    const incoming: CandidateContact = {
-      email,
-      fullName,
-      normalizedName,
-      explicitName
-    }
-    map.set(email, mergeCandidate(map.get(email), incoming))
+    if (!normalizeName(fullName)) invalid += 1
   }
-
+  const attendeeList = attendees || []
+  const attendeeEmailList = attendeeEmails || []
   for (let i = 0; i < attendeeEmailList.length; i += 1) {
     const emailEntry = attendeeEmailList[i]
     if (!emailEntry) continue
-    const parsedAttendee = parseAttendeeEntry(attendeeList[i] || '')
-    addCandidate(emailEntry, parsedAttendee.fullName, parsedAttendee.explicitName)
+    const parsed = parseAttendeeEntry(attendeeList[i] || '')
+    check(emailEntry, parsed.fullName)
   }
-
   for (const attendee of attendeeList) {
     const parsed = parseAttendeeEntry(attendee)
-    if (parsed.email) {
-      addCandidate(parsed.email, parsed.fullName, parsed.explicitName)
-    }
+    if (parsed.email) check(parsed.email, parsed.fullName)
   }
-
-  return {
-    candidates: [...map.values()],
-    invalid
-  }
-}
-
-function applyCandidates(candidates: CandidateContact[], userId: string | null = null): ContactSyncStats {
-  const db = getDatabase()
-
-  // Emit a NEWLY-created contact (+ its contact_emails) to the outbox so it
-  // reaches Neon — otherwise a contact auto-created from a meeting attendee
-  // lives only in local SQLite and never appears on mobile. Insert-only and
-  // op:'insert' (same as the wrapped createContact); existing-contact UPDATES
-  // are field-LWW and intentionally left to the lamport='0' backfill + future
-  // edits. Stamp lamport from the active context so the '0' sentinel stays
-  // accurate. No-op when there's no sync context (offline / pre-login).
-  const emitNewContact = (contactId: string): void => {
-    const ctx = currentSyncContext()
-    if (!ctx) return
-    db.prepare('UPDATE contacts SET lamport = ? WHERE id = ?').run(ctx.lamport, contactId)
-    const contactRow = db
-      .prepare('SELECT * FROM contacts WHERE id = ?')
-      .get(contactId) as Record<string, unknown> | undefined
-    if (contactRow) {
-      appendOutboxRow(db, { table: 'contacts', op: 'insert', row: contactRow })
-    }
-    const emailRows = db
-      .prepare('SELECT * FROM contact_emails WHERE contact_id = ?')
-      .all(contactId) as Array<Record<string, unknown>>
-    for (const er of emailRows) {
-      db.prepare('UPDATE contact_emails SET lamport = ? WHERE contact_id = ? AND email = ?')
-        .run(ctx.lamport, er['contact_id'], er['email'])
-      appendOutboxRow(db, {
-        table: 'contact_emails',
-        op: 'insert',
-        row: { ...er, lamport: ctx.lamport },
-      })
-    }
-  }
-
-  // Tombstone filter (migration 098): bulk-load every tombstoned email referenced
-  // by this batch. Chunked at 500 to stay under SQLite's 999-variable limit
-  // (mirrors getContactsByIds at line 2674). The gate only fires at the
-  // create-new branch below — if a live contact already exists for the email,
-  // a stale tombstone is ignored. Source-of-truth invariant: a live row beats
-  // a tombstone.
-  const tombstoned = new Set<string>()
-  const candidateEmails = candidates.map((c) => c.email).filter(Boolean)
-  for (let i = 0; i < candidateEmails.length; i += 500) {
-    const chunk = candidateEmails.slice(i, i + 500)
-    if (chunk.length === 0) continue
-    const placeholders = chunk.map(() => '?').join(',')
-    const rows = db
-      .prepare(`SELECT email FROM contact_tombstones WHERE email IN (${placeholders})`)
-      .all(...chunk) as { email: string }[]
-    for (const r of rows) tombstoned.add(r.email)
-  }
-
-  const getByEmail = db.prepare(`
-    SELECT c.id, c.full_name, c.first_name, c.last_name, c.normalized_name, c.email, c.primary_company_id
-    FROM contacts c
-    WHERE lower(c.email) = ?
-      OR EXISTS (
-        SELECT 1
-        FROM contact_emails ce
-        WHERE ce.contact_id = c.id AND lower(ce.email) = ?
-      )
-    LIMIT 1
-  `)
-  const insertContact = db.prepare(`
-    INSERT INTO contacts (
-      id, full_name, first_name, last_name, normalized_name, email, primary_company_id,
-      created_by_user_id, updated_by_user_id, created_at, updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-  `)
-  const updateContact = db.prepare(`
-    UPDATE contacts
-    SET
-      full_name = ?,
-      first_name = ?,
-      last_name = ?,
-      normalized_name = ?,
-      updated_by_user_id = ?,
-      updated_at = datetime('now')
-    WHERE id = ?
-  `)
-  const updateContactPrimaryEmail = db.prepare(`
-    UPDATE contacts
-    SET email = ?, updated_by_user_id = ?, updated_at = datetime('now')
-    WHERE id = ? AND (email IS NULL OR TRIM(email) = '')
-  `)
-
-  const stats: ContactSyncStats = {
-    candidates: candidates.length,
-    inserted: 0,
-    updated: 0,
-    skipped: 0,
-    invalid: 0
-  }
-
-  const upsertTransaction = db.transaction((items: CandidateContact[]) => {
-    for (const candidate of items) {
-      const existing = getByEmail.get(candidate.email, candidate.email) as {
-        id: string
-        full_name: string
-        first_name: string | null
-        last_name: string | null
-        normalized_name: string
-        email: string | null
-        primary_company_id: string | null
-      } | undefined
-
-      if (!existing) {
-        if (tombstoned.has(candidate.email)) {
-          console.debug(`[contact:tombstone-skip] email=${candidate.email} metric=contact.tombstone.skip count=1`)
-          stats.skipped += 1
-          continue
-        }
-        const contactId = randomUUID()
-        const split = splitFullNameParts(candidate.fullName)
-        const inferredCompanyId = findCompanyIdByEmail(candidate.email)
-        insertContact.run(
-          contactId,
-          candidate.fullName,
-          split.firstName,
-          split.lastName,
-          candidate.normalizedName,
-          candidate.email,
-          inferredCompanyId,
-          userId,
-          userId
-        )
-        attachEmailToContact(db, contactId, candidate.email, true)
-        if (inferredCompanyId) {
-          ensurePrimaryCompanyLink(db, contactId, inferredCompanyId, userId)
-        }
-        emitNewContact(contactId)
-        stats.inserted += 1
-        continue
-      }
-
-      let nextName = existing.full_name
-      let nextNormalized = existing.normalized_name
-
-      const existingNormalizedName = normalizeName(existing.full_name)
-      const namesDiffer = candidate.normalizedName !== existingNormalizedName
-      const existingNameLowQuality = isLikelyLowQualityStoredName(existing.full_name, existing.email)
-      const shouldUpgradeName = nameQualityScore(candidate.fullName) >= nameQualityScore(existing.full_name) + 12
-
-      if (
-        (!existing.full_name.trim() || !existing.normalized_name)
-        || (candidate.explicitName && namesDiffer && (existingNameLowQuality || shouldUpgradeName))
-      ) {
-        nextName = candidate.fullName
-        nextNormalized = candidate.normalizedName
-      }
-
-      const split = splitFullNameParts(nextName)
-      if (
-        nextName !== existing.full_name
-        || nextNormalized !== existing.normalized_name
-        || split.firstName !== existing.first_name
-        || split.lastName !== existing.last_name
-      ) {
-        updateContact.run(nextName, split.firstName, split.lastName, nextNormalized, userId, existing.id)
-        stats.updated += 1
-      } else {
-        stats.skipped += 1
-      }
-
-      if (!existing.email || !existing.email.trim()) {
-        updateContactPrimaryEmail.run(candidate.email, userId, existing.id)
-      }
-      attachEmailToContact(
-        db,
-        existing.id,
-        candidate.email,
-        !existing.email || normalizeEmail(existing.email || '') === candidate.email
-      )
-
-      if (!existing.primary_company_id) {
-        const inferredCompanyId = findCompanyIdByEmail(candidate.email)
-        if (inferredCompanyId) {
-          ensurePrimaryCompanyLink(db, existing.id, inferredCompanyId, userId)
-        }
-      }
-    }
-  })
-
-  // emitNewContact emits only when there's an active sync context. The context
-  // is established by the BARREL (which wraps the public syncContactsFromAttendees
-  // / syncContactsFromMeetings exports in runInSyncBatch) — see repositories/
-  // index.ts. Raw callers (tests) run without a context → emit no-ops.
-  upsertTransaction(candidates)
-  return stats
+  return invalid
 }
 
 function buildContactOrderBy(sortBy: ContactSortBy | undefined, includeLastTouchpoint: boolean): string {
@@ -2277,8 +2064,17 @@ export function syncContactsFromAttendees(
   userId: string | null = null
 ): ContactSyncStats {
   const ownerEmail = userId ? (getUser(userId)?.email ?? null) : null
-  const { candidates, invalid } = buildCandidateMap(attendees, attendeeEmails, ownerEmail)
-  const result = applyCandidates(candidates, userId)
+  // Decide via the shared planner (buildCandidates → planContactDecisions), persist
+  // via the SqliteEnrichmentStore. No meetingId here (recording-start / MEETING_PREPARE
+  // path) and not a group event — desktop never gated this entry on isGroupEvent.
+  const candidates = buildCandidates(attendees, attendeeEmails, ownerEmail)
+  const loaded = loadContactExistingState(candidates.map((c) => c.email))
+  const plan = planContactDecisions(
+    { contactsByEmail: loaded.contactsByEmail, companies: [], currentMeetingCompanyLinkIds: [] },
+    candidates,
+    { meetingId: '', ownerEmail, isGroupEvent: false },
+  )
+  const result = applyContactWritePlan(plan, { userId, loaded })
   // autoLinkContactsByDomain scans up to 5000 unlinked contacts and does N+1
   // queries per row. Defer to next tick so MEETING_PREPARE (the common caller)
   // returns immediately and the click-into-meeting navigation isn't blocked.
@@ -2290,8 +2086,11 @@ export function syncContactsFromAttendees(
     }
   })
   return {
-    ...result,
-    invalid
+    candidates: candidates.length,
+    inserted: result.inserted,
+    updated: result.updated,
+    skipped: result.skipped,
+    invalid: countInvalidAttendeeEmails(attendees, attendeeEmails, ownerEmail),
   }
 }
 
@@ -2313,18 +2112,24 @@ export function syncContactsFromMeetings(userId: string | null = null): ContactS
   for (const row of rows) {
     const attendees = parseJsonArray(row.attendees)
     const attendeeEmails = parseJsonArray(row.attendee_emails)
-    const rowCandidates = buildCandidateMap(attendees, attendeeEmails, ownerEmail)
-    invalid += rowCandidates.invalid
-    for (const candidate of rowCandidates.candidates) {
+    invalid += countInvalidAttendeeEmails(attendees, attendeeEmails, ownerEmail)
+    for (const candidate of buildCandidates(attendees, attendeeEmails, ownerEmail)) {
       mergedMap.set(candidate.email, mergeCandidate(mergedMap.get(candidate.email), candidate))
     }
   }
 
-  const result = applyCandidates([...mergedMap.values()], userId)
+  const candidates = [...mergedMap.values()]
+  const loaded = loadContactExistingState(candidates.map((c) => c.email))
+  const plan = planContactDecisions(
+    { contactsByEmail: loaded.contactsByEmail, companies: [], currentMeetingCompanyLinkIds: [] },
+    candidates,
+    { meetingId: '', ownerEmail, isGroupEvent: false },
+  )
+  const result = applyContactWritePlan(plan, { userId, loaded })
   autoLinkContactsByDomain(5000, userId)
   return {
     scannedMeetings: rows.length,
-    candidates: result.candidates,
+    candidates: candidates.length,
     inserted: result.inserted,
     updated: result.updated,
     skipped: result.skipped,

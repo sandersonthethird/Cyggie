@@ -1083,6 +1083,22 @@ exception but not the entry contents.
 calendar-tap PR).
 
 ### T3 — Port enrichment to `@cyggie/services` so gateway can fire it
+**STATUS (2026-06-26):** In progress, sliced per the design doc
+[`~/.claude/plans/t3-enrichment-services-port-design.md`]. The enrichment
+DECISIONS are being lifted into a pure, shared planner
+([`packages/db/src/meeting-enrichment/plan.ts`](packages/db/src/meeting-enrichment/plan.ts))
+so desktop (SQLite) and the gateway (Neon) can't drift:
+- **Slice 0 — shared planner + desktop persister.** Pt 1 (committed): relocated +
+  split the planner. Pt 2 (this work): desktop's contact-sync + meeting↔company-link
+  decisions now run through `planContacts` / `planContactDecisions` / `planCompanyLinks`,
+  applied by the new `SqliteEnrichmentStore`
+  ([`enrichment-store.ts`](packages/db/src/sqlite/repositories/enrichment-store.ts)).
+  No behavior change — proven by a rows+outbox baseline (`enrichment-store-parity`).
+- **Slice 0b — name resolution** (`resolveCompanyName` + `planCompanyNameUpdates`):
+  still on current desktop code, not yet shared.
+- **Slice 1 — gateway** `PgEnrichmentStore` + firing the route + the `EnrichmentStore`
+  interface: not started.
+
 **What:** Extract `syncContactsFromAttendees` + company-enrichment from
 the desktop main-process IPC layer into `@cyggie/services` so the
 gateway's `POST /meetings/from-calendar-event` can run the same side

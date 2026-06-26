@@ -3,6 +3,8 @@ import { getDatabase } from '../connection'
 import { appendOutboxRow, currentSyncContext } from '../sync-wrapper'
 import { deriveCalendarMeetingId } from '../../meeting-id'
 import { normalizeDomain } from '@main/utils/email-parser'
+import { planCompanyLinks } from '../../meeting-enrichment/plan'
+import { loadCompanyExistingState, applyCompanyWritePlan } from './enrichment-store'
 import type { MeetingRow } from '../schema'
 import type { ChatMessage, Meeting, MeetingCompany, MeetingListFilter, MeetingStatus } from '@shared/types/meeting'
 import type { MeetingPlatform } from '@shared/constants/meeting-apps'
@@ -103,73 +105,7 @@ function extractEmailDomain(email: string): string | null {
   return normalizeDomain(match[1])
 }
 
-function findExistingCompanyId(
-  db: ReturnType<typeof getDatabase>,
-  companyName: string,
-  attendeeEmails: string[] | null | undefined
-): string | null {
-  const normalizedName = normalizeCompanyName(companyName)
-  if (!normalizedName) return null
-
-  const byName = db
-    .prepare('SELECT id FROM org_companies WHERE normalized_name = ? LIMIT 1')
-    .get(normalizedName) as { id: string } | undefined
-  if (byName?.id) return byName.id
-
-  const byNameAlias = db
-    .prepare(`
-      SELECT company_id
-      FROM org_company_aliases
-      WHERE alias_type = 'name'
-        AND lower(trim(alias_value)) = lower(trim(?))
-      LIMIT 1
-    `)
-    .get(companyName.trim()) as { company_id: string } | undefined
-  if (byNameAlias?.company_id) return byNameAlias.company_id
-
-  const emailDomains = new Set<string>()
-  for (const email of attendeeEmails || []) {
-    const domain = extractEmailDomain(email)
-    if (!domain) continue
-    emailDomains.add(domain)
-    emailDomains.add(getRegistrableDomain(domain))
-  }
-
-  if (emailDomains.size === 0) return null
-
-  const findByPrimaryDomain = db.prepare(`
-    SELECT id
-    FROM org_companies
-    WHERE lower(trim(primary_domain)) = ?
-       OR (
-         CASE
-           WHEN lower(trim(primary_domain)) LIKE 'www.%' THEN substr(lower(trim(primary_domain)), 5)
-           ELSE lower(trim(primary_domain))
-         END
-       ) = ?
-    LIMIT 1
-  `)
-  const findByDomainAlias = db.prepare(`
-    SELECT company_id
-    FROM org_company_aliases
-    WHERE alias_type = 'domain'
-      AND lower(trim(alias_value)) = lower(trim(?))
-    LIMIT 1
-  `)
-
-  for (const domain of emailDomains) {
-    for (const candidate of getDomainLookupCandidates(domain)) {
-      const byDomain = findByPrimaryDomain.get(candidate, candidate) as { id: string } | undefined
-      if (byDomain?.id) return byDomain.id
-      const byDomainAlias = findByDomainAlias.get(candidate) as { company_id: string } | undefined
-      if (byDomainAlias?.company_id) return byDomainAlias.company_id
-    }
-  }
-
-  return null
-}
-
-function createCompanyForMeeting(
+export function createCompanyForMeeting(
   db: ReturnType<typeof getDatabase>,
   companyName: string,
   attendeeEmails: string[] | null | undefined,
@@ -254,71 +190,33 @@ function syncMeetingCompanyLinks(
   linkedBy = 'auto',
   userId: string | null = null
 ): void {
-  const db = getDatabase()
-  const ctx = currentSyncContext()
-  const lamport = ctx?.lamport ?? '0'
-  const names = [...new Set((companies || []).map((name) => name.trim()).filter(Boolean))]
-  const companyIds = new Set<string>()
+  // Company match/derive/link/prune decisions now run in the shared planner
+  // (planCompanyLinks), applied by the SqliteEnrichmentStore — same rows + outbox.
+  const seedNames = [...new Set((companies || []).map((name) => name.trim()).filter(Boolean))]
+  const existing = loadCompanyExistingState(meetingId, seedNames, attendeeEmails ?? [])
 
-  for (const companyName of names) {
-    const existingId = findExistingCompanyId(db, companyName, attendeeEmails)
-    const companyId = existingId || createCompanyForMeeting(db, companyName, attendeeEmails, userId)
-    if (!companyId) continue
-    companyIds.add(companyId)
-
-    db.prepare(`
-      INSERT INTO meeting_company_links (
-        meeting_id, company_id, confidence, linked_by, created_by_user_id, updated_by_user_id, lamport, created_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-      ON CONFLICT(meeting_id, company_id) DO UPDATE SET
-        confidence = CASE
-          WHEN excluded.confidence > meeting_company_links.confidence THEN excluded.confidence
-          ELSE meeting_company_links.confidence
-        END,
-        linked_by = excluded.linked_by,
-        updated_by_user_id = excluded.updated_by_user_id,
-        lamport = excluded.lamport
-    `).run(meetingId, companyId, confidence, linkedBy, userId, userId, lamport)
-
-    // Emit the link row (insert covers both new + updated link from Neon's POV;
-    // the gateway whole-row UPSERTs it). Without this, the meeting↔company link
-    // never reaches Neon even when the company itself does.
-    if (ctx) {
-      const linkRow = db
-        .prepare('SELECT * FROM meeting_company_links WHERE meeting_id = ? AND company_id = ?')
-        .get(meetingId, companyId) as Record<string, unknown> | undefined
-      if (linkRow) {
-        appendOutboxRow(db, { table: 'meeting_company_links', op: 'insert', row: linkRow })
-      }
-    }
-  }
-
-  // Prune stale links. Capture the rows BEFORE deleting so the tombstones
-  // replicate (pattern: unlinkMeetingCompany's captureBeforeDelete).
-  const pruneAndEmit = (sql: string, params: unknown[]): void => {
-    if (ctx) {
-      const doomed = db.prepare(sql.replace(/^\s*DELETE FROM/i, 'SELECT * FROM'))
-        .all(...params) as Array<Record<string, unknown>>
-      db.prepare(sql).run(...params)
-      for (const row of doomed) {
-        appendOutboxRow(db, { table: 'meeting_company_links', op: 'delete', row })
-      }
-    } else {
-      db.prepare(sql).run(...params)
-    }
-  }
-
-  if (companyIds.size === 0) {
-    pruneAndEmit('DELETE FROM meeting_company_links WHERE meeting_id = ?', [meetingId])
-    return
-  }
-
-  const placeholders = [...companyIds].map(() => '?').join(', ')
-  pruneAndEmit(
-    `DELETE FROM meeting_company_links WHERE meeting_id = ? AND company_id NOT IN (${placeholders})`,
-    [meetingId, ...companyIds],
+  // Desktop's company path is NOT gated on isGroupEvent (only the contact path is),
+  // so pass isGroupEvent:false. Pass an explicit (possibly empty) companies array so
+  // the planner uses it verbatim and never derives seed names from attendee domains
+  // (the original syncMeetingCompanyLinks only ever used the meeting's companies col).
+  const plan = planCompanyLinks(
+    existing,
+    { attendees: null, attendeeEmails: attendeeEmails ?? null },
+    { meetingId, ownerEmail: null, isGroupEvent: false, companies: companies ?? [] },
   )
+
+  // Parity guard: planCompanyLinks early-returns an EMPTY plan when there are no seed
+  // names AND no attendees, but the original pruned ALL links in that case (companyIds
+  // empty → delete every link for the meeting). Reproduce the prune-all so clearing a
+  // meeting's companies still unlinks.
+  if (seedNames.length === 0 && (attendeeEmails?.length ?? 0) === 0) {
+    plan.companyLinksToPrune = existing.currentMeetingCompanyLinkIds.map((companyId) => ({
+      meetingId,
+      companyId,
+    }))
+  }
+
+  applyCompanyWritePlan(plan, { userId, attendeeEmails, confidence, linkedBy })
 }
 
 export function createMeeting(data: {
