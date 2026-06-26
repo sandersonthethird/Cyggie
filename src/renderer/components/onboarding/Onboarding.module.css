@@ -161,6 +161,24 @@
   color: var(--color-text);
 }
 
+/* Import step — field keep-enriched toggles */
+.fieldToggleRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.fieldToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+}
+
 .input {
   height: 46px;
   padding: 0 14px;

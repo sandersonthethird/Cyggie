@@ -518,12 +518,47 @@
 }
 
 .optionChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
-  padding: 2px 7px;
+  padding: 2px 4px 2px 7px;
   border-radius: 12px;
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   color: var(--color-text);
+}
+
+/* Editable option chip: inline input + remove button */
+.optionChipInput {
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 11px;
+  width: 9ch;
+  min-width: 4ch;
+  padding: 0;
+  outline: none;
+}
+
+.optionChipRemove {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.optionChipRemove:hover {
+  color: var(--color-text);
+}
+
+.optionAddRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 /* ── Defaults section ────────────────────────────────────────────── */

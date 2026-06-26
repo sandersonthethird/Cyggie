@@ -21,6 +21,7 @@ import { SignInStep } from './steps/SignInStep'
 import { WorkspaceStep } from './steps/WorkspaceStep'
 import { GoogleStep } from './steps/GoogleStep'
 import { KeysStep } from './steps/KeysStep'
+import { ImportStep } from './steps/ImportStep'
 import { TeamStep } from './steps/TeamStep'
 import { DoneStep } from './steps/DoneStep'
 import styles from './Onboarding.module.css'
@@ -32,6 +33,7 @@ interface OBState {
   slugEdited: boolean
   googleConnected: boolean
   keysSaved: boolean
+  csvImported: boolean
   invites: string[]
 }
 
@@ -42,10 +44,11 @@ type Action =
   | { type: 'slug'; value: string }
   | { type: 'googleConnected' }
   | { type: 'keysSaved' }
+  | { type: 'csvImported' }
   | { type: 'addInvite'; email: string }
   | { type: 'removeInvite'; email: string }
 
-const SETUP_LABELS = ['Workspace', 'Google', 'Keys', 'Team']
+const SETUP_LABELS = ['Workspace', 'Google', 'Keys', 'Import', 'Team']
 
 const EMPTY: OBState = {
   step: STEP.signin,
@@ -54,6 +57,7 @@ const EMPTY: OBState = {
   slugEdited: false,
   googleConnected: false,
   keysSaved: false,
+  csvImported: false,
   invites: [],
 }
 
@@ -75,6 +79,8 @@ function reducer(state: OBState, action: Action): OBState {
       return { ...state, googleConnected: true }
     case 'keysSaved':
       return { ...state, keysSaved: true }
+    case 'csvImported':
+      return { ...state, csvImported: true }
     case 'addInvite':
       return state.invites.includes(action.email)
         ? state
@@ -107,7 +113,7 @@ export function Onboarding() {
       const [auth, calConnected, settings] = await Promise.all([
         api.invoke<{ signedIn: boolean }>(IPC_CHANNELS.CYGGIE_AUTH_STATUS).catch(() => ({ signedIn: false })),
         api.invoke<boolean>(IPC_CHANNELS.CALENDAR_IS_CONNECTED).catch(() => false),
-        api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL).catch(() => ({})),
+        api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL).catch(() => ({}) as Record<string, string>),
       ])
       if (!alive) return
 
@@ -137,6 +143,7 @@ export function Onboarding() {
           slugEdited: saved?.slugEdited ?? false,
           googleConnected: Boolean(calConnected) || Boolean(saved?.googleConnected),
           keysSaved: (hasDeepgram && hasAnthropic) || Boolean(saved?.keysSaved),
+          csvImported: Boolean(saved?.csvImported),
           invites: saved?.invites ?? [],
         },
       })
@@ -158,12 +165,11 @@ export function Onboarding() {
 
   const go = (step: number): void => dispatch({ type: 'step', value: step })
 
-  // The flat progress bar shows for the four setup steps only (not Sign in / Done).
-  // current = 0-based setup-step index. Percentage is over the full 6-screen flow
-  // so Google reads ~33%, matching the design.
+  // The flat progress bar shows for the five setup steps only (not Sign in / Done).
+  // current = 0-based setup-step index. Percentage is over the full 7-screen flow.
   const setupIndex = state.step >= STEP.workspace && state.step <= STEP.team ? state.step - 1 : -1
   const showBar = setupIndex >= 0
-  const percent = Math.round((state.step / 6) * 100)
+  const percent = Math.round((state.step / STEP.done) * 100)
 
   return (
     <div className={styles.gate}>
@@ -203,10 +209,17 @@ export function Onboarding() {
           <KeysStep
             onSaved={() => {
               dispatch({ type: 'keysSaved' })
-              go(STEP.team)
+              go(STEP.import)
             }}
             onBack={() => go(STEP.google)}
-            onSkip={() => go(STEP.team)}
+            onSkip={() => go(STEP.import)}
+          />
+        )}
+        {state.step === STEP.import && (
+          <ImportStep
+            onImported={() => dispatch({ type: 'csvImported' })}
+            onBack={() => go(STEP.keys)}
+            onContinue={() => go(STEP.team)}
           />
         )}
         {state.step === STEP.team && (
@@ -214,7 +227,7 @@ export function Onboarding() {
             invites={state.invites}
             onAdd={(email) => dispatch({ type: 'addInvite', email })}
             onRemove={(email) => dispatch({ type: 'removeInvite', email })}
-            onBack={() => go(STEP.keys)}
+            onBack={() => go(STEP.import)}
             onContinue={() => go(STEP.done)}
           />
         )}

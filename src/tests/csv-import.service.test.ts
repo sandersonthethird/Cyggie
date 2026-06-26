@@ -81,11 +81,15 @@ vi.mock('@cyggie/db/sqlite/repositories/org-company.repo', () =>
 
 const mockCreateFieldDefinition = vi.fn()
 const mockSetFieldValue = vi.fn()
+const mockGetFieldDefinitionById = vi.fn().mockReturnValue(null)
+const mockUpdateFieldDefinition = vi.fn()
 
 vi.mock('@cyggie/db/sqlite/repositories/custom-fields.repo', () =>
   stubModule({
     createFieldDefinition: (...args: unknown[]) => mockCreateFieldDefinition(...args),
-    setFieldValue: (...args: unknown[]) => mockSetFieldValue(...args)
+    setFieldValue: (...args: unknown[]) => mockSetFieldValue(...args),
+    getFieldDefinitionById: (...args: unknown[]) => mockGetFieldDefinitionById(...args),
+    updateFieldDefinition: (...args: unknown[]) => mockUpdateFieldDefinition(...args)
   })
 )
 
@@ -103,6 +107,8 @@ const {
   aliasTableFallback,
   parseCSVHeaders,
   suggestMappings,
+  validateSuggestions,
+  appendFieldOptions,
   runImport,
   previewImport
 } = await import('../main/services/csv-import.service')
@@ -154,6 +160,7 @@ beforeEach(() => {
   mockResolveContactsByNormalizedNames.mockReturnValue({})
   mockGetContactsByIds.mockReturnValue({})
   mockGetCompaniesByNormalizedNames.mockReturnValue({})
+  mockGetFieldDefinitionById.mockReturnValue(null)
 })
 
 afterEach(() => {
@@ -786,5 +793,165 @@ describe('runImport — field defaults', () => {
       expect.objectContaining({ contactType: null }),
       'test-user'
     )
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// validateSuggestions — untrusted LLM output is sanitized
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('validateSuggestions', () => {
+  const headers = ['Name', 'Stage', 'Tags']
+
+  it('throws on a non-array (caller falls back to alias table)', () => {
+    expect(() => validateSuggestions({ nope: true }, headers)).toThrow()
+  })
+
+  it('drops hallucinated headers not present in the CSV', () => {
+    const raw = [
+      { csvHeader: 'Name', targetEntity: 'contact', targetField: 'full_name', confidence: 'high' },
+      { csvHeader: 'Ghost', targetEntity: 'contact', targetField: 'email', confidence: 'high' },
+    ]
+    const out = validateSuggestions(raw, headers)
+    expect(out.map((s) => s.csvHeader)).toEqual(['Name'])
+  })
+
+  it('coerces an unknown fieldType to undefined (caller treats as text)', () => {
+    const raw = [
+      { csvHeader: 'Stage', targetEntity: 'company', targetField: null, confidence: 'low', fieldType: 'rocket' },
+    ]
+    expect(validateSuggestions(raw, headers)[0].fieldType).toBeUndefined()
+  })
+
+  it('keeps a valid fieldType for a new custom field proposal', () => {
+    const raw = [
+      { csvHeader: 'Stage', targetEntity: 'company', targetField: null, confidence: 'low', fieldType: 'select', options: ['Seed', 'Series A'] },
+    ]
+    const out = validateSuggestions(raw, headers)[0]
+    expect(out.fieldType).toBe('select')
+    expect(out.options).toEqual(['Seed', 'Series A'])
+  })
+
+  it('sanitizes options: trims, de-dupes, drops non-strings, caps count', () => {
+    const raw = [
+      {
+        csvHeader: 'Tags', targetEntity: 'contact', targetField: null, confidence: 'low',
+        fieldType: 'multiselect',
+        options: ['  A  ', 'A', 'B', 42, '', ...Array.from({ length: 60 }, (_, i) => `opt${i}`)],
+      },
+    ]
+    const out = validateSuggestions(raw, headers)[0]
+    expect(out.options!.length).toBeLessThanOrEqual(50)
+    expect(out.options!.slice(0, 2)).toEqual(['A', 'B']) // trimmed + de-duped, 42 and '' dropped
+  })
+
+  it('ignores fieldType/options when the column maps to a real field (not custom)', () => {
+    const raw = [
+      { csvHeader: 'Name', targetEntity: 'contact', targetField: 'full_name', confidence: 'high', fieldType: 'select', options: ['x'] },
+    ]
+    const out = validateSuggestions(raw, headers)[0]
+    expect(out.fieldType).toBeUndefined()
+    expect(out.options).toBeUndefined()
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// suggestMappings — LLM type/options proposals flow through validation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('suggestMappings — type/options proposals', () => {
+  it('returns a validated custom-field proposal with type + options', async () => {
+    const llm = JSON.stringify([
+      { csvHeader: 'Stage', targetEntity: 'company', targetField: null, confidence: 'medium', fieldType: 'select', options: ['Seed', 'Seed', 'Series A'] },
+    ])
+    mockGenerateSummary.mockResolvedValueOnce(llm)
+    const out = await suggestMappings(['Stage'], 'companies', [{ Stage: 'Seed' }])
+    expect(out[0]).toMatchObject({ csvHeader: 'Stage', targetField: null, fieldType: 'select' })
+    expect(out[0].options).toEqual(['Seed', 'Series A']) // de-duped
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// getOrCreateCustomFieldId optionsJson gap fix (via runImport)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('runImport — new custom select field persists optionsJson (gap fix)', () => {
+  const base = [
+    { csvHeader: 'Name', targetEntity: 'contact' as const, targetField: 'full_name' },
+  ]
+
+  beforeEach(() => {
+    mockCreateContact.mockImplementation((d: { fullName: string }) => ({ id: `c-${d.fullName}` }))
+    mockCreateFieldDefinition.mockReturnValue({ id: 'def-stage' })
+  })
+
+  it('creates the definition with curated options_json', async () => {
+    const mappings = [
+      ...base,
+      {
+        csvHeader: 'Stage', targetEntity: 'contact' as const, targetField: null,
+        customFieldLabel: 'Stage', fieldType: 'select' as const, options: ['Seed', 'Series A'],
+      },
+    ]
+    const csv = 'Name,Stage\nAlice,Seed\n'
+    const filePath = writeTempCsv('opt-create.csv', csv)
+
+    await runImport(filePath, mappings, 'contacts', vi.fn())
+
+    expect(mockCreateFieldDefinition).toHaveBeenCalledWith(
+      expect.objectContaining({ fieldType: 'select', optionsJson: JSON.stringify(['Seed', 'Series A']) })
+    )
+  })
+
+  it('auto-grows options when a CSV value is outside the curated set (new custom only)', async () => {
+    // Seed the def lookup so resolveCustomDef + flush see the curated options.
+    mockGetFieldDefinitionById.mockReturnValue({ id: 'def-stage', optionsJson: JSON.stringify(['Seed']) })
+
+    const mappings = [
+      ...base,
+      {
+        csvHeader: 'Stage', targetEntity: 'contact' as const, targetField: null,
+        customFieldLabel: 'Stage', fieldType: 'select' as const, options: ['Seed'],
+      },
+    ]
+    const csv = 'Name,Stage\nAlice,Seed\nBob,Series B\n' // "Series B" is new
+    const filePath = writeTempCsv('opt-grow.csv', csv)
+
+    await runImport(filePath, mappings, 'contacts', vi.fn())
+
+    expect(mockUpdateFieldDefinition).toHaveBeenCalledWith(
+      'def-stage',
+      expect.objectContaining({ optionsJson: JSON.stringify(['Seed', 'Series B']) })
+    )
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// appendFieldOptions — idempotent, batched, write-only-on-change
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('appendFieldOptions', () => {
+  it('appends only new values and writes once', () => {
+    mockGetFieldDefinitionById.mockReturnValue({ id: 'd1', optionsJson: JSON.stringify(['A', 'B']) })
+    const added = appendFieldOptions('d1', ['B', 'C', 'D'])
+    expect(added).toBe(2)
+    expect(mockUpdateFieldDefinition).toHaveBeenCalledTimes(1)
+    expect(mockUpdateFieldDefinition).toHaveBeenCalledWith('d1', { optionsJson: JSON.stringify(['A', 'B', 'C', 'D']) })
+  })
+
+  it('is a no-op (no write) when all values already exist', () => {
+    mockGetFieldDefinitionById.mockReturnValue({ id: 'd1', optionsJson: JSON.stringify(['A', 'B']) })
+    const added = appendFieldOptions('d1', ['A', 'B'])
+    expect(added).toBe(0)
+    expect(mockUpdateFieldDefinition).not.toHaveBeenCalled()
+  })
+
+  it('handles a missing def and a null/garbage optionsJson safely', () => {
+    mockGetFieldDefinitionById.mockReturnValue(null)
+    expect(appendFieldOptions('missing', ['A'])).toBe(0)
+
+    mockGetFieldDefinitionById.mockReturnValue({ id: 'd2', optionsJson: 'not json' })
+    expect(appendFieldOptions('d2', ['A'])).toBe(1)
+    expect(mockUpdateFieldDefinition).toHaveBeenCalledWith('d2', { optionsJson: JSON.stringify(['A']) })
   })
 })

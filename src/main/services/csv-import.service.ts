@@ -57,6 +57,7 @@ import type {
   FieldChange,
   CSVFileInfo
 } from '../../shared/types/csv-import'
+import type { CustomFieldType } from '../../shared/types/custom-fields'
 import { getProvider } from '@cyggie/services/llm/provider-factory'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import * as contactRepo from '@cyggie/db/sqlite/repositories'
@@ -273,6 +274,67 @@ export function parseCSVHeaders(filePath: string): CSVFileInfo {
 
 // ─── suggestMappings ─────────────────────────────────────────────────────────
 
+// Field types the LLM may propose for a *new custom field*. Excludes ref types
+// (contact_ref/company_ref) — those can't be inferred from raw CSV values.
+const SUGGESTABLE_FIELD_TYPES: ReadonlySet<CustomFieldType> = new Set<CustomFieldType>([
+  'text', 'textarea', 'number', 'currency', 'date', 'url', 'select', 'multiselect', 'boolean',
+])
+const MAX_OPTION_LEN = 100
+const MAX_OPTIONS = 50
+
+/**
+ * Sanitize raw LLM suggestion objects into trustworthy MappingSuggestions.
+ * The LLM output is untrusted: an unknown fieldType falls back to undefined
+ * (the caller treats that as 'text'); options are coerced to clean strings,
+ * trimmed, de-duped, length-capped, and count-capped. Malformed entries are
+ * dropped. Exported for unit testing.
+ */
+export function validateSuggestions(raw: unknown, headers: string[]): MappingSuggestion[] {
+  if (!Array.isArray(raw)) throw new Error('LLM did not return an array')
+  const headerSet = new Set(headers)
+  const out: MappingSuggestion[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const r = item as Record<string, unknown>
+    const csvHeader = typeof r.csvHeader === 'string' ? r.csvHeader : null
+    if (!csvHeader || !headerSet.has(csvHeader)) continue // ignore hallucinated headers
+
+    const targetEntity =
+      r.targetEntity === 'contact' || r.targetEntity === 'company' ? r.targetEntity : null
+    const targetField = typeof r.targetField === 'string' && r.targetField.trim() ? r.targetField : null
+    const confidence =
+      r.confidence === 'high' || r.confidence === 'medium' || r.confidence === 'low'
+        ? r.confidence
+        : 'low'
+
+    const suggestion: MappingSuggestion = { csvHeader, targetEntity, targetField, confidence }
+
+    // Type/options only meaningful for a column that becomes a custom field.
+    if (targetEntity != null && targetField == null) {
+      const ft = r.fieldType
+      if (typeof ft === 'string' && SUGGESTABLE_FIELD_TYPES.has(ft as CustomFieldType)) {
+        suggestion.fieldType = ft as CustomFieldType
+      }
+      if (Array.isArray(r.options)) {
+        const seen = new Set<string>()
+        const opts: string[] = []
+        for (const o of r.options) {
+          if (typeof o !== 'string') continue
+          const v = o.trim().slice(0, MAX_OPTION_LEN)
+          if (!v || seen.has(v)) continue
+          seen.add(v)
+          opts.push(v)
+          if (opts.length >= MAX_OPTIONS) break
+        }
+        if (opts.length > 0) suggestion.options = opts
+      }
+    }
+    out.push(suggestion)
+  }
+  if (out.length === 0) throw new Error('LLM returned no usable suggestions')
+  return out
+}
+
 export async function suggestMappings(
   headers: string[],
   importType: ImportType,
@@ -303,20 +365,22 @@ CSV HEADERS AND SAMPLE VALUES:
 ${csvData}
 
 Return JSON array where each element maps one CSV header:
-[{ "csvHeader": "...", "targetEntity": "contact"|"company"|null, "targetField": "fieldName"|null, "confidence": "high"|"medium"|"low" }]
+[{ "csvHeader": "...", "targetEntity": "contact"|"company"|null, "targetField": "fieldName"|null, "confidence": "high"|"medium"|"low", "fieldType": "text"|"number"|"date"|"url"|"select"|"multiselect"|"boolean"|"currency"|"textarea", "options": ["..."] }]
 Use null for targetEntity if the column should be skipped.
-Use null for targetField if the column should become a custom field.`
+Use null for targetField if the column should become a NEW custom field.
+Only include "fieldType" and "options" when targetField is null (a new custom field):
+  - choose the best fieldType from the list above based on the sample values
+  - for "select" (one choice) or "multiselect" (comma-separated choices), set "options" to the distinct choices you see in the samples
+  - omit "options" for non-select types`
 
   try {
     const provider = getProvider()
     const raw = await provider.generateSummary(systemPrompt, userPrompt)
     // Strip any accidental markdown code fences
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
-    const suggestions = JSON.parse(cleaned) as MappingSuggestion[]
-    if (!Array.isArray(suggestions)) throw new Error('LLM did not return an array')
-    return suggestions
+    return validateSuggestions(JSON.parse(cleaned), headers)
   } catch {
-    // Any failure → fall back to alias table
+    // Any failure (parse, shape, empty) → fall back to alias table
     return aliasTableFallback(headers, importType)
   }
 }
@@ -536,15 +600,30 @@ export function splitFullName(fullName: string): { firstName: string; lastName: 
 }
 
 /**
+ * Resolve the field type + curated options for a new custom field from its mapping.
+ * Precedence: explicit `fieldType` on the mapping → legacy `isMultiSelect` flag →
+ * 'text'. Options only apply to select/multiselect.
+ */
+function resolveCustomFieldType(m: FieldMapping): { fieldType: CustomFieldType; optionsJson: string | null } {
+  const fieldType: CustomFieldType =
+    m.fieldType ?? (m.isMultiSelect ? 'multiselect' : 'text')
+  const isSelect = fieldType === 'select' || fieldType === 'multiselect'
+  const opts = isSelect && Array.isArray(m.options)
+    ? [...new Set(m.options.map((o) => o.trim()).filter(Boolean))]
+    : []
+  return { fieldType, optionsJson: opts.length > 0 ? JSON.stringify(opts) : null }
+}
+
+/**
  * Get or create a custom field definition by field_key, returning its ID.
  * Uses SELECT first to avoid hitting the unique constraint.
- * Pass isMultiSelect=true to create a 'multiselect' field (idempotent — existing
- * definitions are returned as-is regardless of their type).
+ * For new definitions, persists the chosen field type and (for select/multiselect)
+ * its curated `options_json` — existing definitions are returned as-is.
  */
 function getOrCreateCustomFieldId(
   entity: 'contact' | 'company',
   label: string,
-  isMultiSelect?: boolean
+  typeSpec: { fieldType: CustomFieldType; optionsJson: string | null }
 ): string {
   const db = getDatabase()
   const fieldKey = toFieldKey(label)
@@ -559,12 +638,33 @@ function getOrCreateCustomFieldId(
     entityType: entity as import('../../shared/types/custom-fields').CustomFieldEntityType,
     fieldKey,
     label,
-    fieldType: isMultiSelect ? 'multiselect' : 'text',
+    fieldType: typeSpec.fieldType,
+    optionsJson: typeSpec.optionsJson, // gap fix: persist curated options on creation
     isRequired: false,
     sortOrder: 999,
     showInList: false
   })
   return definition.id
+}
+
+/**
+ * Append new values to a select/multiselect definition's options (idempotent, batched —
+ * one read + at most one write). Writes through the barrel (sync-wrapped
+ * updateFieldDefinition). Reserved for NEW custom fields in onboarding import — built-in/
+ * shared selects require explicit confirmation (handled in the UI) to avoid polluting
+ * firm-wide synced taxonomy. Exported for unit testing. Returns the number added.
+ */
+export function appendFieldOptions(defId: string, values: string[]): number {
+  if (values.length === 0) return 0
+  const def = customFieldRepo.getFieldDefinitionById(defId)
+  if (!def) return 0
+  let current: string[] = []
+  if (def.optionsJson) { try { current = JSON.parse(def.optionsJson) as string[] } catch { current = [] } }
+  const merged = [...current]
+  for (const v of values) if (!merged.includes(v)) merged.push(v)
+  if (merged.length === current.length) return 0
+  customFieldRepo.updateFieldDefinition(defId, { optionsJson: JSON.stringify(merged) })
+  return merged.length - current.length
 }
 
 // Fields handled in Stage 1 (createContact) — skip them in Stage 2 defaults application
@@ -653,6 +753,50 @@ export async function runImport(
 
   // Build lookup maps for custom field definition IDs (cached per label to avoid N lookups)
   const customFieldIdCache = new Map<string, string>()
+  // Resolved field type + curated options per new-custom mapping (computed once).
+  const customTypeSpec = new Map<FieldMapping, { fieldType: CustomFieldType; optionsJson: string | null }>()
+  // Option auto-grow for NEW custom select/multiselect fields:
+  //   knownOptionsByDef  — O(1) membership (seeded from the def's current options)
+  //   pendingOptionsByDef — new values seen this run, flushed once after the loop (batched)
+  const knownOptionsByDef = new Map<string, Set<string>>()
+  const pendingOptionsByDef = new Map<string, string[]>()
+
+  /** Record any unseen option values for a new-custom select/multiselect def (no DB writes here). */
+  const recordCustomOptions = (defId: string, fieldType: CustomFieldType, value: string): void => {
+    if (fieldType !== 'select' && fieldType !== 'multiselect') return
+    const known = knownOptionsByDef.get(defId)
+    if (!known) return // not an auto-grow def
+    const parts = fieldType === 'multiselect'
+      ? value.split(',').map((p) => p.trim()).filter(Boolean)
+      : [value.trim()]
+    for (const p of parts) {
+      if (!p || known.has(p)) continue
+      known.add(p)
+      const pend = pendingOptionsByDef.get(defId)
+      if (pend) pend.push(p)
+      else pendingOptionsByDef.set(defId, [p])
+    }
+  }
+
+  /** Resolve+cache a new-custom field def id, seeding its known-options set on first use. */
+  const resolveCustomDef = (entity: 'contact' | 'company', m: FieldMapping): string => {
+    const cacheKey = `${entity}:${m.customFieldLabel}`
+    let defId = customFieldIdCache.get(cacheKey)
+    if (defId) return defId
+    let spec = customTypeSpec.get(m)
+    if (!spec) { spec = resolveCustomFieldType(m); customTypeSpec.set(m, spec) }
+    defId = getOrCreateCustomFieldId(entity, m.customFieldLabel!, spec)
+    customFieldIdCache.set(cacheKey, defId)
+    // Seed known options from the def's authoritative current options so curated
+    // values aren't re-added and membership checks are correct.
+    if (spec.fieldType === 'select' || spec.fieldType === 'multiselect') {
+      const def = customFieldRepo.getFieldDefinitionById(defId)
+      let opts: string[] = []
+      if (def?.optionsJson) { try { opts = JSON.parse(def.optionsJson) as string[] } catch { opts = [] } }
+      knownOptionsByDef.set(defId, new Set(opts))
+    }
+    return defId
+  }
 
   const contactMappings = mappings.filter((m) => m.targetEntity === 'contact' && m.targetField !== null && !m.targetField.startsWith('custom:'))
   const companyMappings = mappings.filter((m) => m.targetEntity === 'company' && m.targetField !== null && !m.targetField.startsWith('custom:'))
@@ -842,13 +986,9 @@ export async function runImport(
               for (const m of companyCustomMappings) {
                 const val = row[m.csvHeader]?.trim()
                 if (!val) continue
-                const cacheKey = `company:${m.customFieldLabel}`
-                let defId = customFieldIdCache.get(cacheKey)
-                if (!defId) {
-                  defId = getOrCreateCustomFieldId('company', m.customFieldLabel!, m.isMultiSelect)
-                  customFieldIdCache.set(cacheKey, defId)
-                }
+                const defId = resolveCustomDef('company', m)
                 customFieldRepo.setFieldValue({ fieldDefinitionId: defId, entityType: 'company', entityId: company.id, valueText: val })
+                recordCustomOptions(defId, (customTypeSpec.get(m)!).fieldType, val)
               }
               // Write company custom fields (existing definitions — targetField = 'custom:{defId}')
               for (const m of companyExistingCustomMappings) {
@@ -1003,13 +1143,9 @@ export async function runImport(
             for (const m of contactCustomMappings) {
               const val = row[m.csvHeader]?.trim()
               if (!val) continue
-              const cacheKey = `contact:${m.customFieldLabel}`
-              let defId = customFieldIdCache.get(cacheKey)
-              if (!defId) {
-                defId = getOrCreateCustomFieldId('contact', m.customFieldLabel!, m.isMultiSelect)
-                customFieldIdCache.set(cacheKey, defId)
-              }
+              const defId = resolveCustomDef('contact', m)
               customFieldRepo.setFieldValue({ fieldDefinitionId: defId, entityType: 'contact', entityId: contactId, valueText: val })
+              recordCustomOptions(defId, (customTypeSpec.get(m)!).fieldType, val)
             }
             // Write contact custom fields (existing definitions — targetField = 'custom:{defId}')
             for (const m of contactExistingCustomMappings) {
@@ -1040,6 +1176,17 @@ export async function runImport(
   })
 
   emitProgress(true)
+
+  // Flush auto-grown options for new custom select/multiselect fields — one write per
+  // def regardless of row count (avoids an N+1 on the sync-wrapped option-add path).
+  for (const [defId, newOpts] of pendingOptionsByDef.entries()) {
+    try {
+      appendFieldOptions(defId, newOpts)
+    } catch (err) {
+      // Non-fatal: the field value is already written; only the option list missed it.
+      console.warn(`[csv-import] option flush failed defId=${defId}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
 
   const durationMs = Date.now() - startMs
   logAudit(userId, 'import', 'csv', 'create', {

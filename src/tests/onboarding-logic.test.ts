@@ -4,8 +4,11 @@ import {
   isValidEmail,
   deriveOnboardingStatus,
   decideGate,
+  deriveFieldProfile,
+  fieldKeyFromLabel,
   STEP,
   type OnboardingSignals,
+  type ProfileMappingInput,
 } from '../renderer/components/onboarding/onboarding-logic'
 
 describe('slugify', () => {
@@ -55,12 +58,72 @@ describe('deriveOnboardingStatus', () => {
     expect(deriveOnboardingStatus({ ...base, hasDeepgram: true }).steps.keys).toBe(false)
     expect(deriveOnboardingStatus({ ...base, hasDeepgram: true, hasAnthropic: true }).steps.keys).toBe(true)
   })
-  it('all core done (team optional) → allCoreDone, no firstIncomplete among core', () => {
+  it('all core done → allCoreDone; import is the first remaining optional step', () => {
     const s = deriveOnboardingStatus({
       ...base, hasFirmName: true, calendarConnected: true, hasDeepgram: true, hasAnthropic: true,
     })
     expect(s.allCoreDone).toBe(true)
-    expect(s.firstIncomplete).toBe('team') // only the optional one remains
+    // import + team are optional; import comes first in SETUP_STEPS order.
+    expect(s.firstIncomplete).toBe('import')
+  })
+  it('import step is optional — never affects allCoreDone', () => {
+    const withImport = deriveOnboardingStatus({
+      ...base, hasFirmName: true, calendarConnected: true, hasDeepgram: true, hasAnthropic: true, csvImported: true,
+    })
+    expect(withImport.steps.import).toBe(true)
+    expect(withImport.allCoreDone).toBe(true)
+    expect(withImport.firstIncomplete).toBe('team')
+  })
+})
+
+describe('deriveFieldProfile', () => {
+  it('collects built-in field keys per entity from mapped columns', () => {
+    const mappings: ProfileMappingInput[] = [
+      { targetEntity: 'contact', targetField: 'email' },
+      { targetEntity: 'contact', targetField: 'title' },
+      { targetEntity: 'company', targetField: 'industry' },
+    ]
+    const p = deriveFieldProfile([mappings])
+    expect(p.contact).toEqual(['email', 'title'])
+    expect(p.company).toEqual(['industry'])
+    expect(p.version).toBe(1)
+    expect(p.source).toBe('onboarding-csv')
+  })
+
+  it('uses the slugified label for newly-created custom fields', () => {
+    const mappings: ProfileMappingInput[] = [
+      { targetEntity: 'company', targetField: null, customFieldLabel: 'Deal Lead' },
+    ]
+    expect(deriveFieldProfile([mappings]).company).toEqual(['deal_lead'])
+    expect(fieldKeyFromLabel('Deal Lead')).toBe('deal_lead')
+  })
+
+  it('ignores skipped columns (targetEntity null) and blank custom labels', () => {
+    const mappings: ProfileMappingInput[] = [
+      { targetEntity: null, targetField: null },
+      { targetEntity: 'contact', targetField: null, customFieldLabel: '   ' },
+      { targetEntity: 'contact', targetField: 'email' },
+    ]
+    expect(deriveFieldProfile([mappings]).contact).toEqual(['email'])
+  })
+
+  it('keeps the custom:<defId> token for existing custom-field mappings', () => {
+    const mappings: ProfileMappingInput[] = [
+      { targetEntity: 'contact', targetField: 'custom:def-123' },
+    ]
+    expect(deriveFieldProfile([mappings]).contact).toEqual(['custom:def-123'])
+  })
+
+  it('unions + de-dupes + sorts keys across multiple files', () => {
+    const fileA: ProfileMappingInput[] = [
+      { targetEntity: 'contact', targetField: 'title' },
+      { targetEntity: 'contact', targetField: 'email' },
+    ]
+    const fileB: ProfileMappingInput[] = [
+      { targetEntity: 'contact', targetField: 'email' }, // dup across files
+      { targetEntity: 'contact', targetField: 'city' },
+    ]
+    expect(deriveFieldProfile([fileA, fileB]).contact).toEqual(['city', 'email', 'title'])
   })
 })
 

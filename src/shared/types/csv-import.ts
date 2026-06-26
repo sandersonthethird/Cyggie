@@ -1,6 +1,8 @@
 // IPC wire format — these types are shared between main and renderer.
 // UI-only fields (sampleValues, confidence) live in ImportModal.tsx as UIFieldMapping.
 
+import type { CustomFieldType } from './custom-fields'
+
 export type ImportType = 'contacts' | 'companies' | 'contacts_and_companies'
 
 export type FieldDefaultsMap = Record<string, string> // targetField (snake_case) → value
@@ -10,7 +12,11 @@ export interface FieldMapping {
   targetEntity: 'contact' | 'company' | null // null = skip
   targetField: string | null // null = create custom field
   customFieldLabel?: string // required when targetField is null
-  isMultiSelect?: boolean // create custom field as multiselect type
+  isMultiSelect?: boolean // legacy: create custom field as multiselect type (kept for back-compat)
+  /** Field type for a newly-created custom field (targetField === null). Defaults to 'text'. */
+  fieldType?: CustomFieldType
+  /** Curated dropdown options for a new select/multiselect custom field. */
+  options?: string[]
 }
 
 export interface MappingSuggestion {
@@ -18,6 +24,10 @@ export interface MappingSuggestion {
   targetEntity: 'contact' | 'company' | null
   targetField: string | null
   confidence: 'high' | 'medium' | 'low'
+  /** LLM-proposed field type for a column that should become a custom field. */
+  fieldType?: CustomFieldType
+  /** LLM-proposed dropdown options (for select/multiselect proposals). */
+  options?: string[]
 }
 
 export interface CSVFileInfo {

@@ -14,6 +14,7 @@ import type {
   ContactDiff,
   CompanyDiff
 } from '../../../shared/types/csv-import'
+import type { CustomFieldType } from '../../../shared/types/custom-fields'
 import { Spinner } from '../common/Spinner'
 import styles from './ImportModal.module.css'
 import { api } from '../../api'
@@ -44,6 +45,20 @@ function detectSource(filename: string): string | null {
     if (s.pattern.test(filename)) return s.label
   }
   return null
+}
+
+// Project a UI mapping down to the wire format (drops display-only fields).
+// Carries the chosen field type + curated options for new custom fields only.
+function toWire(m: UIFieldMapping): FieldMapping {
+  return {
+    csvHeader: m.csvHeader,
+    targetEntity: m.targetEntity,
+    targetField: m.targetField,
+    customFieldLabel: m.customFieldLabel,
+    isMultiSelect: m.isMultiSelect,
+    ...(m.targetField === null && m.fieldType ? { fieldType: m.fieldType } : {}),
+    ...(m.targetField === null && m.options && m.options.length > 0 ? { options: m.options } : {}),
+  }
 }
 
 // ─── Multi-value detection ───────────────────────────────────────────────────
@@ -139,15 +154,89 @@ const DEFAULTABLE_COMPANY_FIELDS = [
   { key: 'pipeline_stage', label: 'Pipeline Stage', type: 'select' },
 ] as const
 
+// ─── Editable dropdown-option list (for new select/multiselect custom fields) ──
+
+function OptionEditor({
+  options,
+  onChange,
+}: {
+  options: string[]
+  onChange: (next: string[]) => void
+}) {
+  const [draft, setDraft] = useState('')
+
+  const addOption = () => {
+    const v = draft.trim()
+    setDraft('')
+    if (!v || options.includes(v)) return
+    onChange([...options, v])
+  }
+  const rename = (i: number, v: string) => {
+    const next = [...options]
+    next[i] = v
+    onChange(next)
+  }
+  const remove = (i: number) => onChange(options.filter((_, j) => j !== i))
+
+  return (
+    <div className={styles.optionsPreview}>
+      <span className={styles.optionsLabel}>Dropdown options:</span>
+      <div className={styles.optionChips}>
+        {options.map((opt, i) => (
+          <span key={i} className={styles.optionChip}>
+            <input
+              className={styles.optionChipInput}
+              value={opt}
+              onChange={(e) => rename(i, e.target.value)}
+              aria-label={`Option ${i + 1}`}
+            />
+            <button type="button" className={styles.optionChipRemove} onClick={() => remove(i)} title="Remove option">×</button>
+          </span>
+        ))}
+      </div>
+      <div className={styles.optionAddRow}>
+        <input
+          className={styles.customFieldInput}
+          value={draft}
+          placeholder="Add option…"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addOption() } }}
+        />
+        <button type="button" className={styles.resetBtn} onClick={addOption}>+ Add</button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 type Step = 1 | 2 | 3 | 4
 
+// Field types a user may assign to a NEW custom field during import.
+// Excludes ref types (contact_ref/company_ref) — not meaningful from raw CSV.
+const CUSTOM_FIELD_TYPE_OPTIONS: Array<{ value: CustomFieldType; label: string }> = [
+  { value: 'text', label: 'Text' },
+  { value: 'textarea', label: 'Long text' },
+  { value: 'number', label: 'Number' },
+  { value: 'currency', label: 'Currency' },
+  { value: 'date', label: 'Date' },
+  { value: 'url', label: 'URL' },
+  { value: 'select', label: 'Single-select (dropdown)' },
+  { value: 'multiselect', label: 'Multi-select' },
+  { value: 'boolean', label: 'Yes / No' },
+]
+
 interface Props {
   onClose: () => void
+  /**
+   * Fired once an import finishes successfully, with the final wire mappings used
+   * (for deriving the firm field profile) and the result. Used by onboarding's
+   * ImportStep; the Settings caller omits it.
+   */
+  onComplete?: (summary: { mappings: FieldMapping[]; result: ImportResult }) => void
 }
 
-export function ImportModal({ onClose }: Props) {
+export function ImportModal({ onClose, onComplete }: Props) {
   const navigate = useNavigate()
   const { companyDefs, contactDefs } = useCustomFieldStore()
   const [step, setStep] = useState<Step>(1)
@@ -273,12 +362,24 @@ export function ImportModal({ onClose }: Props) {
         const sug = suggestions.find((s) => s.csvHeader === h)
         const sampleValues = fileInfo.sampleRows.slice(0, 3).map((r) => r[h] ?? '').filter(Boolean)
         const isMultiValue = detectMultiValue(sampleValues)
+        // LLM proposed a NEW custom field (targetEntity set, targetField null):
+        // prefill its label, type, and (for selects) options so the user just tweaks.
+        const isCustomProposal = sug?.targetEntity != null && sug.targetField == null
+        const fieldType = isCustomProposal
+          ? (sug?.fieldType ?? (isMultiValue ? 'multiselect' : 'text'))
+          : undefined
+        const isSelect = fieldType === 'select' || fieldType === 'multiselect'
+        const options = isCustomProposal && isSelect
+          ? (sug?.options ?? extractOptions(sampleValues))
+          : undefined
         return {
           csvHeader: h,
           targetEntity: sug?.targetEntity ?? null,
           targetField: sug?.targetField ?? null,
-          customFieldLabel: undefined,
-          isMultiSelect: false,
+          customFieldLabel: isCustomProposal ? h : undefined,
+          isMultiSelect: fieldType === 'multiselect',
+          fieldType,
+          options,
           sampleValues,
           confidence: sug?.confidence ?? 'low',
           isMultiValue
@@ -315,13 +416,7 @@ export function ImportModal({ onClose }: Props) {
     setPreviewLoading(true)
     setPreviewError(null)
     try {
-      const wireMappings: FieldMapping[] = mappings.map((m) => ({
-        csvHeader: m.csvHeader,
-        targetEntity: m.targetEntity,
-        targetField: m.targetField,
-        customFieldLabel: m.customFieldLabel,
-        isMultiSelect: m.isMultiSelect
-      }))
+      const wireMappings: FieldMapping[] = mappings.map(toWire)
       const result = await api.invoke<PreviewResult>(
         IPC_CHANNELS.CSV_PREVIEW,
         fileInfo.filePath,
@@ -344,13 +439,7 @@ export function ImportModal({ onClose }: Props) {
     setProgress(null)
     setResult(null)
 
-    const wireMappings: FieldMapping[] = mappings.map((m) => ({
-      csvHeader: m.csvHeader,
-      targetEntity: m.targetEntity,
-      targetField: m.targetField,
-      customFieldLabel: m.customFieldLabel,
-      isMultiSelect: m.isMultiSelect
-    }))
+    const wireMappings: FieldMapping[] = mappings.map(toWire)
 
     const unsubscribe = api.on(IPC_CHANNELS.CSV_IMPORT_PROGRESS, (raw: unknown) => {
       setProgress(raw as ImportProgress)
@@ -374,6 +463,7 @@ export function ImportModal({ onClose }: Props) {
         options
       )
       setResult(importResult)
+      onComplete?.({ mappings: wireMappings, result: importResult })
     } catch (err) {
       setResult({
         contactsCreated: 0,
@@ -389,7 +479,7 @@ export function ImportModal({ onClose }: Props) {
       unsubscribe()
     }
   }, [fileInfo, mappings, importType, contactDefaults, companyDefaults,
-      contactOverwriteFields, companyOverwriteFields, contactSkipIds, companySkipIds])
+      contactOverwriteFields, companyOverwriteFields, contactSkipIds, companySkipIds, onComplete])
 
   const cancelImport = useCallback(() => {
     api.send(IPC_CHANNELS.CSV_IMPORT_CANCEL)
@@ -606,7 +696,17 @@ export function ImportModal({ onClose }: Props) {
                                 if (val === 'skip') {
                                   updateMapping(idx, { targetEntity: null, targetField: null, customFieldLabel: undefined, isMultiSelect: false, confidence: 'low' })
                                 } else if (val === 'custom') {
-                                  updateMapping(idx, { targetEntity: m.targetEntity ?? 'contact', targetField: null, customFieldLabel: m.csvHeader, isMultiSelect: m.isMultiValue ?? false, confidence: 'low' })
+                                  const fieldType: CustomFieldType = m.fieldType ?? (m.isMultiValue ? 'multiselect' : 'text')
+                                  const isSelect = fieldType === 'select' || fieldType === 'multiselect'
+                                  updateMapping(idx, {
+                                    targetEntity: m.targetEntity ?? 'contact',
+                                    targetField: null,
+                                    customFieldLabel: m.csvHeader,
+                                    fieldType,
+                                    isMultiSelect: fieldType === 'multiselect',
+                                    options: isSelect ? (m.options ?? extractOptions(m.sampleValues)) : undefined,
+                                    confidence: 'low',
+                                  })
                                 } else {
                                   const colonIdx = val.indexOf(':')
                                   const entity = val.slice(0, colonIdx) as 'contact' | 'company'
@@ -673,7 +773,7 @@ export function ImportModal({ onClose }: Props) {
                               </div>
                             )}
 
-                            {/* Custom field config */}
+                            {/* Custom field config: label + type picker + (for selects) editable options */}
                             {m.targetField === null && m.targetEntity !== null && (
                               <div className={styles.customFieldConfig}>
                                 <input
@@ -682,27 +782,29 @@ export function ImportModal({ onClose }: Props) {
                                   value={m.customFieldLabel ?? ''}
                                   onChange={(e) => updateMapping(idx, { customFieldLabel: e.target.value })}
                                 />
-                                {m.isMultiValue && (
-                                  <>
-                                    <label className={styles.multiSelectToggle}>
-                                      <input
-                                        type="checkbox"
-                                        checked={m.isMultiSelect ?? false}
-                                        onChange={(e) => updateMapping(idx, { isMultiSelect: e.target.checked })}
-                                      />
-                                      Multi-select field
-                                    </label>
-                                    {m.isMultiSelect && m.sampleValues.length > 0 && (
-                                      <div className={styles.optionsPreview}>
-                                        <span className={styles.optionsLabel}>Detected options:</span>
-                                        <div className={styles.optionChips}>
-                                          {extractOptions(m.sampleValues).map((opt) => (
-                                            <span key={opt} className={styles.optionChip}>{opt}</span>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </>
+                                <select
+                                  className={styles.fieldSelect}
+                                  value={m.fieldType ?? 'text'}
+                                  onChange={(e) => {
+                                    const fieldType = e.target.value as CustomFieldType
+                                    const isSelect = fieldType === 'select' || fieldType === 'multiselect'
+                                    updateMapping(idx, {
+                                      fieldType,
+                                      isMultiSelect: fieldType === 'multiselect',
+                                      // Seed options from samples when switching into a select type.
+                                      options: isSelect ? (m.options ?? extractOptions(m.sampleValues)) : undefined,
+                                    })
+                                  }}
+                                >
+                                  {CUSTOM_FIELD_TYPE_OPTIONS.map((t) => (
+                                    <option key={t.value} value={t.value}>{t.label}</option>
+                                  ))}
+                                </select>
+                                {(m.fieldType === 'select' || m.fieldType === 'multiselect') && (
+                                  <OptionEditor
+                                    options={m.options ?? []}
+                                    onChange={(options) => updateMapping(idx, { options })}
+                                  />
                                 )}
                               </div>
                             )}
