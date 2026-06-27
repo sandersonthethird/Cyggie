@@ -28,6 +28,7 @@ import type { Editor } from '@tiptap/react'
 import { useTiptapMarkdown } from './useTiptapMarkdown'
 import { TABLE_EXTENSIONS } from '../lib/tiptap-extensions'
 import { AttachmentUpload } from '../lib/attachment-upload-extension'
+import { PdfAttachment } from '../lib/pdf-attachment-extension'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { useDebounce } from './useDebounce'
 import { api } from '../api'
@@ -90,6 +91,7 @@ export function useNoteEditor(noteId: string, opts?: UseNoteEditorOpts): UseNote
         Markdown,
         Link.configure({ openOnClick: true }),
         Image,
+        PdfAttachment,
         AttachmentUpload,
         ...TABLE_EXTENSIONS,
       ],

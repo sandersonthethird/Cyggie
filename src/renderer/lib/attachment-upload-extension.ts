@@ -26,17 +26,26 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 const key = new PluginKey<DecorationSet>('attachmentUploadPreview')
 
 type PreviewMeta =
-  | { type: 'add'; id: string; pos: number; previewUrl: string }
+  | { type: 'add'; id: string; pos: number; previewUrl?: string; label?: string }
   | { type: 'remove'; id: string }
 
-function buildPreviewDom(previewUrl: string): HTMLElement {
+// Image previews show the blob thumbnail; non-image (PDF) previews show a small
+// labeled pill (a blob: PDF can't render in an <img>). Both carry the spinner.
+function buildPreviewDom(opts: { previewUrl?: string; label?: string }): HTMLElement {
   const wrap = document.createElement('span')
   wrap.className = 'attachmentUploadPreview'
   wrap.setAttribute('contenteditable', 'false')
-  const img = document.createElement('img')
-  img.src = previewUrl
-  img.className = 'attachmentUploadPreviewImg'
-  wrap.appendChild(img)
+  if (opts.previewUrl) {
+    const img = document.createElement('img')
+    img.src = opts.previewUrl
+    img.className = 'attachmentUploadPreviewImg'
+    wrap.appendChild(img)
+  } else {
+    const label = document.createElement('span')
+    label.className = 'attachmentUploadPreviewLabel'
+    label.textContent = opts.label ?? 'Uploading…'
+    wrap.appendChild(label)
+  }
   const spinner = document.createElement('span')
   spinner.className = 'attachmentUploadSpinner'
   wrap.appendChild(spinner)
@@ -46,8 +55,9 @@ function buildPreviewDom(previewUrl: string): HTMLElement {
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     attachmentUpload: {
-      addUploadPreview: (args: { id: string; previewUrl: string }) => ReturnType
+      addUploadPreview: (args: { id: string; previewUrl?: string; label?: string }) => ReturnType
       resolveUploadPreview: (args: { id: string; src: string; alt?: string }) => ReturnType
+      resolvePdfPreview: (args: { id: string; attachmentId: string; name?: string }) => ReturnType
       removeUploadPreview: (args: { id: string }) => ReturnType
     }
   }
@@ -67,10 +77,11 @@ export const AttachmentUpload = Extension.create({
             let next = set.map(tr.mapping, tr.doc)
             const meta = tr.getMeta(key) as PreviewMeta | undefined
             if (meta?.type === 'add') {
-              const widget = Decoration.widget(meta.pos, () => buildPreviewDom(meta.previewUrl), {
-                id: meta.id,
-                side: 1,
-              })
+              const widget = Decoration.widget(
+                meta.pos,
+                () => buildPreviewDom({ previewUrl: meta.previewUrl, label: meta.label }),
+                { id: meta.id, side: 1 },
+              )
               next = next.add(tr.doc, [widget])
             } else if (meta?.type === 'remove') {
               const found = next.find(undefined, undefined, (spec) => spec['id'] === meta.id)
@@ -91,11 +102,11 @@ export const AttachmentUpload = Extension.create({
   addCommands() {
     return {
       addUploadPreview:
-        ({ id, previewUrl }) =>
+        ({ id, previewUrl, label }) =>
         ({ state, dispatch }) => {
           if (dispatch) {
             const pos = state.selection.from
-            dispatch(state.tr.setMeta(key, { type: 'add', id, pos, previewUrl }))
+            dispatch(state.tr.setMeta(key, { type: 'add', id, pos, previewUrl, label }))
           }
           return true
         },
@@ -118,6 +129,24 @@ export const AttachmentUpload = Extension.create({
           return chain()
             .setTextSelection(pos)
             .setImage({ src, alt: alt ?? undefined })
+            .command(({ tr, dispatch }) => {
+              if (dispatch) dispatch(tr.setMeta(key, { type: 'remove', id }))
+              return true
+            })
+            .run()
+        },
+
+      resolvePdfPreview:
+        ({ id, attachmentId, name }) =>
+        ({ state, chain }) => {
+          const set = key.getState(state)
+          const found = set?.find(undefined, undefined, (spec) => spec['id'] === id) ?? []
+          const pos = found.length ? found[0].from : state.selection.from
+          // Swap the in-flight preview for the real PdfAttachment node (its own
+          // setPdfAttachment handles block insertion), then drop the decoration.
+          return chain()
+            .setTextSelection(pos)
+            .setPdfAttachment({ attachmentId, name })
             .command(({ tr, dispatch }) => {
               if (dispatch) dispatch(tr.setMeta(key, { type: 'remove', id }))
               return true
