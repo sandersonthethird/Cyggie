@@ -1,11 +1,20 @@
 import { net } from 'electron'
 import { getProvider } from '@cyggie/services/llm/provider-factory'
+import type { LLMProvider } from '@cyggie/services/llm/provider'
+import { resolveCompanyName } from '@cyggie/services/meeting-enrichment/name'
+import { domainToTitleCase, isPlausibleCompanyName } from '@cyggie/db/meeting-enrichment/helpers'
 import * as companyCacheRepo from '@cyggie/db/sqlite/repositories/company.repo'
 import * as orgCompanyRepo from '@cyggie/db/sqlite/repositories'
 import * as meetingRepo from '@cyggie/db/sqlite/repositories'
-import { extractDomainFromEmail, extractDomainsFromEmails, humanizeDomainName } from '../utils/company-extractor'
+import { extractDomainFromEmail, extractDomainsFromEmails } from '../utils/company-extractor'
 import type { CompanySuggestion } from '../../shared/types/meeting'
 import type { CalendarEvent } from '../../shared/types/calendar'
+
+// The homepage-parse → LLM → heuristic tiers now live in the shared, I/O-injected
+// resolveCompanyName (packages/services meeting-enrichment/name.ts), so desktop +
+// gateway resolve names identically. isPlausibleCompanyName / domainToTitleCase moved
+// to @cyggie/db helpers; re-export the former so existing importers keep working.
+export { isPlausibleCompanyName }
 
 function getPersistedEntityType(
   companyName: string,
@@ -19,6 +28,19 @@ function getPersistedEntityType(
 // "i had a meeting" plan) could fire N parallel enrichments for the same
 // domain across N meetings before the cache row is written.
 const enrichInFlight = new Map<string, Promise<string>>()
+
+// Lazy LLM seam for resolveCompanyName: getProvider('enrichment') THROWS when no
+// API key is configured, so it must only run when the LLM tier actually fires and
+// inside resolveCompanyName's try/catch (which degrades to the heuristic). Building
+// the provider per-call defers construction to that point — matching desktop's
+// previous "getProvider inside resolveViaLLM" behavior exactly; a homepage-tier hit
+// never touches it.
+const enrichmentLlm: LLMProvider = {
+  name: 'enrichment',
+  isAvailable: () => getProvider('enrichment').isAvailable(),
+  generateSummary: (...args) => getProvider('enrichment').generateSummary(...args),
+  streamWithThinking: (...args) => getProvider('enrichment').streamWithThinking(...args),
+}
 
 /**
  * Enrich a single domain: resolve its true company name via website fetch + LLM fallback.
@@ -58,27 +80,14 @@ async function enrichCompanyInner(domain: string): Promise<string> {
   const cached = companyCacheRepo.getByDomain(domain)
   if (cached) return cached.displayName
 
-  // 2. Tier 1: Fetch homepage HTML and parse. Reject taglines/slogans that a
-  //    site puts in its <title>/og:site_name (e.g. "Streamlining The
-  //    Middle-Market Deal Landscape") — those are marketing copy, not names.
-  const html = await fetchHomepage(domain)
-  const parsed = html ? parseCompanyName(html) : null
-  let displayName = parsed && isPlausibleCompanyName(parsed) ? parsed : null
-
-  // 3. Tier 2: Claude fallback if website didn't yield a usable name. Also
-  //    gated — the LLM tends to answer "what does this company do" with a
-  //    descriptive phrase rather than the actual name.
-  if (!displayName) {
-    const llm = await resolveViaLLM(domain)
-    displayName = llm && isPlausibleCompanyName(llm) ? llm : null
-  }
-
-  // 4. Last resort: deterministic domain heuristic. Preferred over an
-  //    unverified guess — "caphub.com" → "Cap Hub" is a worse label but never
-  //    a hallucinated tagline, and the user can correct the casing in one place.
-  if (!displayName) {
-    displayName = domainToTitleCase(domain)
-  }
+  // 2-4. Tiers 2-4 (homepage parse → LLM → deterministic heuristic) run through the
+  //      shared resolver so desktop + gateway resolve identically. fetchHomepage is
+  //      the Electron transport; the LLM is the lazy enrichment adapter. Always
+  //      returns a non-empty name (heuristic never fails).
+  const displayName = await resolveCompanyName(domain, {
+    fetchHtml: fetchHomepage,
+    llm: enrichmentLlm,
+  })
 
   // 5. Cache result
   companyCacheRepo.upsert(domain, displayName)
@@ -227,96 +236,4 @@ async function fetchHomepage(domain: string): Promise<string | null> {
     }
   }
   return null
-}
-
-function parseCompanyName(html: string): string | null {
-  // Priority 1: og:site_name
-  const ogSiteName =
-    html.match(/<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
-    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:site_name["']/i)?.[1]
-  if (ogSiteName && ogSiteName.trim().length >= 2) {
-    return ogSiteName.trim()
-  }
-
-  // Priority 2: application-name
-  const appName =
-    html.match(/<meta[^>]+name=["']application-name["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
-    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']application-name["']/i)?.[1]
-  if (appName && appName.trim().length >= 2) {
-    return appName.trim()
-  }
-
-  // Priority 3: <title> tag (cleaned)
-  const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i)
-  if (titleMatch) {
-    const cleaned = cleanTitle(titleMatch[1].trim())
-    if (cleaned && cleaned.length >= 2 && cleaned.length <= 60) {
-      return cleaned
-    }
-  }
-
-  return null
-}
-
-function cleanTitle(title: string): string {
-  return (
-    title
-      // Strip common suffixes: " | Home", " - Welcome", " :: About", " — Official Site"
-      .replace(/\s*[|–—:·•]\s*.+$/, '')
-      // Strip common prefixes: "Home - ", "Welcome to "
-      .replace(/^(Home|Welcome to)\s*[-–—|:]\s*/i, '')
-      .trim()
-  )
-}
-
-async function resolveViaLLM(domain: string): Promise<string | null> {
-  try {
-    const provider = getProvider('enrichment')
-    const raw = (
-      await provider.generateSummary(
-        'You identify a company by its official brand name only.',
-        `What is the official company/brand name of the business at the domain "${domain}"?\n\n` +
-        `Rules:\n` +
-        `- Reply with ONLY the short brand name (e.g. "Stripe", "CapHub", "Andreessen Horowitz").\n` +
-        `- Do NOT reply with a tagline, slogan, or description of what the company does.\n` +
-        `- If you are not confident of the real name, reply with exactly: UNKNOWN`
-      )
-    ).trim()
-    // Strip wrapping quotes/punctuation the model sometimes adds.
-    const name = raw.replace(/^["'“”]+|["'“”.]+$/g, '').trim()
-    if (name.toUpperCase() === 'UNKNOWN') return null
-    if (name.length >= 2 && name.length <= 100 && !name.includes('\n')) {
-      return name
-    }
-  } catch (err) {
-    console.error(`LLM company resolution failed for ${domain}:`, err)
-  }
-
-  return null
-}
-
-/**
- * Reject strings that look like a marketing tagline/slogan/sentence rather than
- * a company name. High-precision: it must not reject real names (which can be
- * long, e.g. "Bank of America Merrill Lynch"), only obvious value-prop copy
- * (e.g. "Streamlining The Middle-Market Deal Landscape", "Helping Independent
- * Sponsors Maximize Every Opportunity"). When in doubt we keep the candidate —
- * the deterministic domain heuristic is the safety net upstream.
- */
-export function isPlausibleCompanyName(name: string): boolean {
-  const trimmed = name.trim()
-  if (trimmed.length < 2 || trimmed.length > 60) return false
-  // A trailing period reads as a sentence, not a name.
-  if (/[.!?]$/.test(trimmed)) return false
-  const words = trimmed.split(/\s+/)
-  // Real company names are short; taglines run long.
-  if (words.length > 7) return false
-  // Slogans almost always open with a gerund ("Streamlining…", "Helping…",
-  // "Empowering…") and then keep going. A real name effectively never does.
-  if (words.length >= 3 && /^[A-Za-z]+ing$/.test(words[0])) return false
-  return true
-}
-
-function domainToTitleCase(domain: string): string {
-  return humanizeDomainName(domain.split('.')[0])
 }
