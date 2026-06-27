@@ -98,6 +98,7 @@ export interface PulledMeetingRow {
   isPrivate?: boolean | number | null
   deletedAt?: string | Date | null
   deletedByUserId?: string | null
+  enrichedAt?: string | Date | null
   createdAt: string | Date
   updatedAt: string | Date
   lamport: string
@@ -431,6 +432,7 @@ export const MEETING_COL_MAP: ReadonlyArray<readonly [snake: string, camel: stri
   ['is_private', 'isPrivate'],
   ['deleted_at', 'deletedAt'],
   ['deleted_by_user_id', 'deletedByUserId'],
+  ['enriched_at', 'enrichedAt'],
   ['created_at', 'createdAt'],
   ['updated_at', 'updatedAt'],
 ]
@@ -2425,6 +2427,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
     isPrivate: row.isPrivate ? 1 : 0,
     deletedAt: row.deletedAt ? toIso(row.deletedAt) : null,
     deletedByUserId,
+    enrichedAt: row.enrichedAt ? toIso(row.enrichedAt) : null,
     createdAt: toIso(row.createdAt),
     updatedAt: toIso(row.updatedAt),
   }
@@ -2460,6 +2463,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        status, was_impromptu, is_group_event, is_group_event_user_set,
        scheduled_end_at,
        is_private, deleted_at, deleted_by_user_id,
+       enriched_at,
        created_at, updated_at, lamport, field_lamports
      ) VALUES (
        @id, @title, @date, @durationSeconds, @calendarEventId,
@@ -2474,6 +2478,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        @status, @wasImpromptu, @isGroupEvent, @isGroupEventUserSet,
        @scheduledEndAt,
        @isPrivate, @deletedAt, @deletedByUserId,
+       @enrichedAt,
        @createdAt, @updatedAt, @lamport, @fieldLamports
      )
      ON CONFLICT(id) DO UPDATE SET
@@ -2511,6 +2516,7 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
        is_private = excluded.is_private,
        deleted_at = excluded.deleted_at,
        deleted_by_user_id = excluded.deleted_by_user_id,
+       enriched_at = excluded.enriched_at,
        created_at = excluded.created_at,
        updated_at = excluded.updated_at,
        lamport = excluded.lamport,

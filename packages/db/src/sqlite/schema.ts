@@ -45,6 +45,9 @@ export interface MeetingRow {
   is_group_event: number
   is_group_event_user_set: number
   is_private?: number | boolean | null
+  // T3 enrichment dedup marker (migration 138) — ISO timestamp once CRM
+  // side-effects ran, else null.
+  enriched_at?: string | null
   created_at: string
   updated_at: string
   // Populated by LEFT JOIN in listMeetings — null when no company linked

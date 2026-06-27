@@ -136,6 +136,7 @@ import { runAttachmentUploadsMigration } from './migrations/134-attachment-uploa
 import { runMeetingAttendeeEmailsMigration } from './migrations/135-meeting-attendee-emails'
 import { runCompanyPortfolioFundBuiltinDefMigration } from './migrations/136-company-portfolio-fund-builtin-def'
 import { runDropHqAddressMigration } from './migrations/137-drop-hq-address'
+import { runMeetingEnrichedAtMigration } from './migrations/138-meeting-enriched-at'
 
 let db: Database.Database | null = null
 
@@ -363,4 +364,5 @@ export function runAllMigrations(db: Database.Database): void {
   runMeetingAttendeeEmailsMigration(db)
   runCompanyPortfolioFundBuiltinDefMigration(db)
   runDropHqAddressMigration(db)
+  runMeetingEnrichedAtMigration(db)
 }

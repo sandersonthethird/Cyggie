@@ -51,6 +51,7 @@ function rowToMeeting(row: MeetingRow): Meeting {
     isGroupEvent: row.is_group_event === 1,
     isGroupEventUserSet: row.is_group_event_user_set === 1,
     isPrivate: row.is_private === 1 || row.is_private === true,
+    enrichedAt: row.enriched_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     company: row.company_id
@@ -448,6 +449,8 @@ export function updateMeeting(
     isGroupEventUserSet: boolean
     /** Phase 4 — owner-only privacy opt-out (firm-shared when false). */
     isPrivate: boolean
+    /** T3 — stamp (ISO) when CRM side-effects have run; the enrichment dedup marker. */
+    enrichedAt: string | null
   }>
 ,
   userId: string | null = null
@@ -511,6 +514,10 @@ export function updateMeeting(
   if (data.attendeeEmails !== undefined) {
     sets.push('attendee_emails = ?')
     params.push(data.attendeeEmails ? JSON.stringify(data.attendeeEmails) : null)
+  }
+  if (data.enrichedAt !== undefined) {
+    sets.push('enriched_at = ?')
+    params.push(data.enrichedAt)
   }
   if (data.selfName !== undefined) {
     sets.push('self_name = ?')

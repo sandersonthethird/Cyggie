@@ -164,6 +164,13 @@ export const meetings = pgTable(
     // Audit fields (migration 025 auth-foundation).
     createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     updatedByUserId: text('updated_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    // T3 enrichment marker. enriched_at = "CRM side-effects (contact sync +
+    // company links) have run for this meeting" — set by whichever of desktop or
+    // the gateway-fallback sweep runs first; the other checks it and skips. Synced
+    // (field-LWW) so the desktop guard sees a gateway-set value. enrich_attempts is
+    // gateway-only sweep bookkeeping (dead-letter cap) and is NOT pulled to desktop.
+    enrichedAt: timestamp('enriched_at', { withTimezone: true }),
+    enrichAttempts: integer('enrich_attempts'),
     // Sync metadata.
     lamport: text('lamport').notNull().default('0'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -178,6 +185,9 @@ export const meetings = pgTable(
     index('meetings_status_idx').on(t.status),
     index('meetings_created_by_idx').on(t.createdByUserId),
     index('meetings_updated_by_idx').on(t.updatedByUserId),
+    // Sweep eligibility: un-enriched meetings, newest-first. Partial → stays tiny
+    // (only the backlog the gateway fallback still needs to consider).
+    index('meetings_enrich_pending_idx').on(t.createdAt).where(sql`${t.enrichedAt} IS NULL`),
     // Calendar event dedup — UNIQUE per-user (migration 0014 — was global-
     // unique in 064; the global constraint blocked multi-tenant operation
     // because two users invited to the same Google calendar event share

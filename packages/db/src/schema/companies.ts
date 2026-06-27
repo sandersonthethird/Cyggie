@@ -128,9 +128,12 @@ export const orgCompanies = pgTable(
     fieldSources: jsonb('field_sources'),
     // Multiplayer (Phase 1) — firm-shared pool + field-level LWW + soft-delete.
     // firm_id denormalized so the firm-scoped pull filters without a users JOIN
-    // (and is RLS-ready). Stamped by the gateway from the JWT on every push;
-    // backfilled from users.firm_id for existing rows.
-    firmId: text('firm_id').notNull().references(() => firms.id, { onDelete: 'cascade' }),
+    // (and is RLS-ready). Stamped by the gateway from the JWT on every push.
+    // Left NULLABLE on purpose: the T3-P2 NOT NULL was reverted — the per-firm
+    // UNIQUE(firm_id, normalized_name) index is what prevents the cross-firm leak;
+    // NOT NULL added no correctness over it, broke legacy/test rows that predate
+    // firm stamping, and risked an orphan-row prod migration.
+    firmId: text('firm_id').references(() => firms.id, { onDelete: 'cascade' }),
     // Per-column logical clocks (snake_case col → lamport) for field-level LWW.
     // NULL until the first field-LWW write, then densified. See sync/field-lww.ts.
     fieldLamports: jsonb('field_lamports'),

@@ -120,6 +120,12 @@ export interface Meeting {
   isGroupEventUserSet: boolean
   /** Phase 4 — owner-only privacy opt-out (firm-shared when false). */
   isPrivate?: boolean
+  /**
+   * T3 — set once the meeting's CRM side-effects (contact sync + company links)
+   * have run, by whichever of desktop or the gateway-fallback sweep runs first.
+   * The other side checks this and skips, so enrichment never double-runs.
+   */
+  enrichedAt?: string | null
   createdAt: string
   updatedAt: string
   company: MeetingCompany | null

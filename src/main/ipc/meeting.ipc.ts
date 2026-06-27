@@ -377,7 +377,15 @@ export function prepareMeetingFromCalendarEvent(
     isGroupEvent,
   })
 
-  if (!isGroupEvent) {
+  // T3 — desktop OWNS enrichment; stamp enriched_at once it completes so the
+  // gateway-fallback sweep (which only acts on enriched_at IS NULL meetings whose
+  // owner's desktop is offline) excludes anything desktop handled. On failure we
+  // leave enriched_at NULL on purpose, so the gateway backstops it later. A new
+  // meeting is the only enrich path here — an existing one returned early above.
+  if (isGroupEvent) {
+    // Nothing to enrich for a group event; mark it done so the sweep skips it.
+    stampMeetingEnriched(meeting.id, userId)
+  } else {
     try {
       syncContactsFromAttendees(meeting.attendees, meeting.attendeeEmails, userId)
     } catch (err) {
@@ -388,13 +396,30 @@ export function prepareMeetingFromCalendarEvent(
       ? event.attendeeEmails
       : event.attendees.filter((a) => a.includes('@'))
     if (emails.length > 0) {
-      enrichCompaniesForMeeting(meeting.id, emails).catch((err) =>
-        console.error('[Company Enrichment] Failed:', err),
-      )
+      enrichCompaniesForMeeting(meeting.id, emails)
+        .then(() => stampMeetingEnriched(meeting.id, userId))
+        .catch((err) => console.error('[Company Enrichment] Failed:', err))
+    } else {
+      // Contacts synced, no domains to resolve → enrichment is complete.
+      stampMeetingEnriched(meeting.id, userId)
     }
   }
 
   return meeting
+}
+
+/**
+ * Mark a meeting's CRM side-effects complete (T3 enrichment dedup). Routed through
+ * the sync-wrapped repo so the timestamp reaches Neon — the gateway sweep reads it
+ * to avoid re-enriching what desktop already did. Best-effort: a failure here just
+ * leaves the meeting eligible for the gateway fallback.
+ */
+function stampMeetingEnriched(meetingId: string, userId: string | null): void {
+  try {
+    meetingRepo.updateMeeting(meetingId, { enrichedAt: new Date().toISOString() }, userId)
+  } catch (err) {
+    console.error('[Enrichment] Failed to stamp enriched_at:', err)
+  }
 }
 
 export function registerMeetingHandlers(): void {
