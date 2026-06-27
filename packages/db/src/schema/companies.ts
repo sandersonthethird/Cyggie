@@ -130,7 +130,7 @@ export const orgCompanies = pgTable(
     // firm_id denormalized so the firm-scoped pull filters without a users JOIN
     // (and is RLS-ready). Stamped by the gateway from the JWT on every push;
     // backfilled from users.firm_id for existing rows.
-    firmId: text('firm_id').references(() => firms.id, { onDelete: 'cascade' }),
+    firmId: text('firm_id').notNull().references(() => firms.id, { onDelete: 'cascade' }),
     // Per-column logical clocks (snake_case col → lamport) for field-level LWW.
     // NULL until the first field-LWW write, then densified. See sync/field-lww.ts.
     fieldLamports: jsonb('field_lamports'),
@@ -155,7 +155,10 @@ export const orgCompanies = pgTable(
     index('org_companies_recycle_idx')
       .on(t.firmId, t.deletedAt)
       .where(sql`${t.deletedAt} IS NOT NULL`),
-    uniqueIndex('org_companies_normalized_name_idx').on(t.normalizedName),
+    // Per-firm uniqueness (T3 P2): two firms may each have a company that
+    // normalizes to the same name; only WITHIN a firm is it a dedup collision.
+    // The gateway's match/create + onConflict scope by firm_id to match this.
+    uniqueIndex('org_companies_normalized_name_idx').on(t.firmId, t.normalizedName),
     index('org_companies_domain_idx').on(t.primaryDomain),
     index('org_companies_status_idx').on(t.status),
     index('org_companies_entity_type_idx').on(t.entityType),

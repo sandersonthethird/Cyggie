@@ -645,3 +645,66 @@ describe('GET /companies/:id — co-investors from the synced join', () => {
     expect(body.coInvestors).toBeNull()
   })
 })
+
+describe('POST /companies — per-firm dedup (T3 P2)', () => {
+  // After migration 0049 the unique index is (firm_id, normalized_name). Two firms
+  // may each own a same-normalized-name company; within a firm it's a dedup 409.
+  // Requires 0049 applied to the dev DB.
+  test('two different firms can each create a same-normalized-name company', async () => {
+    const firmA = CURRENT_FIRM_ID // set by beforeEach
+    const firmB = await insertFirm()
+    const userA = await insertTestUser(firmA)
+    const userB = await insertTestUser(firmB)
+    const name = 'Acme Cross ' + TEST_PREFIX
+
+    const resA = await app.inject({
+      method: 'POST',
+      url: '/companies',
+      headers: { authorization: `Bearer ${await mintJwt(userA, firmA)}` },
+      payload: { canonicalName: name },
+    })
+    expect(resA.statusCode).toBe(201)
+    const idA = (resA.json() as { id: string }).id
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, idA)
+
+    // Same normalized name, DIFFERENT firm → succeeds (pre-P2 this 500'd on the
+    // global unique because the dedup was user-scoped and missed the other firm).
+    const resB = await app.inject({
+      method: 'POST',
+      url: '/companies',
+      headers: { authorization: `Bearer ${await mintJwt(userB, firmB)}` },
+      payload: { canonicalName: name },
+    })
+    expect(resB.statusCode).toBe(201)
+    const idB = (resB.json() as { id: string }).id
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, idB)
+    expect(idB).not.toBe(idA)
+  })
+
+  test('same firm: a teammate creating the same name gets a 409 with the firm row', async () => {
+    const firmA = CURRENT_FIRM_ID
+    const userA = await insertTestUser(firmA)
+    const teammate = await insertTestUser(firmA)
+    const name = 'Acme Same ' + TEST_PREFIX
+
+    const resA = await app.inject({
+      method: 'POST',
+      url: '/companies',
+      headers: { authorization: `Bearer ${await mintJwt(userA, firmA)}` },
+      payload: { canonicalName: name },
+    })
+    expect(resA.statusCode).toBe(201)
+    const idA = (resA.json() as { id: string }).id
+    cleanup.track(schema.orgCompanies, schema.orgCompanies.id, idA)
+
+    // A teammate (different user, SAME firm) hits the firm-scoped dedup → 409 with idA.
+    const resTeam = await app.inject({
+      method: 'POST',
+      url: '/companies',
+      headers: { authorization: `Bearer ${await mintJwt(teammate, firmA)}` },
+      payload: { canonicalName: name },
+    })
+    expect(resTeam.statusCode).toBe(409)
+    expect((resTeam.json() as { id: string }).id).toBe(idA)
+  })
+})
