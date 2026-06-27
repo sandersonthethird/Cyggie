@@ -370,15 +370,16 @@ export async function registerCompanyRoutes(
       const trimmedName = canonicalName.trim()
       const normalized = normalizeCompanyName(trimmedName)
 
-      // normalized_name UNIQUE collision check. org_companies has a
-      // UNIQUE index on normalized_name; we look up first so we can
-      // return a clean 409 with the existing row instead of 500ing.
+      // normalized_name UNIQUE collision check. After T3 P2 the unique index is
+      // per-firm (firm_id, normalized_name), so the dedup is FIRM-scoped — a
+      // teammate's same-named company is the collision, not just the caller's.
+      // Look up first so we return a clean 409 with the existing row instead of 500ing.
       const existing = await db
         .select()
         .from(schema.orgCompanies)
         .where(
           and(
-            eq(schema.orgCompanies.userId, user.sub),
+            eq(schema.orgCompanies.firmId, user.firm_id),
             eq(schema.orgCompanies.normalizedName, normalized),
           ),
         )
@@ -407,6 +408,7 @@ export async function registerCompanyRoutes(
       await db.insert(schema.orgCompanies).values({
         id,
         userId: user.sub,
+        firmId: user.firm_id,
         canonicalName: trimmedName,
         normalizedName: normalized,
         primaryDomain: primaryDomain ?? null,
