@@ -15,6 +15,10 @@ interface NoteTaggerProps {
   contactName: string | null | undefined
   onTagCompany: (id: string | null, name: string | null) => void
   onTagContact: (id: string | null, name: string | null) => void
+  // Read-only mode for firm-shared notes owned by a teammate: render the
+  // existing company/contact chips for context but hide every edit affordance
+  // (remove ×, add button, picker). Untagged slots render nothing.
+  readOnly?: boolean
 }
 
 type PickerType = 'company' | 'contact' | null
@@ -25,7 +29,8 @@ export function NoteTagger({
   contactId,
   contactName,
   onTagCompany,
-  onTagContact
+  onTagContact,
+  readOnly = false
 }: NoteTaggerProps) {
   const [activePicker, setActivePicker] = useState<PickerType>(null)
   const createError = useTimedError(4000)
@@ -114,15 +119,17 @@ export function NoteTagger({
       {companyId ? (
         <span className={`${styles.chip} ${styles.company}`}>
           {companyName ?? companyId}
-          <button
-            className={styles.chipRemove}
-            onClick={() => onTagCompany(null, null)}
-            title="Remove company tag"
-          >
-            ×
-          </button>
+          {!readOnly && (
+            <button
+              className={styles.chipRemove}
+              onClick={() => onTagCompany(null, null)}
+              title="Remove company tag"
+            >
+              ×
+            </button>
+          )}
         </span>
-      ) : activePicker === 'company' ? (
+      ) : readOnly ? null : activePicker === 'company' ? (
         <EntityPicker<CompanySummary>
           picker={companyPicker}
           placeholder="Search company…"
@@ -144,15 +151,17 @@ export function NoteTagger({
       {contactId ? (
         <span className={`${styles.chip} ${styles.contact}`}>
           {contactName ?? contactId}
-          <button
-            className={styles.chipRemove}
-            onClick={() => onTagContact(null, null)}
-            title="Remove contact tag"
-          >
-            ×
-          </button>
+          {!readOnly && (
+            <button
+              className={styles.chipRemove}
+              onClick={() => onTagContact(null, null)}
+              title="Remove contact tag"
+            >
+              ×
+            </button>
+          )}
         </span>
-      ) : activePicker === 'contact' ? (
+      ) : readOnly ? null : activePicker === 'contact' ? (
         <EntityPicker<ContactSummary>
           picker={contactPicker}
           placeholder="Search contact…"

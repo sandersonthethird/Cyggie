@@ -520,18 +520,23 @@ function NoteDetailLoadedInner() {
           )}
         </div>
 
-        {(loadState === 'loaded' || loadState === 'loading') && localNote && !readOnly && (
-          <div className={styles.taggerRow}>
-            <NoteTagger
-              companyId={localNote.companyId}
-              companyName={localNote.companyName}
-              contactId={localNote.contactId}
-              contactName={localNote.contactName}
-              onTagCompany={handleTagCompany}
-              onTagContact={handleTagContact}
-            />
-          </div>
-        )}
+        {(loadState === 'loaded' || loadState === 'loading') &&
+          localNote &&
+          // For a read-only teammate note, show the tagger only when it has a
+          // tag to display (chips render read-only); never an empty add-row.
+          (!readOnly || localNote.companyId || localNote.contactId) && (
+            <div className={styles.taggerRow}>
+              <NoteTagger
+                companyId={localNote.companyId}
+                companyName={localNote.companyName}
+                contactId={localNote.contactId}
+                contactName={localNote.contactName}
+                onTagCompany={handleTagCompany}
+                onTagContact={handleTagContact}
+                readOnly={readOnly}
+              />
+            </div>
+          )}
 
         {tagSuggestion && !localNote?.companyId && !localNote?.contactId && (
           <div className={styles.suggestionRow}>
