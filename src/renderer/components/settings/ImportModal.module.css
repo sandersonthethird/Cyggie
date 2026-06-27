@@ -139,15 +139,58 @@
 .fileSelected {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: var(--color-bg-secondary);
-  border-radius: 8px;
-  font-size: 13px;
+  gap: 12px;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  border-radius: 10px;
   color: var(--color-text);
 }
-.fileName { font-weight: 500; flex: 1; }
-.fileRows { color: var(--color-text-muted); font-size: 12px; }
+.fileSelectedCheck {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+.fileSelectedText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.fileSelectedLabel {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+}
+.fileName {
+  font-weight: 600;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fileRows {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* Drop-zone headline turns into the selected filename (accent) once a file is chosen. */
+.dropTextSelected {
+  color: var(--color-accent);
+  font-weight: 600;
+}
 
 .importTypeRow {
   display: flex;
@@ -206,7 +249,11 @@
 .mappingTable {
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  overflow: hidden;
+  /* Deterministic scroll for the field list — don't depend on the modal's flex-height
+     chain (fragile inside the onboarding gate). The list scrolls within itself and the
+     modal footer stays visible because content no longer exceeds 88vh. */
+  max-height: 52vh;
+  overflow-y: auto;
 }
 
 .mappingHeader {
@@ -214,8 +261,12 @@
   grid-template-columns: 1fr 80px 1fr 32px;
   gap: 0;
   padding: 8px 12px;
-  background: var(--color-bg-secondary);
+  background: var(--color-bg-secondary); /* opaque — rows won't bleed under the pinned header */
   border-bottom: 1px solid var(--color-border);
+  /* Pin the column header while the list scrolls. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 .mappingHeader span {
   font-size: 11px;

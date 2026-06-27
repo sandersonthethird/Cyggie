@@ -16,6 +16,7 @@ import type {
   CompanyDiff
 } from '../../../shared/types/csv-import'
 import type { CustomFieldType } from '../../../shared/types/custom-fields'
+import { detectMultiValue, extractOptions } from '../../../shared/csv-multivalue'
 import { Spinner } from '../common/Spinner'
 import styles from './ImportModal.module.css'
 import { api } from '../../api'
@@ -60,25 +61,6 @@ function toWire(m: UIFieldMapping): FieldMapping {
     ...(m.targetField === null && m.fieldType ? { fieldType: m.fieldType } : {}),
     ...(m.targetField === null && m.options && m.options.length > 0 ? { options: m.options } : {}),
   }
-}
-
-// ─── Multi-value detection ───────────────────────────────────────────────────
-
-/** Returns true if sample values suggest this column contains comma-separated lists. */
-function detectMultiValue(sampleValues: string[]): boolean {
-  return sampleValues.some((v) => {
-    const parts = v.split(',').map((p) => p.trim()).filter(Boolean)
-    return parts.length > 1
-  })
-}
-
-/** Extract unique option values from comma-separated sample data. */
-function extractOptions(sampleValues: string[]): string[] {
-  const seen = new Set<string>()
-  for (const v of sampleValues) {
-    v.split(',').map((p) => p.trim()).filter(Boolean).forEach((p) => seen.add(p))
-  }
-  return [...seen].slice(0, 20)
 }
 
 // ─── Field display helpers ───────────────────────────────────────────────────
@@ -564,9 +546,13 @@ export function ImportModal({ onClose, onComplete }: Props) {
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
               >
-                <span className={styles.dropIcon}>📄</span>
-                <span className={styles.dropText}>
-                  {fileLoading ? 'Reading file...' : 'Drop a CSV file here'}
+                <span className={styles.dropIcon}>{fileInfo ? '✅' : '📄'}</span>
+                <span className={`${styles.dropText} ${fileInfo ? styles.dropTextSelected : ''}`}>
+                  {fileLoading
+                    ? 'Reading file...'
+                    : fileInfo
+                      ? (fileInfo.filePath.split('/').pop() ?? 'File selected')
+                      : 'Drop a CSV file here'}
                 </span>
                 <span className={styles.dropSubtext}>or</span>
                 <button
@@ -584,10 +570,13 @@ export function ImportModal({ onClose, onComplete }: Props) {
 
               {fileInfo && (
                 <div className={styles.fileSelected}>
-                  <span>✓</span>
-                  <span className={styles.fileName}>
-                    {fileInfo.filePath.split('/').pop()}
-                  </span>
+                  <span className={styles.fileSelectedCheck}>✓</span>
+                  <div className={styles.fileSelectedText}>
+                    <span className={styles.fileSelectedLabel}>File selected</span>
+                    <span className={styles.fileName}>
+                      {fileInfo.filePath.split('/').pop()}
+                    </span>
+                  </div>
                   <span className={styles.fileRows}>
                     {fileInfo.headers.length} columns
                   </span>
