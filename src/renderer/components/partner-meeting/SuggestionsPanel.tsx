@@ -81,7 +81,6 @@ export function SuggestionsPanel({ digestId, suggestions, onDismiss, onAdded }: 
       updatedAt: new Date().toISOString(),
       foundingYear: null,
       employeeCountRange: null,
-      hqAddress: null,
       linkedinCompanyUrl: null,
       twitterHandle: null,
       crunchbaseUrl: null,

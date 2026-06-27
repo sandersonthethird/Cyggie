@@ -351,6 +351,13 @@
       "when": 1782588655212,
       "tag": "0049_hot_hellfire_club",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1782596608135,
+      "tag": "0050_steady_adam_destine",
+      "breakpoints": true
     }
   ]
 }

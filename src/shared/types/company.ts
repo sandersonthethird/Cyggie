@@ -125,7 +125,6 @@ export interface CompanySummary {
   // Firmographic / Business Profile
   foundingYear: number | null
   employeeCountRange: string | null
-  hqAddress: string | null
   linkedinCompanyUrl: string | null
   twitterHandle: string | null
   crunchbaseUrl: string | null

@@ -68,7 +68,6 @@ export const COMPANY_FIELD_META: Record<string, CompanyFieldMeta> = {
   targetInvestmentSector: { type: 'multiselect', getOptions: (c) => c.targetInvestmentSector },
   foundingYear: { type: 'number' },
   employeeCountRange: { type: 'select', getOptions: (c) => c.employeeRange },
-  hqAddress: { type: 'text' },
   revenueModel: { type: 'text' },
   // ── Pipeline ──
   sourceType: { type: 'select', getOptions: () => SOURCE_TYPE_OPTIONS, coerceNull: true },

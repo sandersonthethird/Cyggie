@@ -1,0 +1,1 @@
+ALTER TABLE "org_companies" DROP COLUMN "hq_address";

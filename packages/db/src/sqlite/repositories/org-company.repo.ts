@@ -77,7 +77,6 @@ interface CompanyRow {
   // New fields from migration 037
   founding_year: number | null
   employee_count_range: string | null
-  hq_address: string | null
   linkedin_company_url: string | null
   twitter_handle: string | null
   crunchbase_url: string | null
@@ -495,7 +494,6 @@ function rowToCompanySummary(row: CompanyRow): CompanySummary {
     // New fields
     foundingYear: row.founding_year ?? null,
     employeeCountRange: row.employee_count_range ?? null,
-    hqAddress: row.hq_address ?? null,
     linkedinCompanyUrl: row.linkedin_company_url ?? null,
     twitterHandle: row.twitter_handle ?? null,
     crunchbaseUrl: row.crunchbase_url ?? null,
@@ -656,7 +654,6 @@ function baseCompanySelect(whereClause = '', opts?: BaseSelectOpts): string {
       c.updated_at,
       c.founding_year,
       c.employee_count_range,
-      c.hq_address,
       c.linkedin_company_url,
       c.twitter_handle,
       c.crunchbase_url,
@@ -1075,7 +1072,7 @@ export function getCompaniesByNormalizedNames(names: string[]): Record<string, C
         round: (r.round as CompanyDetail['round']) ?? null,
         // Required summary fields — populated with defaults
         description: nullStr, websiteUrl: nullStr, stage: nullStr, status: 'active',
-        crmProvider: nullStr, crmCompanyId: nullStr, hqAddress: nullStr,
+        crmProvider: nullStr, crmCompanyId: nullStr,
         linkedinCompanyUrl: nullStr, twitterHandle: nullStr, crunchbaseUrl: nullStr,
         angellistUrl: nullStr, targetCustomer: nullStr, businessModel: nullStr,
         productStage: nullStr, revenueModel: nullStr, foundingYear: nullNum,
@@ -1441,7 +1438,6 @@ const COMPANY_UPDATABLE_FIELDS = {
   status: 'status',
   foundingYear: 'founding_year',
   employeeCountRange: 'employee_count_range',
-  hqAddress: 'hq_address',
   linkedinCompanyUrl: 'linkedin_company_url',
   twitterHandle: 'twitter_handle',
   crunchbaseUrl: 'crunchbase_url',
@@ -1996,7 +1992,7 @@ const MERGEABLE_COLUMNS = [
   'description', 'primary_domain', 'website_url', 'city', 'state', 'stage',
   'status', 'crm_provider', 'crm_company_id', 'priority',
   'post_money_valuation', 'raise_size', 'round', 'pipeline_stage',
-  'founding_year', 'employee_count_range', 'hq_address',
+  'founding_year', 'employee_count_range',
   'linkedin_company_url', 'twitter_handle', 'crunchbase_url',
   'angellist_url', 'industry', 'target_customer', 'business_model',
   'product_stage', 'revenue_model',
@@ -2035,7 +2031,6 @@ const MERGEABLE_COLUMN_LABELS: Record<string, string> = {
   pipeline_stage: 'Pipeline stage',
   founding_year: 'Founding year',
   employee_count_range: 'Employee count',
-  hq_address: 'HQ address',
   linkedin_company_url: 'LinkedIn URL',
   twitter_handle: 'X / Twitter',
   crunchbase_url: 'Crunchbase',

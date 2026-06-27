@@ -1013,7 +1013,7 @@ export function CompanyPropertiesPanel({
     hiddenFields.length +
     ([company.description, company.industry, company.targetCustomer,
       company.businessModel, company.productStage, company.foundingYear,
-      company.employeeCountRange, company.hqAddress, company.revenueModel,
+      company.employeeCountRange, company.revenueModel,
       company.dealSource, company.warmIntroSource, company.referralContactId,
       company.relationshipOwner, company.nextFollowupDate,
       company.raiseSize, company.postMoneyValuation, company.arr,

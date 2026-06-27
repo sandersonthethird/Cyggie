@@ -86,7 +86,6 @@ function makeCompanySummary(overrides: Partial<CompanySummary> = {}): CompanySum
     updatedAt: '2024-01-01',
     foundingYear: null,
     employeeCountRange: null,
-    hqAddress: null,
     linkedinCompanyUrl: null,
     twitterHandle: null,
     crunchbaseUrl: null,

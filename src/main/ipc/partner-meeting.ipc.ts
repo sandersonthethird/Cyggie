@@ -100,7 +100,6 @@ async function generateBrief(companyId: string): Promise<string | null> {
   if (company.websiteUrl) lines.push(`Website: ${company.websiteUrl}`)
   if (company.foundingYear) lines.push(`Founded: ${company.foundingYear}`)
   if (company.employeeCountRange) lines.push(`Employees: ${company.employeeCountRange}`)
-  if (company.hqAddress) lines.push(`HQ: ${company.hqAddress}`)
 
   lines.push('\n## Round & Financials')
   if (company.round) lines.push(`Round: ${company.round}`)

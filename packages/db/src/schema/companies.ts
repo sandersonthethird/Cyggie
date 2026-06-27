@@ -68,7 +68,7 @@ export const orgCompanies = pgTable(
     // Location (migration 028)
     city: text('city'),
     state: text('state'),
-    hqAddress: text('hq_address'),
+    // hq_address dropped (migration 137 / Neon 0050) — unused (0/736); city/state cover it.
     // Company snapshot
     foundingYear: integer('founding_year'),
     employeeCountRange: varchar('employee_count_range', { length: 32 }),

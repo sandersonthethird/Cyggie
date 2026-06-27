@@ -140,7 +140,7 @@ export const COMPANY_FIELD_SKIP_SET: ReadonlySet<string> = new Set([
   'city', 'state', 'primaryDomain', 'websiteUrl',
   // intentionally hidden business columns
   'entityType', 'priority', 'passedFromStage', 'relationshipOwner', 'dealSource',
-  'warmIntroSource', 'nextFollowupDate', 'referralContactId', 'hqAddress',
+  'warmIntroSource', 'nextFollowupDate', 'referralContactId',
 ])
 
 export const CONTACT_FIELD_SKIP_SET: ReadonlySet<string> = new Set([

@@ -286,7 +286,6 @@ function makeCompanyRow(
     crmCompanyId: null,
     city: null,
     state: null,
-    hqAddress: null,
     foundingYear: null,
     employeeCountRange: null,
     targetCustomer: null,

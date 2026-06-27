@@ -620,7 +620,6 @@ export interface PulledOrgCompanyRow extends PulledRow {
   crmCompanyId: string | null
   city: string | null
   state: string | null
-  hqAddress: string | null
   foundingYear: number | null
   employeeCountRange: string | null
   targetCustomer: string | null
@@ -707,7 +706,7 @@ const ORG_COMPANY_COL_MAP: ReadonlyArray<readonly [snake: string, camel: string]
   ['classification_source', 'classificationSource'],
   ['classification_confidence', 'classificationConfidence'], ['industry', 'industry'],
   ['crm_provider', 'crmProvider'], ['crm_company_id', 'crmCompanyId'],
-  ['city', 'city'], ['state', 'state'], ['hq_address', 'hqAddress'],
+  ['city', 'city'], ['state', 'state'],
   ['founding_year', 'foundingYear'], ['employee_count_range', 'employeeCountRange'],
   ['target_customer', 'targetCustomer'], ['business_model', 'businessModel'],
   ['product_stage', 'productStage'], ['revenue_model', 'revenueModel'],
@@ -875,7 +874,6 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
     crmCompanyId: row.crmCompanyId,
     city: row.city,
     state: row.state,
-    hqAddress: row.hqAddress,
     foundingYear: row.foundingYear,
     employeeCountRange: row.employeeCountRange,
     targetCustomer: row.targetCustomer,
@@ -944,7 +942,7 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        stage, pipeline_stage, priority, status,
        entity_type, include_in_companies_view, classification_source, classification_confidence,
        industry, crm_provider, crm_company_id,
-       city, state, hq_address,
+       city, state,
        founding_year, employee_count_range,
        target_customer, business_model, product_stage, revenue_model,
        target_investment_stage, target_investment_sector,
@@ -967,7 +965,7 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        @stage, @pipelineStage, @priority, @status,
        @entityType, @includeInCompaniesView, @classificationSource, @classificationConfidence,
        @industry, @crmProvider, @crmCompanyId,
-       @city, @state, @hqAddress,
+       @city, @state,
        @foundingYear, @employeeCountRange,
        @targetCustomer, @businessModel, @productStage, @revenueModel,
        @targetInvestmentStage, @targetInvestmentSector,
@@ -1007,7 +1005,6 @@ function upsertOrgCompanyRow(db: Database.Database, row: PulledOrgCompanyRow): v
        crm_company_id = excluded.crm_company_id,
        city = excluded.city,
        state = excluded.state,
-       hq_address = excluded.hq_address,
        founding_year = excluded.founding_year,
        employee_count_range = excluded.employee_count_range,
        target_customer = excluded.target_customer,
