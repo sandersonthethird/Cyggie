@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../../api'
 import { IPC_CHANNELS } from '../../../../shared/constants/channels'
+import type { MaskedKey } from '../../../../shared/types/settings'
 import { StepLinks } from '../StepLinks'
 import { useVoiceLine } from '../../../hooks/useVoice'
 import styles from '../Onboarding.module.css'
@@ -28,9 +29,9 @@ export function KeysStep({
   const sub = useVoiceLine('onboarding', 'keys')
 
   useEffect(() => {
-    void api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL).then((all) => {
-      setHasDeepgram(Boolean(all?.['deepgramApiKey']))
-      setHasAnthropic(Boolean(all?.['claudeApiKey']))
+    void api.invoke<Record<string, MaskedKey | string>>(IPC_CHANNELS.SETTINGS_GET_ALL).then((all) => {
+      setHasDeepgram((all?.['deepgramApiKey'] as MaskedKey | undefined)?.configured ?? false)
+      setHasAnthropic((all?.['claudeApiKey'] as MaskedKey | undefined)?.configured ?? false)
     })
   }, [])
 
