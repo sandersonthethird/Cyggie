@@ -7,6 +7,12 @@
   justify-content: center;
   background: rgba(0, 0, 0, 0.4);
   animation: fadeIn 0.15s ease;
+  /* When launched from onboarding, this modal renders inside .gate, which is a
+     frameless-window drag region (-webkit-app-region: drag). That property is
+     inherited, so without this override the OS swallows clicks on every control
+     in the modal (the "Import as" pills, Browse, Continue…). no-drag re-enables
+     interaction for the whole modal subtree; it's a harmless no-op elsewhere. */
+  -webkit-app-region: no-drag;
 }
 
 @keyframes fadeIn {
