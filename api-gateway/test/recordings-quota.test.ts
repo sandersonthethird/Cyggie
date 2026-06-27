@@ -43,12 +43,23 @@ afterAll(async () => {
   await app.close()
 })
 
+// /recordings/upload now uses requireFirm() — the quota gate runs AFTER auth,
+// so a firm-less token would 403 NO_FIRM before reaching the QUOTA_EXCEEDED
+// path these tests assert. Give each user a real (shared) firm.
+const SHARED_FIRM_ID = TEST_PREFIX + 'firm'
+
 async function insertUserWithUsage(usedMinutes: number): Promise<string> {
   const userId = TEST_PREFIX + createId().slice(0, 8)
+  await db
+    .insert(schema.firms)
+    .values({ id: SHARED_FIRM_ID, name: 'Quota Test Firm', slug: SHARED_FIRM_ID })
+    .onConflictDoNothing()
+  cleanup.track(schema.firms, schema.firms.id, SHARED_FIRM_ID)
   await db.insert(schema.users).values({
     id: userId,
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
+    firmId: SHARED_FIRM_ID,
   })
   cleanup.track(schema.users, schema.users.id, userId)
   if (usedMinutes > 0) {
@@ -72,7 +83,7 @@ async function mintJwt(userId: string): Promise<string> {
     sid: TEST_PREFIX + 'sess-' + userId,
     device: 'test-device',
     scope: ['user'],
-    firm_id: null,
+    firm_id: SHARED_FIRM_ID,
     role: 'member',
   })
 }

@@ -154,6 +154,39 @@ async function mintJwt(userId: string, firmId: string = CURRENT_FIRM_ID): Promis
   })
 }
 
+describe('POST /contacts', () => {
+  // firm_id stamp regression: a contact created via the endpoint must be visible
+  // on the firm-filtered read path. Before the fix POST /contacts stamped a NULL
+  // firm_id, so the contact was invisible to its own creator (it would not appear
+  // in GET /contacts, whose entityVisibilityFilter requires firm_id = me.firm).
+  test('created contact is visible via GET /contacts (firm_id stamped)', async () => {
+    const userId = await insertTestUser()
+    const jwt = await mintJwt(userId)
+    const fullName = 'Posted Dave ' + TEST_PREFIX
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/contacts',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: { fullName },
+    })
+    expect(create.statusCode).toBe(201)
+    const created = create.json() as { id: string; fullName: string }
+    cleanup.track(schema.contacts, schema.contacts.id, created.id)
+    createdContactIds.push(created.id)
+    expect(created.fullName).toBe(fullName)
+
+    const list = await app.inject({
+      method: 'GET',
+      url: '/contacts?limit=100',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(list.statusCode).toBe(200)
+    const body = list.json() as { contacts: Array<{ id: string }> }
+    expect(body.contacts.some((c) => c.id === created.id)).toBe(true)
+  })
+})
+
 describe('GET /contacts', () => {
   test('returns contacts for caller, sorted by live last-touch DESC nulls last', async () => {
     const userId = await insertTestUser()

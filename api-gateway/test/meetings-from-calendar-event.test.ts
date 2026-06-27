@@ -42,12 +42,23 @@ afterAll(async () => {
   await app.close()
 })
 
+// from-calendar-event now stamps firm_id onto the inserted row (FK → firms), so
+// the JWT firm_id must reference a real firm or the insert FK-violates. One
+// shared firm for the file (onConflictDoNothing keeps setupUser idempotent).
+const SHARED_FIRM_ID = TEST_PREFIX + 'firm'
+
 async function setupUser(): Promise<{ userId: string; jwt: string }> {
   const userId = TEST_PREFIX + createId().slice(0, 8)
+  await db
+    .insert(schema.firms)
+    .values({ id: SHARED_FIRM_ID, name: 'FCE Test Firm', slug: SHARED_FIRM_ID })
+    .onConflictDoNothing()
+  cleanup.track(schema.firms, schema.firms.id, SHARED_FIRM_ID)
   await db.insert(schema.users).values({
     id: userId,
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
+    firmId: SHARED_FIRM_ID,
   })
   cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
@@ -55,7 +66,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     sid: TEST_PREFIX + 'sess-' + userId,
     device: 'test-device',
     scope: ['user'],
-    firm_id: TEST_PREFIX + 'firm',
+    firm_id: SHARED_FIRM_ID,
     role: 'member',
   })
   return { userId, jwt }
@@ -204,6 +215,37 @@ describe('POST /meetings/from-calendar-event', () => {
     await reapMeeting(bobBody.id)
 
     expect(bobBody.id).not.toBe(aliceBody.id)
+  })
+
+  // MEETING_NOT_FOUND regression: the created row must carry firm_id so it
+  // passes entityVisibilityFilter on read. Before the fix firm_id was NULL and
+  // GET /meetings/:id 404'd even for the owner.
+  test('created row is visible via GET /meetings/:id (firm_id stamped)', async () => {
+    const { jwt } = await setupUser()
+    const create = await app.inject({
+      method: 'POST',
+      url: '/meetings/from-calendar-event',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: {
+        calendarEventId: 'gcal-vis-' + createId(),
+        title: 'Visible',
+        startTime: '2026-05-21T15:00:00.000Z',
+      },
+    })
+    expect(create.statusCode).toBe(201)
+    const { id } = create.json() as { id: string }
+    await reapMeeting(id)
+
+    const row = await db.query.meetings.findFirst({ where: eq(schema.meetings.id, id) })
+    expect(row?.firmId).toBe(SHARED_FIRM_ID)
+
+    const get = await app.inject({
+      method: 'GET',
+      url: `/meetings/${id}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(get.statusCode).toBe(200)
+    expect((get.json() as { id: string }).id).toBe(id)
   })
 
   test('401 without Bearer', async () => {

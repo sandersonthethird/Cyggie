@@ -443,6 +443,10 @@ export async function registerContactRoutes(
       await db.insert(schema.contacts).values({
         id,
         userId: user.sub,
+        // Denormalized firm guard — without it entityVisibilityFilter('contacts')
+        // (firm_id = viewer.firm_id) never matches and the contact is invisible
+        // to its own creator. Mirrors the meetings firm_id stamp.
+        firmId: user.firm_id,
         fullName: trimmedName,
         normalizedName: normalizeName(trimmedName),
         email: email ?? null,

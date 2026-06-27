@@ -48,7 +48,10 @@ export async function registerRecordingRoutes(
     method: 'POST',
     url: '/recordings/upload',
     handler: async (req, reply) => {
-      const user = req.requireUser()
+      // requireFirm (not requireUser): the create-if-absent path below stamps
+      // firm_id onto the meeting row so it stays visible to its owner. A
+      // firm-less token gets NO_FIRM 403 rather than a silently-invisible row.
+      const user = req.requireFirm()
       const db = getDb(env.GATEWAY_DATABASE_URL)
 
       // Quota gate (per-user, calendar-month). One sum query; cheap. Race-y at
@@ -197,6 +200,7 @@ export async function registerRecordingRoutes(
           await insertImpromptuMeeting(db, {
             id: meetingId,
             userId: user.sub,
+            firmId: user.firm_id,
             title,
             date: recordedAt,
             recordingPath: audioPath,

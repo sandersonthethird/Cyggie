@@ -51,12 +51,19 @@ afterAll(async () => {
   await app.close()
 })
 
+// /recordings/upload now uses requireFirm() and its create-if-absent path
+// stamps firm_id onto the meeting row (FK → firms). Each user needs a real
+// firm: a null firm_id would 403 NO_FIRM; a dangling one would FK-violate.
 async function setupUser(): Promise<{ userId: string; jwt: string }> {
   const userId = TEST_PREFIX + createId().slice(0, 8)
+  const firmId = TEST_PREFIX + 'firm-' + createId().slice(0, 8)
+  await db.insert(schema.firms).values({ id: firmId, name: 'Upload Test Firm', slug: firmId })
+  cleanup.track(schema.firms, schema.firms.id, firmId)
   await db.insert(schema.users).values({
     id: userId,
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
+    firmId,
   })
   cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
@@ -64,7 +71,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     sid: TEST_PREFIX + 'sess-' + userId,
     device: 'test-device',
     scope: ['user'],
-    firm_id: null,
+    firm_id: firmId,
     role: 'member',
   })
   return { userId, jwt }
@@ -149,6 +156,47 @@ describe('POST /recordings/upload', () => {
     expect(submitCalls).toHaveLength(1)
     expect(submitCalls[0].meetingId).toBe(out.meetingId)
     expect(submitCalls[0].audioFilePath).toBe(meeting?.recordingPath)
+
+    // MEETING_NOT_FOUND regression: firm_id stamped → the row is visible on read.
+    expect(meeting?.firmId).toBeTruthy()
+    const get = await app.inject({
+      method: 'GET',
+      url: `/meetings/${out.meetingId}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(get.statusCode).toBe(200)
+  })
+
+  test('firm-less token → 403 NO_FIRM (no silently-invisible meeting)', async () => {
+    const userId = TEST_PREFIX + createId().slice(0, 8)
+    await db.insert(schema.users).values({
+      id: userId,
+      googleSub: 'sub-' + userId,
+      email: `${userId}@example.com`,
+    })
+    cleanup.track(schema.users, schema.users.id, userId)
+    const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
+      sub: userId,
+      sid: TEST_PREFIX + 'sess-' + userId,
+      device: 'test-device',
+      scope: ['user'],
+      firm_id: null,
+      role: 'member',
+    })
+    const boundary = '----TestBoundary' + Date.now().toString(36)
+    const { body, contentType } = buildMultipart({ boundary, audioBytes: Buffer.from('audio') })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/recordings/upload',
+      headers: {
+        authorization: `Bearer ${jwt}`,
+        'content-type': contentType,
+        'content-length': String(body.length),
+      },
+      payload: body,
+    })
+    expect(res.statusCode).toBe(403)
+    expect((res.json() as { error?: { code?: string } }).error?.code).toBe('NO_FIRM')
   })
 
   test('rejects request without a JWT (401)', async () => {

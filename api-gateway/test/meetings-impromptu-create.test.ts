@@ -43,12 +43,19 @@ afterAll(async () => {
   await app.close()
 })
 
+// /meetings/impromptu now uses requireFirm() and stamps firm_id onto the row
+// (denormalized visibility guard, FK → firms). So each user needs a real firm:
+// a null firm_id would 403 NO_FIRM, and a dangling firm_id would FK-violate.
 async function setupUser(): Promise<{ userId: string; jwt: string }> {
   const userId = TEST_PREFIX + createId().slice(0, 8)
+  const firmId = TEST_PREFIX + 'firm-' + createId().slice(0, 8)
+  await db.insert(schema.firms).values({ id: firmId, name: 'Impromptu Create Test Firm', slug: firmId })
+  cleanup.track(schema.firms, schema.firms.id, firmId)
   await db.insert(schema.users).values({
     id: userId,
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
+    firmId,
   })
   cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
@@ -56,7 +63,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     sid: TEST_PREFIX + 'sess-' + userId,
     device: 'test-device',
     scope: ['user'],
-    firm_id: null,
+    firm_id: firmId,
     role: 'member',
   })
   return { userId, jwt }
@@ -126,5 +133,49 @@ describe('POST /meetings/impromptu', () => {
     const { jwt } = await setupUser()
     const res = await post(jwt, { id: 'NOT valid!!', title: 'x' })
     expect(res.statusCode).toBe(400)
+  })
+
+  // MEETING_NOT_FOUND regression: insertImpromptuMeeting must stamp firm_id so
+  // the pre-created row passes entityVisibilityFilter on read.
+  test('pre-created row is visible via GET /meetings/:id (firm_id stamped)', async () => {
+    const { jwt } = await setupUser()
+    const id = createId()
+    const create = await post(jwt, { id, title: 'Visible' })
+    expect(create.statusCode).toBe(201)
+    cleanup.track(schema.meetings, schema.meetings.id, id)
+
+    const row = await db.query.meetings.findFirst({ where: eq(schema.meetings.id, id) })
+    expect(row?.firmId).toBeTruthy()
+
+    const get = await app.inject({
+      method: 'GET',
+      url: `/meetings/${id}`,
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(get.statusCode).toBe(200)
+    expect((get.json() as { id: string }).id).toBe(id)
+  })
+
+  // requireFirm guard: a firm-less token is rejected up front rather than
+  // creating a silently-invisible (NULL firm_id) meeting.
+  test('firm-less token → 403 NO_FIRM (no silently-invisible meeting)', async () => {
+    const userId = TEST_PREFIX + createId().slice(0, 8)
+    await db.insert(schema.users).values({
+      id: userId,
+      googleSub: 'sub-' + userId,
+      email: `${userId}@example.com`,
+    })
+    cleanup.track(schema.users, schema.users.id, userId)
+    const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
+      sub: userId,
+      sid: TEST_PREFIX + 'sess-' + userId,
+      device: 'test-device',
+      scope: ['user'],
+      firm_id: null,
+      role: 'member',
+    })
+    const res = await post(jwt, { id: createId(), title: 'No firm' })
+    expect(res.statusCode).toBe(403)
+    expect((res.json() as { error?: { code?: string } }).error?.code).toBe('NO_FIRM')
   })
 })

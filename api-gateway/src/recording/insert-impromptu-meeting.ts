@@ -14,7 +14,7 @@
 //                                         (offline): audio present.
 //
 //        ┌────────────── insertImpromptuMeeting ──────────────┐
-//        │ id, userId, title, date          (always)          │
+//        │ id, userId, firmId, title, date  (always)          │
 //        │ recordingPath?                   (upload paths)     │
 //        │ status='recording', wasImpromptu=true              │
 //        │ calendarEventId=null  (NULLs are distinct in the   │
@@ -37,6 +37,12 @@ export interface InsertImpromptuMeetingInput {
    *  client-minted cuid for the pre-create / create-if-absent paths. */
   id: string
   userId: string
+  /** Firm that owns the row. Stamped from the JWT by every caller (all of
+   *  which use requireFirm()), denormalized so the entityVisibilityFilter
+   *  firm-guard is index-backed without a JOIN. NON-NULL: a NULL firm_id makes
+   *  the row invisible to its own owner (firm_id = viewer.firm_id never matches),
+   *  which is the exact MEETING_NOT_FOUND bug this field closes. */
+  firmId: string
   title: string
   /** Recorded-at timestamp (client clock when available, else now). */
   date: Date
@@ -71,6 +77,7 @@ export async function insertImpromptuMeeting(
   await db.insert(schema.meetings).values({
     id: input.id,
     userId: input.userId,
+    firmId: input.firmId,
     title: input.title,
     date: input.date,
     calendarEventId: input.calendarEventId ?? null,

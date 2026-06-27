@@ -38,12 +38,23 @@ afterAll(async () => {
   await app.close()
 })
 
+// POST /contacts now stamps firm_id onto the row (FK → firms), so the JWT
+// firm_id must reference a real firm or the insert FK-violates (500). One
+// shared firm for the file (onConflictDoNothing keeps setupUser idempotent).
+const SHARED_FIRM_ID = TEST_PREFIX + 'firm'
+
 async function setupUser(): Promise<{ userId: string; jwt: string }> {
   const userId = TEST_PREFIX + createId().slice(0, 8)
+  await db
+    .insert(schema.firms)
+    .values({ id: SHARED_FIRM_ID, name: 'Add-Attendee Test Firm', slug: SHARED_FIRM_ID })
+    .onConflictDoNothing()
+  cleanup.track(schema.firms, schema.firms.id, SHARED_FIRM_ID)
   await db.insert(schema.users).values({
     id: userId,
     googleSub: 'sub-' + userId,
     email: `${userId}@example.com`,
+    firmId: SHARED_FIRM_ID,
   })
   cleanup.track(schema.users, schema.users.id, userId)
   const jwt = await signAccessToken(env.JWT_SIGNING_SECRET, {
@@ -51,7 +62,7 @@ async function setupUser(): Promise<{ userId: string; jwt: string }> {
     sid: TEST_PREFIX + 'sess-' + userId,
     device: 'test-device',
     scope: ['user'],
-    firm_id: TEST_PREFIX + 'firm',
+    firm_id: SHARED_FIRM_ID,
     role: 'member',
   })
   return { userId, jwt }

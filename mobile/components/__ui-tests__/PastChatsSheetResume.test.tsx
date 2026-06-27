@@ -2,7 +2,7 @@ import React from 'react'
 import { render, screen, fireEvent } from '@testing-library/react-native'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-import type { ChatSessionListItem } from '../../../lib/api/chat'
+import type { ChatSessionListItem } from '../../lib/api/chat'
 
 // Regression guard for the global past-chats sheet: tapping a past chat must
 // resume THAT exact session by id. Before the fix it navigated by contextId
@@ -15,7 +15,7 @@ jest.mock('expo-router', () => ({
 }))
 
 const mockFetchSessions = jest.fn()
-jest.mock('../../../lib/api/chat', () => ({
+jest.mock('../../lib/api/chat', () => ({
   fetchChatSessions: (...args: unknown[]) => mockFetchSessions(...args),
   // Other exports are imported at module load by chat/index.tsx + its
   // children but never invoked while rendering only the sheet.
@@ -26,7 +26,7 @@ jest.mock('../../../lib/api/chat', () => ({
 }))
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { PastChatsSheet } = require('../index')
+const { PastChatsSheet } = require('../../app/chat')
 
 function makeSession(over: Partial<ChatSessionListItem> = {}): ChatSessionListItem {
   return {

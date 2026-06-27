@@ -578,6 +578,7 @@ export async function registerMeetingRoutes(
         await db.insert(schema.meetings).values({
           id: newId,
           userId: user.sub,
+          firmId: user.firm_id,
           title: body.title,
           date: new Date(body.startTime),
           scheduledEndAt: body.endTime ? new Date(body.endTime) : null,
@@ -649,8 +650,12 @@ export async function registerMeetingRoutes(
   //   id present + 23505 + foreign              → 409 (never touch/return it)
   //   id absent                                 → server-mint → 201
   //
-  // Auth mirrors /recordings/upload (requireUser, not requireFirm) — impromptu
-  // recording is the same flow.
+  // Auth mirrors /recordings/upload — both use requireFirm(). firm_id is
+  // stamped onto the row (denormalized firm guard); a firm-less token gets a
+  // clear NO_FIRM 403 instead of a silently-invisible meeting (a NULL firm_id
+  // fails the entityVisibilityFilter and 404s on read). You cannot record a
+  // meeting before onboarding into a firm, so this rejects only an impossible
+  // state.
   // ───────────────────────────────────────────────────────────────────────
   fastifyTyped.route({
     method: 'POST',
@@ -665,7 +670,7 @@ export async function registerMeetingRoutes(
       response: { 200: MeetingDetailSchema, 201: MeetingDetailSchema },
     },
     handler: async (req, reply) => {
-      const user = req.requireUser()
+      const user = req.requireFirm()
       const db = getDb(env.GATEWAY_DATABASE_URL)
       const id = req.body.id ?? createId()
       const title =
@@ -683,7 +688,7 @@ export async function registerMeetingRoutes(
       }
 
       try {
-        await insertImpromptuMeeting(db, { id, userId: user.sub, title, date })
+        await insertImpromptuMeeting(db, { id, userId: user.sub, firmId: user.firm_id, title, date })
       } catch (err) {
         if (!isUniqueViolation(err)) throw err
         // PK collision. If it's the caller's own row (a concurrent pre-create /
