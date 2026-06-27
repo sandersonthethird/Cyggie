@@ -16,6 +16,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context'
 import * as Notifications from 'expo-notifications'
 import * as WebBrowser from 'expo-web-browser'
 import { useAuthStore } from '../lib/auth/store'
+import { accessTokenExpiringWithin } from '../lib/auth/jwt'
+import { ensureFreshAccessToken } from '../lib/api/client'
+import { initGatewayWarmup, shutdownGatewayWarmup } from '../lib/api/warmup'
+import { notesListQueryOptions } from '../lib/api/notes'
 import { mmkvAsyncStorage } from '../lib/cache/mmkv'
 import { registerForPushNotifications } from '../lib/push/register'
 import { loadMostRecentPendingUploadOrEvict } from '../lib/recording/pending-upload'
@@ -92,12 +96,32 @@ export default function RootLayout() {
   // Phase 1.5b — wire the sync outbox/agent the first time we're signed in.
   // initSync is idempotent; shutdown on full sign-out so the periodic drain
   // doesn't continue firing against a signed-out gateway client.
+  //
+  // Also warm the cold path off the first note tap (notes are network-only, so
+  // the first fetch after a reload pays Fly machine wake + Neon wake + lazy
+  // pool init): ping the gateway on launch/foreground, proactively refresh an
+  // expired access token (so the first authed request skips 401→refresh→retry),
+  // and prefetch the default notes list. All fire-and-forget, off the render.
   useEffect(() => {
-    if (authStatus === 'signed_in') {
-      initSync()
-      return () => shutdownSync()
+    if (authStatus !== 'signed_in') return undefined
+    initSync()
+    initGatewayWarmup()
+    void (async () => {
+      const token = useAuthStore.getState().accessToken
+      // Only refresh when actually near expiry — the refresh token is Face-ID
+      // gated, so an unconditional refresh would prompt FaceID every launch.
+      if (accessTokenExpiringWithin(token, 60_000)) {
+        await ensureFreshAccessToken()
+      }
+      void queryClient.prefetchQuery({
+        ...notesListQueryOptions({ filterMode: 'all', folderSelection: null }),
+        staleTime: 30_000,
+      })
+    })()
+    return () => {
+      shutdownSync()
+      shutdownGatewayWarmup()
     }
-    return undefined
   }, [authStatus])
 
   // 3A — post-signin recovery surface for unsent recordings. If the user

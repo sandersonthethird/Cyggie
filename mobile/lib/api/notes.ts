@@ -73,6 +73,41 @@ export async function fetchNotes(
   return api.get<NotesListResponse>(path, { signal: opts.signal })
 }
 
+// Filter chips on the notes tab. 'all'/'untagged' are list scopes; 'private' =
+// my owner-only notes, 'public' = firm-shared (tagged & not private).
+export type NotesListFilterMode = 'all' | 'untagged' | 'private' | 'public'
+
+export const NOTES_LIST_DEFAULT_LIMIT = 100
+
+/**
+ * Canonical React-Query options ({ queryKey, queryFn }) for the notes list.
+ * Shared by the notes tab's useQuery and the launch-time prefetch in
+ * _layout.tsx so their cache keys can't drift — a mismatched prefetch key
+ * silently populates a dead entry the tab never reads. Behavior options
+ * (staleTime, placeholderData) stay at each call site.
+ */
+export function notesListQueryOptions(params: {
+  q?: string
+  filterMode: NotesListFilterMode
+  folderSelection: string | null
+  limit?: number
+}) {
+  const { q = '', filterMode, folderSelection, limit = NOTES_LIST_DEFAULT_LIMIT } = params
+  return {
+    queryKey: ['notes', 'list', q, filterMode, folderSelection] as const,
+    queryFn: ({ signal }: { signal?: AbortSignal }) =>
+      fetchNotes({
+        q: q || undefined,
+        untagged: filterMode === 'untagged' ? true : undefined,
+        visibility:
+          filterMode === 'private' ? 'private' : filterMode === 'public' ? 'shared' : undefined,
+        folderPath: folderSelection ?? undefined,
+        limit,
+        signal,
+      }),
+  }
+}
+
 export async function fetchNote(
   id: string,
   opts: { signal?: AbortSignal } = {},

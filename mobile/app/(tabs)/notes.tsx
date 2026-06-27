@@ -16,9 +16,10 @@ import { router } from 'expo-router'
 import { ApiError } from '../../lib/api/client'
 import {
   fetchNoteFolders,
-  fetchNotes,
+  notesListQueryOptions,
   NOTES_INBOX_SENTINEL,
   type NoteListItem,
+  type NotesListFilterMode,
 } from '../../lib/api/notes'
 import { useCreateNote } from '../../lib/notes/use-create-note'
 import { NotesFolderPicker } from '../../components/NotesFolderPicker'
@@ -38,7 +39,7 @@ const SEARCH_DEBOUNCE_MS = 250
 
 // 'private' = my own owner-only notes; 'public' = firm-shared (tagged & not
 // private), incl. teammates'. Mutually exclusive with 'all'/'untagged'.
-type FilterMode = 'all' | 'untagged' | 'private' | 'public'
+type FilterMode = NotesListFilterMode
 
 export default function NotesTab() {
   const signOut = useAuthStore((s) => s.signOut)
@@ -58,21 +59,7 @@ export default function NotesTab() {
   }, [searchInput])
 
   const query = useQuery({
-    queryKey: ['notes', 'list', debouncedQ, filterMode, folderSelection],
-    queryFn: ({ signal }) =>
-      fetchNotes({
-        q: debouncedQ || undefined,
-        untagged: filterMode === 'untagged' ? true : undefined,
-        visibility:
-          filterMode === 'private'
-            ? 'private'
-            : filterMode === 'public'
-              ? 'shared'
-              : undefined,
-        folderPath: folderSelection ?? undefined,
-        limit: PAGE_LIMIT,
-        signal,
-      }),
+    ...notesListQueryOptions({ q: debouncedQ, filterMode, folderSelection, limit: PAGE_LIMIT }),
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   })
