@@ -927,6 +927,48 @@ describe('runImport — new custom select field persists optionsJson (gap fix)',
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// runImport — combined "City, State" column splits into city + state
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('runImport — city_state combined column', () => {
+  it('splits a company "City, State" column into separate city + state', async () => {
+    mockGetOrCreateCompanyByName.mockImplementation((name: string) => ({ id: `co-${name}` }))
+    const mappings = [
+      { csvHeader: 'Company', targetEntity: 'company' as const, targetField: 'canonical_name' },
+      { csvHeader: 'Location', targetEntity: 'company' as const, targetField: 'city_state' },
+    ]
+    const csv = 'Company,Location\nAcme,"New York, NY"\n'
+    const filePath = writeTempCsv('company-citystate.csv', csv)
+
+    await runImport(filePath, mappings, 'companies', vi.fn())
+
+    expect(mockUpdateCompany).toHaveBeenCalledWith(
+      'co-Acme',
+      expect.objectContaining({ city: 'New York', state: 'NY' }),
+      'test-user',
+    )
+  })
+
+  it('splits a contact "City, State" column into separate city + state', async () => {
+    mockCreateContact.mockImplementation((d: { fullName: string }) => ({ id: `c-${d.fullName}` }))
+    const mappings = [
+      { csvHeader: 'Name', targetEntity: 'contact' as const, targetField: 'full_name' },
+      { csvHeader: 'Location', targetEntity: 'contact' as const, targetField: 'city_state' },
+    ]
+    const csv = 'Name,Location\nAlice,"San Francisco, CA"\n'
+    const filePath = writeTempCsv('contact-citystate.csv', csv)
+
+    await runImport(filePath, mappings, 'contacts', vi.fn())
+
+    expect(mockUpdateContact).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ city: 'San Francisco', state: 'CA' }),
+      'test-user',
+    )
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // appendFieldOptions — idempotent, batched, write-only-on-change
 // ═══════════════════════════════════════════════════════════════════════════════
 

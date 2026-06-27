@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitMultiValue, detectMultiValue, extractOptions } from '../shared/csv-multivalue'
+import { splitMultiValue, detectMultiValue, extractOptions, parseCityState } from '../shared/csv-multivalue'
 
 describe('splitMultiValue', () => {
   it('keeps a single company name with a legal suffix as one value', () => {
@@ -54,5 +54,26 @@ describe('extractOptions', () => {
   it('caps at 20 options', () => {
     const many = Array.from({ length: 30 }, (_, i) => `opt${i}`).join(', ')
     expect(extractOptions([many])).toHaveLength(20)
+  })
+})
+
+describe('parseCityState', () => {
+  it('splits "City, ST" on the last comma', () => {
+    expect(parseCityState('New York, NY')).toEqual({ city: 'New York', state: 'NY' })
+    expect(parseCityState('San Francisco, CA')).toEqual({ city: 'San Francisco', state: 'CA' })
+    expect(parseCityState('Austin, Texas')).toEqual({ city: 'Austin', state: 'Texas' })
+  })
+
+  it('treats everything before the last comma as the city', () => {
+    expect(parseCityState('Brooklyn, New York, NY')).toEqual({ city: 'Brooklyn, New York', state: 'NY' })
+  })
+
+  it('returns no state when there is no comma', () => {
+    expect(parseCityState('London')).toEqual({ city: 'London', state: null })
+  })
+
+  it('handles trailing/leading whitespace and empty halves', () => {
+    expect(parseCityState('  New York , NY ')).toEqual({ city: 'New York', state: 'NY' })
+    expect(parseCityState('New York,')).toEqual({ city: 'New York,', state: null })
   })
 })

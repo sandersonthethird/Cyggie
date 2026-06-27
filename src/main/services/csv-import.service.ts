@@ -58,6 +58,7 @@ import type {
   CSVFileInfo
 } from '../../shared/types/csv-import'
 import type { CustomFieldType } from '../../shared/types/custom-fields'
+import { parseCityState } from '../../shared/csv-multivalue'
 import { getProvider } from '@cyggie/services/llm/provider-factory'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
 import * as contactRepo from '@cyggie/db/sqlite/repositories'
@@ -600,6 +601,19 @@ export function splitFullName(fullName: string): { firstName: string; lastName: 
 }
 
 /**
+ * Expand a combined "City, State" value into separate [field, value] writes.
+ * Used when a column is mapped to the synthetic `city_state` target. Returns the
+ * city always, and state only when present (so a bare "New York" just sets city).
+ */
+export function expandCityState(value: string): Array<[string, string]> {
+  const { city, state } = parseCityState(value)
+  const pairs: Array<[string, string]> = []
+  if (city) pairs.push(['city', city])
+  if (state) pairs.push(['state', state])
+  return pairs
+}
+
+/**
  * Resolve the field type + curated options for a new custom field from its mapping.
  * Precedence: explicit `fieldType` on the mapping → legacy `isMultiSelect` flag →
  * 'text'. Options only apply to select/multiselect.
@@ -957,16 +971,23 @@ export async function runImport(
               const updateData: Record<string, unknown> = {}
               for (const m of companyMappings) {
                 if (m.targetField === 'canonical_name') continue
-                const val = row[m.csvHeader]?.trim()
-                if (!val) continue
-                const camelKey = toCamelCase(m.targetField!)
-                if (isNew || companySkipSet.has(company.id)) {
-                  // New company: apply all values. Skipped company: no updates.
-                  if (!companySkipSet.has(company.id)) updateData[camelKey] = val
-                } else {
-                  const existingVal = (company as unknown as Record<string, unknown>)[camelKey]
-                  if (!existingVal || companyOverwriteSetCamel.has(camelKey)) {
-                    updateData[camelKey] = val
+                const rawVal = row[m.csvHeader]?.trim()
+                if (!rawVal) continue
+                // A combined "City, State" column expands into separate city + state writes.
+                const pairs: Array<[string, string]> =
+                  m.targetField === 'city_state'
+                    ? expandCityState(rawVal)
+                    : [[m.targetField!, rawVal]]
+                for (const [field, val] of pairs) {
+                  const camelKey = toCamelCase(field)
+                  if (isNew || companySkipSet.has(company.id)) {
+                    // New company: apply all values. Skipped company: no updates.
+                    if (!companySkipSet.has(company.id) && !updateData[camelKey]) updateData[camelKey] = val
+                  } else {
+                    const existingVal = (company as unknown as Record<string, unknown>)[camelKey]
+                    if (!existingVal || companyOverwriteSetCamel.has(camelKey)) {
+                      updateData[camelKey] = val
+                    }
                   }
                 }
               }
@@ -1112,19 +1133,26 @@ export async function runImport(
             const extraFields: Record<string, unknown> = {}
             for (const m of contactMappings) {
               if (STAGE1_CONTACT_KEYS.has(m.targetField!)) continue
-              const val = row[m.csvHeader]?.trim()
-              if (!val) continue
-              const camelKey = toCamelCase(m.targetField!)
-              if (actuallyNew) {
-                extraFields[camelKey] = val
-              } else {
-                const existingVal = (existingContact as unknown as Record<string, unknown>)[camelKey]
-                if (!existingVal) {
-                  extraFields[camelKey] = val
-                  totalFieldsFilled++
-                } else if (contactOverwriteSetCamel.has(camelKey)) {
-                  extraFields[camelKey] = val
-                  totalFieldsOverwritten++
+              const rawVal = row[m.csvHeader]?.trim()
+              if (!rawVal) continue
+              // A combined "City, State" column expands into separate city + state writes.
+              const pairs: Array<[string, string]> =
+                m.targetField === 'city_state'
+                  ? expandCityState(rawVal)
+                  : [[m.targetField!, rawVal]]
+              for (const [field, val] of pairs) {
+                const camelKey = toCamelCase(field)
+                if (actuallyNew) {
+                  if (!extraFields[camelKey]) extraFields[camelKey] = val
+                } else {
+                  const existingVal = (existingContact as unknown as Record<string, unknown>)[camelKey]
+                  if (!existingVal && !extraFields[camelKey]) {
+                    extraFields[camelKey] = val
+                    totalFieldsFilled++
+                  } else if (contactOverwriteSetCamel.has(camelKey)) {
+                    extraFields[camelKey] = val
+                    totalFieldsOverwritten++
+                  }
                 }
               }
             }

@@ -63,3 +63,20 @@ export function extractOptions(sampleValues: string[]): string[] {
   }
   return [...seen].slice(0, 20)
 }
+
+// ─── Combined "City, State" parsing ───────────────────────────────────────────
+//
+// Some CSVs put location in one column ("New York, NY"). Cyggie stores city + state
+// separately, so when a column is mapped to the combined "City + State" field we split
+// on the LAST comma: everything before is the city, the trailing token is the state.
+// No comma → whole value is the city.
+
+export function parseCityState(value: string): { city: string; state: string | null } {
+  const trimmed = value.trim()
+  const idx = trimmed.lastIndexOf(',')
+  if (idx === -1) return { city: trimmed, state: null }
+  const city = trimmed.slice(0, idx).trim()
+  const state = trimmed.slice(idx + 1).trim()
+  if (!city || !state) return { city: trimmed, state: null }
+  return { city, state }
+}
