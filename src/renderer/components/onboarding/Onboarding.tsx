@@ -15,6 +15,7 @@ import { useEffect, useReducer, useState } from 'react'
 import { usePreferencesStore } from '../../stores/preferences.store'
 import { api } from '../../api'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
+import type { MaskedKey } from '../../../shared/types/settings'
 import { decideGate, STEP } from './onboarding-logic'
 import { FlatProgress } from './FlatProgress'
 import { SignInStep } from './steps/SignInStep'
@@ -113,12 +114,12 @@ export function Onboarding() {
       const [auth, calConnected, settings] = await Promise.all([
         api.invoke<{ signedIn: boolean }>(IPC_CHANNELS.CYGGIE_AUTH_STATUS).catch(() => ({ signedIn: false })),
         api.invoke<boolean>(IPC_CHANNELS.CALENDAR_IS_CONNECTED).catch(() => false),
-        api.invoke<Record<string, string>>(IPC_CHANNELS.SETTINGS_GET_ALL).catch(() => ({}) as Record<string, string>),
+        api.invoke<Record<string, MaskedKey | string>>(IPC_CHANNELS.SETTINGS_GET_ALL).catch(() => ({}) as Record<string, MaskedKey | string>),
       ])
       if (!alive) return
 
-      const hasDeepgram = Boolean(settings?.['deepgramApiKey'])
-      const hasAnthropic = Boolean(settings?.['claudeApiKey'])
+      const hasDeepgram = (settings?.['deepgramApiKey'] as MaskedKey | undefined)?.configured ?? false
+      const hasAnthropic = (settings?.['claudeApiKey'] as MaskedKey | undefined)?.configured ?? false
       const firmName = saved?.firmName ?? ''
       const gate = decideGate({
         onboardingComplete: false,
