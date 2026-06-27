@@ -33,3 +33,51 @@
     transform: rotate(360deg);
   }
 }
+
+/* Non-image (PDF) in-flight preview: a small labeled pill (a blob: PDF can't
+   render in an <img>). */
+.attachmentUploadPreviewLabel {
+  display: inline-block;
+  padding: 6px 28px 6px 12px;
+  font-size: 13px;
+  border-radius: 8px;
+  background: var(--cv-navy-tint, #eef0f4);
+  color: var(--color-text-secondary, #556170);
+}
+
+/* Inline PDF attachment node (see pdf-attachment-extension.ts). Global, not a
+   CSS module, because the NodeView DOM uses literal class names. */
+.pdfAttachment {
+  margin: 10px 0;
+  border: 1px solid var(--color-border, #d0d6de);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--color-card-bg, #fff);
+}
+
+.pdfAttachment.ProseMirror-selectednode {
+  outline: 2px solid var(--cv-crimson, #b91c1c);
+  outline-offset: 1px;
+}
+
+.pdfAttachmentHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text, #1a1e24);
+  border-bottom: 1px solid var(--color-border, #d0d6de);
+  background: var(--color-bg-secondary, #eef0f4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pdfAttachmentFrame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: #525659; /* matches Chromium's PDF viewer chrome */
+}

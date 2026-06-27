@@ -1,13 +1,16 @@
 // =============================================================================
-// attachment-insert.ts — renderer orchestration for inserting image attachments
-// into a Tiptap editor.
+// attachment-insert.ts — renderer orchestration for inserting attachments
+// (images + PDFs) into a Tiptap editor.
 //
 //   pick/paste/drop File → validate → decoration preview (instant) →
-//   getPathForFile → ATTACHMENT_UPLOAD IPC → on success swap the preview for a
-//   real Image node (`cyggie-attachment://{id}`); on failure drop the preview.
+//   ATTACHMENT_UPLOAD IPC → on success swap the preview for a real node
+//   (Image for images, PdfAttachment for PDFs, both `cyggie-attachment://{id}`);
+//   on failure drop the preview.
 //
-// The reference reaches the document (and thus the autosave) ONLY after the
-// upload confirms — see attachment-upload-extension.ts for why that matters.
+// Images and PDFs share ONE orchestration core (`insertAttachmentFiles`); they
+// differ only in the validate ruleset, the preview chrome, and which node the
+// resolved upload becomes. See attachment-upload-extension.ts for why the
+// reference only reaches the document (and thus autosave) after the upload IPC.
 // =============================================================================
 
 import type { Editor } from '@tiptap/react'
@@ -16,45 +19,74 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import {
   ATTACHMENT_MAX_UPLOAD_BYTES,
   isRasterImageMime,
+  isPdfMime,
   imageMimeFromFilename,
+  pdfMimeFromFilename,
+  PDF_MIME,
 } from '../../shared/attachments'
 
-export type ImageFileValidation = { ok: true; mime: string } | { ok: false; reason: string }
+export type AttachmentValidation = { ok: true; mime: string } | { ok: false; reason: string }
+/** @deprecated kept for back-compat; use AttachmentValidation. */
+export type ImageFileValidation = AttachmentValidation
+
+type FileMeta = { name: string; type: string; size: number }
+
+function tooLargeReason(noun: string): string {
+  const mb = Math.floor(ATTACHMENT_MAX_UPLOAD_BYTES / (1024 * 1024))
+  return `${noun} is too large (max ${mb} MB).`
+}
 
 /** PURE: validate a candidate image file (mime + non-empty + under the cap). */
-export function validateImageFile(file: { name: string; type: string; size: number }): ImageFileValidation {
+export function validateImageFile(file: FileMeta): AttachmentValidation {
   const mime = isRasterImageMime(file.type) ? file.type : imageMimeFromFilename(file.name)
   if (!mime) return { ok: false, reason: 'Only PNG, JPG, GIF, or WebP images are supported.' }
   if (file.size === 0) return { ok: false, reason: 'That file is empty.' }
-  if (file.size > ATTACHMENT_MAX_UPLOAD_BYTES) {
-    const mb = Math.floor(ATTACHMENT_MAX_UPLOAD_BYTES / (1024 * 1024))
-    return { ok: false, reason: `Image is too large (max ${mb} MB).` }
-  }
+  if (file.size > ATTACHMENT_MAX_UPLOAD_BYTES) return { ok: false, reason: tooLargeReason('Image') }
   return { ok: true, mime }
 }
 
-function isImageCandidate(file: File): boolean {
+/** PURE: validate a candidate PDF file (mime/extension + non-empty + under the cap). */
+export function validatePdfFile(file: FileMeta): AttachmentValidation {
+  const mime = isPdfMime(file.type) ? PDF_MIME : pdfMimeFromFilename(file.name)
+  if (!mime) return { ok: false, reason: 'Only PDF files are supported here.' }
+  if (file.size === 0) return { ok: false, reason: 'That file is empty.' }
+  if (file.size > ATTACHMENT_MAX_UPLOAD_BYTES) return { ok: false, reason: tooLargeReason('PDF') }
+  return { ok: true, mime }
+}
+
+export function isImageCandidate(file: File): boolean {
   return file.type.startsWith('image/') || imageMimeFromFilename(file.name) !== null
 }
 
-/** Image files present in a paste's clipboard data (empty → let default paste run). */
-export function imageFilesFromClipboard(data: DataTransfer | null): File[] {
+export function isPdfCandidate(file: File): boolean {
+  return isPdfMime(file.type) || pdfMimeFromFilename(file.name) !== null
+}
+
+function filesFromClipboard(data: DataTransfer | null, pred: (f: File) => boolean): File[] {
   if (!data) return []
   const out: File[] = []
   for (const item of Array.from(data.items)) {
     if (item.kind === 'file') {
       const f = item.getAsFile()
-      if (f && isImageCandidate(f)) out.push(f)
+      if (f && pred(f)) out.push(f)
     }
   }
   return out
 }
 
-/** Image files present in a drop's data transfer. */
-export function imageFilesFromDrop(data: DataTransfer | null): File[] {
-  if (!data) return []
-  return Array.from(data.files).filter(isImageCandidate)
-}
+/** Image files present in a paste (empty → let default paste run). */
+export const imageFilesFromClipboard = (d: DataTransfer | null): File[] =>
+  filesFromClipboard(d, isImageCandidate)
+/** PDF files present in a paste. */
+export const pdfFilesFromClipboard = (d: DataTransfer | null): File[] =>
+  filesFromClipboard(d, isPdfCandidate)
+
+/** Image files present in a drop. */
+export const imageFilesFromDrop = (d: DataTransfer | null): File[] =>
+  d ? Array.from(d.files).filter(isImageCandidate) : []
+/** PDF files present in a drop. */
+export const pdfFilesFromDrop = (d: DataTransfer | null): File[] =>
+  d ? Array.from(d.files).filter(isPdfCandidate) : []
 
 export interface AttachmentInsertOpts {
   ownerType: 'note' | 'memo'
@@ -62,54 +94,83 @@ export interface AttachmentInsertOpts {
   onError?: (message: string) => void
 }
 
-let previewCounter = 0
-
 interface UploadResponse {
   id: string
-  kind: 'image'
+  kind: 'image' | 'pdf'
   filename: string
   mimeType: string
 }
 
-/** Insert one or more image files, each with its own in-flight preview. */
-export async function insertImageFiles(
+// Per-kind hooks for the shared orchestration core.
+interface AttachmentKindSpec {
+  validate: (file: FileMeta) => AttachmentValidation
+  /** Instant in-flight preview chrome: a blob thumbnail (image) or a label (pdf). */
+  preview: (file: File) => { previewUrl?: string; label?: string }
+  /** Swap the resolved upload into the real editor node. */
+  resolve: (editor: Editor, tempId: string, res: UploadResponse) => void
+}
+
+let previewCounter = 0
+
+/** Shared core: validate → preview → upload → resolve, one file at a time. */
+async function insertAttachmentFiles(
   editor: Editor,
   files: File[],
   opts: AttachmentInsertOpts,
+  spec: AttachmentKindSpec,
 ): Promise<void> {
   for (const file of files) {
-    const v = validateImageFile(file)
+    const v = spec.validate(file)
     if (!v.ok) {
       opts.onError?.(v.reason)
       continue
     }
 
     const tempId = `att-preview-${++previewCounter}`
-    const previewUrl = URL.createObjectURL(file)
-    editor.commands.addUploadPreview({ id: tempId, previewUrl })
+    const preview = spec.preview(file)
+    editor.commands.addUploadPreview({ id: tempId, previewUrl: preview.previewUrl, label: preview.label })
 
     try {
-      // Send the bytes (not a path): a pasted screenshot is an in-memory blob
-      // with no filesystem path, so File.arrayBuffer() is the only universal
-      // source across paste / drop / file-picker.
+      // Send the bytes (not a path): a pasted blob has no filesystem path, so
+      // File.arrayBuffer() is the only universal source across paste/drop/picker.
       const bytes = new Uint8Array(await file.arrayBuffer())
       const res = await api.invoke<UploadResponse>(IPC_CHANNELS.ATTACHMENT_UPLOAD, {
         ownerType: opts.ownerType,
         ownerId: opts.ownerId,
-        filename: file.name || `image.${v.mime.split('/')[1]}`,
+        filename: file.name || `attachment.${v.mime.split('/')[1]}`,
         mimeType: v.mime,
         bytes,
       })
-      editor.commands.resolveUploadPreview({
-        id: tempId,
-        src: `cyggie-attachment://${res.id}`,
-        alt: res.filename,
-      })
+      spec.resolve(editor, tempId, res)
     } catch (err) {
       editor.commands.removeUploadPreview({ id: tempId })
       opts.onError?.(err instanceof Error ? err.message : 'Upload failed.')
     } finally {
-      URL.revokeObjectURL(previewUrl)
+      if (preview.previewUrl) URL.revokeObjectURL(preview.previewUrl)
     }
   }
+}
+
+/** Insert one or more IMAGE files, each with its own in-flight blob preview. */
+export function insertImageFiles(editor: Editor, files: File[], opts: AttachmentInsertOpts): Promise<void> {
+  return insertAttachmentFiles(editor, files, opts, {
+    validate: validateImageFile,
+    preview: (file) => ({ previewUrl: URL.createObjectURL(file) }),
+    resolve: (ed, tempId, res) =>
+      ed.commands.resolveUploadPreview({
+        id: tempId,
+        src: `cyggie-attachment://${res.id}`,
+        alt: res.filename,
+      }),
+  })
+}
+
+/** Insert one or more PDF files, each with its own in-flight label preview. */
+export function insertPdfFiles(editor: Editor, files: File[], opts: AttachmentInsertOpts): Promise<void> {
+  return insertAttachmentFiles(editor, files, opts, {
+    validate: validatePdfFile,
+    preview: () => ({ label: 'Adding PDF…' }),
+    resolve: (ed, tempId, res) =>
+      ed.commands.resolvePdfPreview({ id: tempId, attachmentId: res.id, name: res.filename }),
+  })
 }

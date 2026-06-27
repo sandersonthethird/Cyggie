@@ -23,8 +23,12 @@ import { api } from '../../api'
 import { useFeatureFlag } from '../../hooks/useFeatureFlags'
 import {
   insertImageFiles,
+  insertPdfFiles,
   imageFilesFromClipboard,
   imageFilesFromDrop,
+  pdfFilesFromClipboard,
+  pdfFilesFromDrop,
+  isPdfCandidate,
 } from '../../lib/attachment-insert'
 import { parseToDate } from '../../utils/format'
 import styles from './NotePaneEditor.module.css'
@@ -95,27 +99,25 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
   }, [])
   useEffect(() => () => { if (attachErrorTimer.current) clearTimeout(attachErrorTimer.current) }, [])
 
-  // Intercept image paste/drop at the CAPTURE phase on the editor's own DOM, so
-  // we run BEFORE ProseMirror's bubble-phase handlers (which would otherwise
-  // consume or ignore the event); stopPropagation keeps PM from also handling
-  // it. Only image files are claimed — text/other paste falls through to PM.
+  // Intercept image + PDF paste/drop at the CAPTURE phase on the editor's own
+  // DOM, so we run BEFORE ProseMirror's bubble-phase handlers (which would
+  // otherwise consume or ignore the event); stopPropagation keeps PM from also
+  // handling it. Only image/PDF files are claimed — text/other falls through to PM.
   useEffect(() => {
     if (!canAttach || !editor) return
     const dom = editor.view.dom
-    const onPaste = (e: ClipboardEvent): void => {
-      const files = imageFilesFromClipboard(e.clipboardData)
-      if (files.length === 0) return
+    const opts = { ownerType: 'note' as const, ownerId: noteId, onError: showAttachError }
+    const route = (e: Event, images: File[], pdfs: File[]): void => {
+      if (images.length === 0 && pdfs.length === 0) return
       e.preventDefault()
       e.stopPropagation()
-      void insertImageFiles(editor, files, { ownerType: 'note', ownerId: noteId, onError: showAttachError })
+      if (images.length) void insertImageFiles(editor, images, opts)
+      if (pdfs.length) void insertPdfFiles(editor, pdfs, opts)
     }
-    const onDrop = (e: DragEvent): void => {
-      const files = imageFilesFromDrop(e.dataTransfer)
-      if (files.length === 0) return
-      e.preventDefault()
-      e.stopPropagation()
-      void insertImageFiles(editor, files, { ownerType: 'note', ownerId: noteId, onError: showAttachError })
-    }
+    const onPaste = (e: ClipboardEvent): void =>
+      route(e, imageFilesFromClipboard(e.clipboardData), pdfFilesFromClipboard(e.clipboardData))
+    const onDrop = (e: DragEvent): void =>
+      route(e, imageFilesFromDrop(e.dataTransfer), pdfFilesFromDrop(e.dataTransfer))
     dom.addEventListener('paste', onPaste, true)
     dom.addEventListener('drop', onDrop, true)
     return () => {
@@ -129,7 +131,11 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
       const files = Array.from(e.target.files ?? [])
       e.target.value = '' // allow re-picking the same file
       if (!canAttach || !editor || files.length === 0) return
-      void insertImageFiles(editor, files, { ownerType: 'note', ownerId: noteId, onError: showAttachError })
+      const pdfs = files.filter(isPdfCandidate)
+      const images = files.filter((f) => !isPdfCandidate(f))
+      const opts = { ownerType: 'note' as const, ownerId: noteId, onError: showAttachError }
+      if (images.length) void insertImageFiles(editor, images, opts)
+      if (pdfs.length) void insertPdfFiles(editor, pdfs, opts)
     },
     [canAttach, editor, noteId, showAttachError],
   )
@@ -452,7 +458,7 @@ function NotePaneEditorInner({ noteId, onNoteUpdated, onNoteDeleted }: InnerProp
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp"
+          accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"
           multiple
           style={{ display: 'none' }}
           onChange={handleFilePicked}

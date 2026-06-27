@@ -28,6 +28,7 @@ import {
   deleteUploadByAttachmentId,
   getAttachment,
   softDeleteAttachment,
+  type AttachmentKind,
 } from '@cyggie/db/sqlite/repositories'
 import { getCurrentUserId } from '../security/current-user'
 import { triggerAttachmentUploadFlush } from '../services/attachment-upload-flusher.service'
@@ -40,7 +41,9 @@ import {
 import {
   ATTACHMENT_MAX_UPLOAD_BYTES,
   isRasterImageMime,
+  isPdfMime,
   imageMimeFromFilename,
+  pdfMimeFromFilename,
   extensionForMime,
 } from '../../shared/attachments'
 
@@ -55,7 +58,7 @@ interface UploadInput {
 
 export interface UploadResult {
   id: string
-  kind: 'image'
+  kind: AttachmentKind
   filename: string
   mimeType: string
 }
@@ -69,16 +72,21 @@ export function registerAttachmentHandlers(): void {
         throw new Error('ownerType, ownerId, and bytes are required')
       }
 
-      // Re-validate the mime server-side (never trust the renderer): accept the
-      // claimed mime only if it's an allowed raster type, else infer from the
+      // Re-validate the mime server-side (never trust the renderer): accept a
+      // raster image OR a PDF — by the claimed mime, else inferred from the
       // filename. Reject anything else.
-      const mimeType = isRasterImageMime(input.mimeType)
-        ? input.mimeType
-        : imageMimeFromFilename(input.filename ?? '')
+      const claimed = input.mimeType ?? ''
+      const fname = input.filename ?? ''
+      const mimeType =
+        isRasterImageMime(claimed) || isPdfMime(claimed)
+          ? claimed
+          : imageMimeFromFilename(fname) ?? pdfMimeFromFilename(fname)
       if (!mimeType) {
-        throw new Error('Unsupported file type — images only (png, jpg, gif, webp)')
+        throw new Error('Unsupported file type — images (png, jpg, gif, webp) or PDF')
       }
-      const filename = input.filename || `image.${extensionForMime(mimeType)}`
+      const kind: AttachmentKind = isPdfMime(mimeType) ? 'pdf' : 'image'
+      const filename =
+        input.filename || `${kind === 'pdf' ? 'document' : 'image'}.${extensionForMime(mimeType)}`
 
       const bytes = Buffer.from(input.bytes)
       if (bytes.length === 0) throw new Error('File is empty')
@@ -90,8 +98,8 @@ export function registerAttachmentHandlers(): void {
       const id = createId()
       const userId = getCurrentUserId()
 
-      // 1. Write bytes to the local cache so the image renders instantly + the
-      //    flusher has its source (the cache is the byte queue's backing store).
+      // 1. Write bytes to the local cache so the attachment renders instantly +
+      //    the flusher has its source (the cache is the byte queue's backing store).
       writeCached(id, bytes, { mimeType, checksum, sizeBytes: bytes.length })
 
       // 2. Enqueue the background upload. No network here — returns immediately,
@@ -101,7 +109,7 @@ export function registerAttachmentHandlers(): void {
         userId,
         ownerType,
         ownerId,
-        kind: 'image',
+        kind,
         filename,
         mimeType,
         sizeBytes: bytes.length,
@@ -111,7 +119,7 @@ export function registerAttachmentHandlers(): void {
       // 3. Nudge the flusher (no-op if not signed in — it stays queued).
       triggerAttachmentUploadFlush()
 
-      return { id, kind: 'image', filename, mimeType }
+      return { id, kind, filename, mimeType }
     },
   )
 
