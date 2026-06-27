@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type {
@@ -524,7 +525,11 @@ export function ImportModal({ onClose, onComplete }: Props) {
     4: 'Step 4 of 4 — Import',
   }
 
-  return (
+  // Render through a portal to document.body so the modal escapes the onboarding
+  // shell (.gate), which is a frameless-window drag region (-webkit-app-region: drag).
+  // Inside that region the OS swallows pointer/wheel events, breaking clicks AND
+  // scrolling even with no-drag overrides; portaling out sidesteps it entirely.
+  return createPortal(
     <div className={styles.overlay} onClick={(e) => { if (e.target === e.currentTarget && !importing) onClose() }}>
       <div className={styles.modal}>
 
@@ -1096,7 +1101,8 @@ export function ImportModal({ onClose, onComplete }: Props) {
         </div>
 
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
