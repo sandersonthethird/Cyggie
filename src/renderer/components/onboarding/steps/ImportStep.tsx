@@ -9,13 +9,16 @@
 // more than one file (e.g. contacts.csv then companies.csv).
 // =============================================================================
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { usePreferencesStore } from '../../../stores/preferences.store'
+import { api } from '../../../api'
+import { IPC_CHANNELS } from '../../../../shared/constants/channels'
 import { ImportModal } from '../../settings/ImportModal'
 import { deriveFieldProfile, type FirmFieldProfile } from '../onboarding-logic'
 import { StepLinks } from '../StepLinks'
 import styles from '../Onboarding.module.css'
 import type { FieldMapping, ImportResult } from '../../../../shared/types/csv-import'
+import type { MaskedKey } from '../../../../shared/types/settings'
 
 const PROFILE_PREF_KEY = 'onboarding:firm-field-profile'
 
@@ -40,6 +43,27 @@ export function ImportStep({
   const [totals, setTotals] = useState({ contacts: 0, companies: 0, updated: 0, files: 0 })
   // Tokens (`contact:<key>` / `company:<key>`) the user turned OFF in the review.
   const [dropped, setDropped] = useState<Set<string>>(new Set())
+  // Whether AI field-mapping suggestions will be available. Optimistic default so
+  // the heads-up never flashes before the settings check resolves. Mirrors
+  // getProvider()'s key requirement (provider-factory.ts): Ollama needs no key,
+  // OpenAI needs openAiApiKey, Claude (default) needs claudeApiKey. When false,
+  // CSV import silently falls back to deterministic alias-table mapping.
+  const [aiMappingAvailable, setAiMappingAvailable] = useState(true)
+
+  useEffect(() => {
+    void api
+      .invoke<Record<string, MaskedKey | string>>(IPC_CHANNELS.SETTINGS_GET_ALL)
+      .then((all) => {
+        const provider = (all?.['llmProvider'] as string) || 'claude'
+        if (provider === 'ollama') {
+          setAiMappingAvailable(true)
+          return
+        }
+        const keyName = provider === 'openai' ? 'openAiApiKey' : 'claudeApiKey'
+        setAiMappingAvailable((all?.[keyName] as MaskedKey | undefined)?.configured ?? false)
+      })
+      .catch(() => setAiMappingAvailable(true)) // never block import on a check failure
+  }, [])
 
   const hasImported = mappingsPerFile.length > 0
   const base = useMemo(() => deriveFieldProfile(mappingsPerFile), [mappingsPerFile])
@@ -96,6 +120,12 @@ export function ImportStep({
 
       {!hasImported ? (
         <>
+          {!aiMappingAvailable && (
+            <p className={styles.sub}>
+              No API key yet — we&rsquo;ll match common columns automatically. Add a key in
+              the Keys step for smarter AI field mapping.
+            </p>
+          )}
           <button type="button" className={styles.primaryBtn} onClick={() => setModalOpen(true)}>
             Import a CSV file
           </button>
