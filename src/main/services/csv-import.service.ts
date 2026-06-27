@@ -82,7 +82,10 @@ export const CONTACT_FIELD_KEYS = [
   'timezone', 'pronouns', 'birthday', 'university', 'previous_companies',
   'tags', 'notes', 'relationship_strength', 'fund_size',
   'typical_check_size_min', 'typical_check_size_max',
-  'investment_stage_focus', 'investment_sector_focus'
+  'investment_stage_focus', 'investment_sector_focus',
+  'investment_sector_focus_notes', 'street', 'postal_code', 'country',
+  'other_socials', 'key_takeaways', 'work_history', 'education_history',
+  'linkedin_headline', 'linkedin_skills'
 ]
 
 export const COMPANY_FIELD_KEYS = [
@@ -90,7 +93,15 @@ export const COMPANY_FIELD_KEYS = [
   'entity_type', 'city', 'state', 'founding_year', 'employee_count_range',
   'linkedin_company_url', 'twitter_handle', 'crunchbase_url', 'arr',
   'burn_rate', 'runway_months', 'total_funding_raised', 'last_funding_date',
-  'pipeline_stage', 'priority', 'round', 'deal_source'
+  'pipeline_stage', 'priority', 'round', 'deal_source',
+  'stage', 'status', 'target_customer', 'business_model', 'product_stage',
+  'revenue_model', 'target_investment_stage', 'target_investment_sector',
+  'angellist_url', 'portfolio_fund', 'lead_investor', 'relationship_owner',
+  'warm_intro_source', 'key_takeaways', 'post_money_valuation', 'raise_size',
+  'last_company_valuation', 'investment_size', 'ownership_pct', 'total_invested',
+  'investment_mark', 'investment_round', 'initial_investment_security',
+  'date_of_initial_investment', 'initial_round_size', 'followon_investment_size',
+  'followon_check', 'followon_date', 'followon_check_2', 'followon_date_2'
 ]
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024 // 50 MB
