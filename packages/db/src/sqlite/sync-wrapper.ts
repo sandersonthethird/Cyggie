@@ -5,6 +5,7 @@ import {
   isOwnedTable,
   type OwnedTableSpec,
 } from '../sync/owned-tables'
+import { buildOutboxPayloadJson } from '../sync/outbox-payload'
 
 // =============================================================================
 // sync-wrapper.ts — outbox-emission primitive for the SyncAgent.
@@ -146,7 +147,8 @@ export function appendOutboxRow(
     emission.table,
     rowId,
     emission.op,
-    JSON.stringify(emission.row),
+    // Drops the local user_id for gateway-stamped tables — see outbox-payload.ts.
+    buildOutboxPayloadJson(spec, emission.row),
     ctx.lamport,
   )
   ctx.emittedCount++

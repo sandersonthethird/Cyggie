@@ -29,6 +29,7 @@ import {
   type OwnedTableSpec,
 } from '@cyggie/db/sync/owned-tables'
 import { encodeRowId } from '@cyggie/db/sync/encode-row-id'
+import { buildOutboxPayloadJson } from '@cyggie/db/sync/outbox-payload'
 import { nextLamport } from '@cyggie/db/sync/sync-clock'
 
 const DEVICE_ID_KEY = 'syncDeviceId'
@@ -129,7 +130,17 @@ function enqueueOne(
     db.prepare(
       `INSERT INTO outbox (user_id, device_id, table_name, row_id, op, payload, lamport)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(userId, deviceId, tableName, rowId, 'insert', JSON.stringify(stampedRow), lamport)
+    ).run(
+      userId,
+      deviceId,
+      tableName,
+      rowId,
+      'insert',
+      // Drops the local user_id for gateway-stamped tables (contacts,
+      // org_companies) — see outbox-payload.ts.
+      buildOutboxPayloadJson(spec, stampedRow),
+      lamport,
+    )
   })
   tx()
 }

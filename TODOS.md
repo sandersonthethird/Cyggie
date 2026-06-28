@@ -959,6 +959,32 @@ fill out full M5 in subsequent passes.
 Captured during the 1.5a ship. None block the existing shipped slice but
 should land before Phase 1.5b expands the surface.
 
+### Two-identity unification (desktop adopts/maps the gateway id) 🔜 NEXT (after the outbox-remediation PR)
+**What:** the desktop mints its own local UUID (`randomUUID()` in
+[current-user.ts](src/main/security/current-user.ts), stored as `currentUserId`
++ `sync_state.user_id`) while the gateway knows the user by a separate cuid2 (the
+JWT `sub`). They are the same person but never reconciled. Unify them — desktop
+adopts the gateway id, or maintains an explicit alias mapping as the canonical
+identity.
+
+**Why:** this split is the shared root cause behind THREE separate bugs found
+2026-06-28: (1) the user's own notes locked read-only (shipped band-aid
+`ef1dee7` — `getMyUserIds()` + `currentUserGatewayId` alias); (2) outbox
+`user_id mismatch` push rejections for `company_flagged_files`/`attachments`
+(remediated by stripping the local id from the payload — `outbox-payload.ts`);
+(3) the contacts/links FK ambiguity. Each is patched at a different layer;
+without unification the band-aids keep accumulating.
+
+**Pros:** removes a whole class of identity bugs; simplifies ownership/visibility
+logic; lets us drop the alias-set workarounds.
+**Cons:** touches `sync_state.user_id`, `team_members`, and every
+`created_by_user_id` / `user_id` FK — a real data migration + a desktop release;
+must not break already-synced Neon rows.
+**Where to start:** decide canonical id (gateway cuid2 is the natural choice
+since Neon already keys on it); write a desktop migration that rewrites local FKs
++ `sync_state`; keep the `getMyUserIds()` alias as the transitional bridge.
+**Depends on:** the outbox-remediation PR (in progress) landing first.
+
 ### Desktop OAuth flow + getAccessTokenForSync wiring ✅ shipped
 Sign-in window on the desktop wired to the gateway's OAuth flow via custom
 `cyggie-desktop://` URL scheme. `cyggie-auth.ts` + `cyggie-auth-storage.ts`
