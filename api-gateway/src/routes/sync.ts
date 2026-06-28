@@ -16,6 +16,7 @@ import { getDb, getPool } from '../db'
 import type { GatewayEnv } from '../env'
 import { validateClientLamport } from '../sync/validate-lamport'
 import { entityVisibilityFilter, noteVisibilityFilter } from '../sync/visibility'
+import { maybeRunEnrichmentSweep } from '../services/enrichment/enrichment-sweep'
 
 // L2 — pull pagination. Cap each owned table to this many rows per page so a
 // firm-scoped cold start (since=0) can't return the whole firm dataset in one
@@ -1139,6 +1140,14 @@ export async function registerSyncRoutes(
         },
         'sync.pull complete',
       )
+
+      // T3 — request-piggybacked, throttled gateway enrichment fallback. Fire AFTER
+      // the response (setImmediate), flag-gated + self-throttled inside; never blocks
+      // or fails the pull. The offline-desktop user is on mobile and pulling, so this
+      // runs exactly when there's work that desktop didn't do.
+      setImmediate(() => {
+        void maybeRunEnrichmentSweep(env)
+      })
 
       return {
         meetings: pagedMeetings,

@@ -128,6 +128,13 @@ const EnvSchema = z.object({
     .default('true')
     .transform((v) => v === 'true'),
 
+  // T3 — gateway meeting-enrichment FALLBACK (the request-piggybacked sweep that
+  // enriches offline-desktop meetings). OFF by default; desktop owns enrichment.
+  GATEWAY_ENRICHMENT_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
   // Public base URL of the gateway (no trailing slash). The OAuth server
   // uses this to construct absolute URLs (issuer, redirect callbacks,
   // metadata endpoints). In dev: http://127.0.0.1:8443. In prod:
