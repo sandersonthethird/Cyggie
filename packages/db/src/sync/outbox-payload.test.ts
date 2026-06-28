@@ -6,17 +6,25 @@ const userScoped: OwnedTableSpec = { table: 'attachments', primaryKey: ['id'], h
 const joinTable: OwnedTableSpec = { table: 'email_contact_links', primaryKey: ['message_id', 'contact_id'], hasUserId: false }
 
 describe('buildOutboxPayloadJson — drop gateway-stamped user_id', () => {
-  it('omits user_id for a hasUserId table that carries one', () => {
-    const row = { id: 'a1', user_id: 'local-uuid', name: 'file.pdf', lamport: '7' }
+  it('omits camelCase userId (non-field-LWW repo row) but keeps attribution cols', () => {
+    // The real shape of the stuck company_flagged_files/attachments rows.
+    const row = { id: 'a1', userId: 'local-uuid', flaggedByUserId: 'local-uuid', name: 'file.pdf', lamport: '7' }
     const out = JSON.parse(buildOutboxPayloadJson(userScoped, row))
-    expect(out).toEqual({ id: 'a1', name: 'file.pdf', lamport: '7' })
+    expect(out).toEqual({ id: 'a1', flaggedByUserId: 'local-uuid', name: 'file.pdf', lamport: '7' })
+    expect('userId' in out).toBe(false)
+  })
+
+  it('omits snake_case user_id (field-LWW bare row)', () => {
+    const row = { id: 'c1', user_id: 'local-uuid', name: 'Acme', lamport: '7' }
+    const out = JSON.parse(buildOutboxPayloadJson(userScoped, row))
+    expect(out).toEqual({ id: 'c1', name: 'Acme', lamport: '7' })
     expect('user_id' in out).toBe(false)
   })
 
   it('does not mutate the input row', () => {
-    const row = { id: 'a1', user_id: 'local-uuid' }
+    const row = { id: 'a1', userId: 'local-uuid' }
     buildOutboxPayloadJson(userScoped, row)
-    expect(row.user_id).toBe('local-uuid')
+    expect(row.userId).toBe('local-uuid')
   })
 
   it('is a no-op for a hasUserId table whose row has no user_id column', () => {
@@ -36,8 +44,9 @@ describe('buildOutboxPayloadJson — drop gateway-stamped user_id', () => {
     for (const table of ['company_flagged_files', 'attachments']) {
       const spec = OWNED_TABLES_BY_NAME.get(table)!
       expect(spec.hasUserId).toBe(true)
-      const out = JSON.parse(buildOutboxPayloadJson(spec, { id: 'x', user_id: 'local', lamport: '1' }))
-      expect('user_id' in out).toBe(false)
+      // Real rows are camelCase (repo return).
+      const out = JSON.parse(buildOutboxPayloadJson(spec, { id: 'x', userId: 'local', lamport: '1' }))
+      expect('userId' in out).toBe(false)
     }
   })
 })

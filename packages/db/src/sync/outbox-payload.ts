@@ -30,16 +30,24 @@
 import type { OwnedTableSpec } from './owned-tables'
 
 /**
- * Serialize `row` for the outbox `payload`, omitting `user_id` for tables whose
- * tenancy the gateway stamps from the JWT (`spec.hasUserId`). No-op for tables
- * without a local `user_id` column (the field simply isn't present).
+ * Serialize `row` for the outbox `payload`, omitting the user_id tenancy field
+ * for tables the gateway stamps from the JWT (`spec.hasUserId`).
+ *
+ * Both key casings are dropped because the desktop emits payloads in two shapes:
+ *   • non-field-LWW tables (company_flagged_files, attachments, …) carry the
+ *     repo's camelCase row → `userId`;
+ *   • field-LWW tables (contacts, org_companies, meetings, tasks) emit the BARE
+ *     snake_case row the wrapper diffs → `user_id`.
+ * Only the tenancy field is dropped — attribution columns like
+ * `flaggedByUserId` / `created_by_user_id` are data and stay. No-op for tables
+ * without a user_id column (the field simply isn't present).
  */
 export function buildOutboxPayloadJson(
   spec: OwnedTableSpec,
   row: Record<string, unknown>,
 ): string {
-  if (spec.hasUserId && 'user_id' in row) {
-    const { user_id: _omit, ...rest } = row
+  if (spec.hasUserId && ('userId' in row || 'user_id' in row)) {
+    const { userId: _camel, user_id: _snake, ...rest } = row
     return JSON.stringify(rest)
   }
   return JSON.stringify(row)
