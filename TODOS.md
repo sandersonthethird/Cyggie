@@ -985,6 +985,33 @@ since Neon already keys on it); write a desktop migration that rewrites local FK
 + `sync_state`; keep the `getMyUserIds()` alias as the transitional bridge.
 **Depends on:** the outbox-remediation PR (in progress) landing first.
 
+### Durable dedup for cross-device PK divergence (meetings / chat_sessions) — split from outbox-remediation PR
+**What:** the same logical row gets a DIFFERENT primary-key id on two devices, so
+the second device's `/sync/push` collides on a UNIQUE INDEX (not the PK) and is
+rejected (`meetings_user_calendar_event_idx`, `chat_sessions_active_idx`). The
+outbox-remediation PR only DELETES the current 8 stuck duplicates (confirmed
+already on Neon); it does NOT prevent recurrence. This TODO is the durable fix.
+
+**Why deferred:** a 2026-06-28 spike showed this is four entangled sub-problems,
+too risky to bolt onto the remediation PR:
+1. `meetings` is `fieldLww` → goes through the field-LWW merge upsert
+   ([sync.ts:433](api-gateway/src/routes/sync.ts#L433)), not the generic
+   `conflictKey` path — the dedup must live in that upsert.
+2. Both unique indexes are **partial** (`meetings…WHERE calendar_event_id is set`;
+   `chat_sessions_active_idx … WHERE is_active = 1`) → need `ON CONFLICT (cols)
+   WHERE <predicate>`, and they don't cover the no-cal_evt / inactive rows.
+3. `chat_sessions_active_idx` enforces "one active session per context" → a
+   divergent active session needs a **merge/deactivate**, not a plain upsert.
+4. **PK reparenting:** conflicting on the unique index means one `id` wins; child
+   rows (`meeting_company_links`, `chat_session_messages`, …) pointing at the
+   losing id must be reparented or tombstone-merged, or they dangle.
+
+**Where to start:** normalize empty-string `calendar_event_id` → NULL on write;
+add partial-index `ON CONFLICT … WHERE` to the field-LWW upsert; design the
+losing-id child reparenting (likely a gateway-side merge that rewrites child FKs
+in the same tx). Dedicated tests per sub-problem.
+**Depends on:** nothing (independent of identity unification). Recurs until done.
+
 ### Desktop OAuth flow + getAccessTokenForSync wiring ✅ shipped
 Sign-in window on the desktop wired to the gateway's OAuth flow via custom
 `cyggie-desktop://` URL scheme. `cyggie-auth.ts` + `cyggie-auth-storage.ts`
