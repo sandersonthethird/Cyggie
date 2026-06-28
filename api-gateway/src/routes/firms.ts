@@ -76,6 +76,10 @@ export async function registerFirmRoutes(
         slug: slugSchema,
         primary_email_domain: domainSchema.optional(),
         domain_auto_join: z.boolean().optional(),
+        // Firm-type template (Slice B). Free string, validated leniently — the
+        // desktop's resolveFirmTemplate maps unknown/null ids to 'vc', so a new
+        // template never needs a gateway deploy. Defaults to 'vc' for back-compat.
+        template_id: z.string().min(1).max(32).optional(),
       }),
       response: {
         200: z.object({
@@ -102,7 +106,7 @@ export async function registerFirmRoutes(
       }
 
       const db = getDb(env.GATEWAY_DATABASE_URL)
-      const { name, slug, primary_email_domain, domain_auto_join } = req.body
+      const { name, slug, primary_email_domain, domain_auto_join, template_id } = req.body
 
       // Slug uniqueness check up front. Race-safe at the DB level too (unique
       // index on firms.slug) but a friendly 409 beats a 500 here.
@@ -129,6 +133,7 @@ export async function registerFirmRoutes(
           slug,
           primaryEmailDomain: primary_email_domain?.toLowerCase() ?? null,
           domainAutoJoin: domain_auto_join ?? false,
+          templateId: template_id ?? 'vc',
           plan: 'trial',
           trialEndsAt,
         })
@@ -335,6 +340,10 @@ export async function registerFirmRoutes(
           slug: z.string(),
           primary_email_domain: z.string().nullable(),
           domain_auto_join: z.boolean(),
+          // Firm-type template (Slice B). Null for pre-Slice-B firms → desktop's
+          // resolveFirmTemplate falls back to 'vc'. Desktop reads this to seed the
+          // right default views/labels/field-options for the firm.
+          template_id: z.string().nullable(),
           plan: z.string(),
           trial_ends_at: z.string().nullable(),
           created_at: z.string(),
@@ -360,6 +369,7 @@ export async function registerFirmRoutes(
         slug: firm.slug,
         primary_email_domain: firm.primaryEmailDomain,
         domain_auto_join: firm.domainAutoJoin,
+        template_id: firm.templateId,
         plan: firm.plan,
         trial_ends_at: firm.trialEndsAt ? firm.trialEndsAt.toISOString() : null,
         created_at: firm.createdAt.toISOString(),

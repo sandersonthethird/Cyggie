@@ -6,6 +6,7 @@ import {
   getStatus,
   setAuthBroadcastTarget,
 } from '../auth/cyggie-auth'
+import { fetchFirmTemplateId } from '../services/gateway-firm'
 
 // =============================================================================
 // cyggie-auth.ipc.ts — IPC surface for the renderer Cloud Sync panel.
@@ -39,5 +40,12 @@ export function registerCyggieAuthIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC_CHANNELS.CYGGIE_AUTH_STATUS, () => {
     return getStatus()
+  })
+
+  // Slice B — fetch the firm's template_id from GET /firms/me for the renderer's
+  // applyFirmTemplate seed. Returns { ok:false } on offline / pre-firm (403) /
+  // gateway error so the renderer skips seeding (self-heals next launch).
+  ipcMain.handle(IPC_CHANNELS.FIRM_TEMPLATE_FETCH, () => {
+    return fetchFirmTemplateId()
   })
 }

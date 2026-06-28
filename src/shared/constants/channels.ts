@@ -540,6 +540,9 @@ export const IPC_CHANNELS = {
   CYGGIE_AUTH_STATUS: 'cyggie-auth:status',
   // Main → renderer push: signed-in/signed-out transitions.
   CYGGIE_AUTH_STATUS_CHANGED: 'cyggie-auth:status-changed',
+  // Slice B (multi-firm): renderer fetches the firm's template_id from
+  // GET /firms/me so applyFirmTemplate seeds the right default views/options.
+  FIRM_TEMPLATE_FETCH: 'firm:template-fetch',
 
   // Note/memo attachments (M5). Bytes go to R2 via presigned URLs; the
   // `cyggie-attachment://` protocol handler serves them locally on demand.

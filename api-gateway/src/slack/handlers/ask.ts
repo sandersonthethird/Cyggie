@@ -21,7 +21,6 @@ import {
   type CyggieAskErrorCode,
 } from '../../services/chat-agent/cyggie-ask'
 import { resolveAnthropicKey } from '../../llm/resolve-key'
-import { resolveFirmId } from '../../shared/resolve-firm'
 import { markdownToMrkdwn } from '../markdown-to-mrkdwn'
 import type { SlackClient } from '../client'
 import {
@@ -30,7 +29,6 @@ import {
   loadSlackSessionMessages,
   type SlackThreadKey,
 } from '../thread-session'
-import { resolveSlackUser } from '../user-mapping'
 import { recordAuditAsync } from '../../audit/buffer'
 import {
   decideFocus,
@@ -59,7 +57,13 @@ export type AskTarget =
 
 export interface RunSlackAskArgs {
   question: string
+  // Slice D: identity resolved upstream by resolveSlackIdentity (route.ts). The
+  // handler no longer maps the Slack user itself — it trusts these.
   userId: string
+  firmId: string | null
+  // true when userId came from a REAL Slack→Cyggie mapping (audit attributes to
+  // it); false for the beta default service-account user (attribute to null).
+  mapped: boolean
   env: GatewayEnv
   db: ReturnType<typeof getDb>
   log: FastifyBaseLogger
@@ -159,62 +163,18 @@ async function removeThinkingReaction(args: RunSlackAskArgs): Promise<void> {
 async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
   const { question, env, db, log, target } = args
   const startedAt = Date.now()
-  // Slice 7: attempt to upgrade the env-default user to a properly
-  // mapped Cyggie user via Slack users.info. The env default is the
-  // V1 fallback; mapping enriches audit attribution and (eventually)
-  // per-user scoping. Failures degrade gracefully — mapping is
-  // enrichment, not gating (plan Q7).
-  let userId = args.userId
-  let resolvedMapped = false
+  // Slice D: identity (userId, firmId, mapped) is resolved upstream by
+  // resolveSlackIdentity (route.ts) with the fail-closed rule. The handler
+  // trusts it — no mapping or firm lookup here. `mapped` drives audit
+  // attribution (only credit a real mapped user, never the beta default).
+  const { userId, firmId, mapped: resolvedMapped } = args
   const slackUserId = args.onBehalfOf?.slackUserId
-  const workspaceId = args.threadKey?.workspaceId
-  if (slackUserId && workspaceId && env.SLACK_BOT_TOKEN) {
-    try {
-      const mapped = await resolveSlackUser({
-        db,
-        workspaceId,
-        slackUserId,
-        slackBotToken: env.SLACK_BOT_TOKEN,
-        log,
-      })
-      if (mapped.kind === 'mapped') {
-        userId = mapped.cyggieUserId
-        resolvedMapped = true
-      } else if (mapped.kind === 'bot_token_revoked') {
-        await postReply(
-          target,
-          'Cyggie bot is misconfigured — please notify the admin.',
-        )
-        recordAuditAsync({
-          surface: 'slack',
-          toolName: 'cyggie_ask',
-          onBehalfOfSlackId: slackUserId,
-          slackMessageTs: args.slackMessageTs ?? null,
-          ok: false,
-          errorCode: 'SLACK_TOKEN_REVOKED',
-          durationMs: Date.now() - startedAt,
-          inputSummary: truncate(question, 200),
-        })
-        return
-      }
-      // 'unmapped' / 'transient_failure' → fall through with the env
-      // default userId. Audit row will note slack id but the cyggie
-      // id is the default (best-effort).
-    } catch (mappingErr) {
-      log.warn(
-        { err: mappingErr, metric: 'slack.user_mapping.fail' },
-        'slack user mapping failed — using fallback userId',
-      )
-      Sentry.captureException(mappingErr, {
-        tags: { surface: 'slack_user_mapping' },
-      })
-    }
-  }
 
-  // Resolve the Anthropic key. Per plan decision-log #5: gateway's
-  // shared env key for the service-account path. resolveAnthropicKey
-  // already encapsulates the user_credentials → env fallback.
-  const apiKey = await resolveAnthropicKey(env, userId)
+  // Resolve the Anthropic key. resolveAnthropicKey is firm-gated (Slice A): the
+  // shared env key is only honoured for the beta firm, so we pass the identity's
+  // firm. The beta-workspace default user is in the beta firm, so RS's
+  // service-account path keeps working.
+  const apiKey = await resolveAnthropicKey(env, userId, firmId)
   if (!apiKey) {
     await postReply(
       target,
@@ -296,9 +256,8 @@ async function runSlackAsk(args: RunSlackAskArgs): Promise<void> {
       apiKey,
       db,
       userId,
-      // Firm scope for note visibility — the Slack path holds only a Cyggie
-      // userId, so resolve the firm from the users row (null = firmless).
-      firmId: await resolveFirmId(db, userId),
+      // Firm scope for note visibility — resolved upstream (Slice D).
+      firmId,
       log,
       caller: 'slack',
       onBehalfOf: args.onBehalfOf,

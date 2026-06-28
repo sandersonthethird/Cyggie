@@ -33,7 +33,24 @@ import {
   runSlackAskAsync,
   type AskTarget,
 } from './handlers/ask'
+import { resolveSlackIdentity, type SlackIdentity } from './user-mapping'
 import { initAuditBuffer } from '../audit/buffer'
+
+// Slice D — user-facing copy for a refused Slack identity. One place so /search
+// and /ask read identically. Kept PLAIN (security/identity surface — never voiced).
+function slackRefuseText(reason: Extract<SlackIdentity, { kind: 'refuse' }>['reason']): string {
+  switch (reason) {
+    case 'token_revoked':
+      return 'Cyggie bot is misconfigured — please notify the admin.'
+    case 'transient':
+      return "Cyggie couldn't verify your Slack identity just now. Try again in a moment."
+    case 'unconfigured':
+      return 'Cyggie isn’t linked to a user yet. Ask your admin to finish setup.'
+    case 'unmapped':
+    default:
+      return 'Your Slack email isn’t linked to a Cyggie account. Ask your firm admin to invite you.'
+  }
+}
 
 // Custom Fastify request property: raw body string captured before parse.
 // Augment via module declaration so handlers see it typed.
@@ -264,22 +281,28 @@ export async function registerSlackRoutes(
         const searchMatch = SEARCH_RE.exec(text)
         if (searchMatch) {
           const query = searchMatch[1].trim()
-          const userId = env.CYGGIE_SLACK_DEFAULT_USER_ID
-          if (!userId) {
+          const db = getDb(env.GATEWAY_DATABASE_URL)
+          // Slice D: resolve the Slack user to a Cyggie identity (fail-closed in
+          // non-beta workspaces) so a second firm's Slack can't read RS data.
+          const identity = await resolveSlackIdentity({
+            db,
+            env,
+            workspaceId: body['team_id'] as string | undefined,
+            slackUserId: body['user_id'] as string | undefined,
+            log: req.log,
+          })
+          if (identity.kind === 'refuse') {
             req.log.warn(
-              { metric: 'slack.user_unmapped' },
-              'CYGGIE_SLACK_DEFAULT_USER_ID unset — search rejected',
+              { metric: 'slack.identity_refused', reason: identity.reason, surface: 'search' },
+              'slack search refused — no resolvable Cyggie identity',
             )
             return reply.send({
               response_type: 'ephemeral',
-              text:
-                'Cyggie is not yet linked to a user. ' +
-                'Ask your admin to set `CYGGIE_SLACK_DEFAULT_USER_ID` ' +
-                'on the gateway (this becomes automatic in slice 7).',
+              text: slackRefuseText(identity.reason),
             })
           }
+          const userId = identity.userId
           try {
-            const db = getDb(env.GATEWAY_DATABASE_URL)
             const mrkdwn = await handleSlackSearch({ db, userId, query })
             return reply.send({
               response_type: 'in_channel',
@@ -312,18 +335,22 @@ export async function registerSlackRoutes(
         // Non-search non-empty text → slice 5 NL Q&A. Ack immediately
         // with a placeholder; the background task POSTs the real answer
         // to response_url when the agent loop completes.
-        const userId = env.CYGGIE_SLACK_DEFAULT_USER_ID
-        if (!userId) {
+        const askDb = getDb(env.GATEWAY_DATABASE_URL)
+        const askIdentity = await resolveSlackIdentity({
+          db: askDb,
+          env,
+          workspaceId: body['team_id'] as string | undefined,
+          slackUserId: body['user_id'] as string | undefined,
+          log: req.log,
+        })
+        if (askIdentity.kind === 'refuse') {
           req.log.warn(
-            { metric: 'slack.user_unmapped' },
-            'CYGGIE_SLACK_DEFAULT_USER_ID unset — ask rejected',
+            { metric: 'slack.identity_refused', reason: askIdentity.reason, surface: 'ask_slash' },
+            'slack ask refused — no resolvable Cyggie identity',
           )
           return reply.send({
             response_type: 'ephemeral',
-            text:
-              'Cyggie is not yet linked to a user. ' +
-              'Ask your admin to set `CYGGIE_SLACK_DEFAULT_USER_ID` ' +
-              'on the gateway (this becomes automatic in slice 7).',
+            text: slackRefuseText(askIdentity.reason),
           })
         }
         const responseUrl = body['response_url']
@@ -343,9 +370,11 @@ export async function registerSlackRoutes(
         }
         runSlackAskAsync({
           question: text,
-          userId,
+          userId: askIdentity.userId,
+          firmId: askIdentity.firmId,
+          mapped: askIdentity.mapped,
           env,
-          db: getDb(env.GATEWAY_DATABASE_URL),
+          db: askDb,
           log: req.log,
           target: askTarget,
           onBehalfOf: {
@@ -435,21 +464,31 @@ export async function registerSlackRoutes(
             return
           }
 
-          // Real question — but we need a Cyggie user to scope queries.
-          // Slice 7 replaces this stopgap with lazy email mapping via
-          // Slack's users.info API.
-          const userId = env.CYGGIE_SLACK_DEFAULT_USER_ID
-          if (!userId) {
+          // Real question — resolve the Slack user to a Cyggie identity
+          // (Slice D, fail-closed in non-beta workspaces).
+          const teamId =
+            (body['team_id'] as string | undefined) ?? 'unknown_workspace'
+          const eventDb = getDb(env.GATEWAY_DATABASE_URL)
+          const eventIdentity = await resolveSlackIdentity({
+            db: eventDb,
+            env,
+            workspaceId: teamId,
+            slackUserId: event?.user,
+            log: req.log,
+          })
+          if (eventIdentity.kind === 'refuse') {
+            req.log.warn(
+              { metric: 'slack.identity_refused', reason: eventIdentity.reason, surface: 'ask_event' },
+              'slack mention refused — no resolvable Cyggie identity',
+            )
             client
               .postMessage({
                 channel,
-                text:
-                  'Cyggie is not yet linked to a user. ' +
-                  'Ask your admin to set `CYGGIE_SLACK_DEFAULT_USER_ID`.',
+                text: slackRefuseText(eventIdentity.reason),
                 threadTs: event?.thread_ts,
               })
               .catch((err) => {
-                req.log.error({ err }, 'slack reply (unmapped) failed')
+                req.log.error({ err }, 'slack reply (refused) failed')
               })
             return
           }
@@ -459,13 +498,13 @@ export async function registerSlackRoutes(
           // chat_sessions row + loads prior turns. DMs (no thread_ts)
           // collapse to a per-channel session via the COALESCE-based
           // unique index.
-          const teamId =
-            (body['team_id'] as string | undefined) ?? 'unknown_workspace'
           runSlackAskAsync({
             question,
-            userId,
+            userId: eventIdentity.userId,
+            firmId: eventIdentity.firmId,
+            mapped: eventIdentity.mapped,
             env,
-            db: getDb(env.GATEWAY_DATABASE_URL),
+            db: eventDb,
             log: req.log,
             target: {
               kind: 'event',

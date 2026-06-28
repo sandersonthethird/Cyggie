@@ -24,8 +24,14 @@ import { resolveAnthropicKey } from '../../llm/resolve-key'
 import { makeGatewayClaudeProvider } from '../../llm/gateway-claude-provider'
 import { applyCompanyNameUpdates, applyWritePlan, loadExistingState } from './pg-enrichment-store'
 
-/** Per-owner LLM provider factory (null = no key → name resolution skipped). */
-export type LlmForUser = (ownerUserId: string) => Promise<LLMProvider | null>
+/** Per-owner LLM provider factory (null = no key → name resolution skipped).
+ *  firmId is the meeting's firm — threaded through so resolveAnthropicKey can
+ *  apply the Slice A env-fallback gate (only the beta firm may use the shared
+ *  key; every other firm must have its own user_credentials row). */
+export type LlmForUser = (
+  ownerUserId: string,
+  firmId: string | null,
+) => Promise<LLMProvider | null>
 
 const MAX_DOMAINS_PER_MEETING = 10 // cap LLM calls per meeting
 
@@ -77,10 +83,12 @@ export async function maybeRunEnrichmentSweep(env: GatewayEnv): Promise<void> {
   const now = Date.now()
   if (now - lastSweptAt < THROTTLE_MS) return
   lastSweptAt = now
-  // Per-owner Anthropic key → a GatewayClaudeProvider; null when the user has no key
-  // (single-firm beta: resolveAnthropicKey falls back to the env key).
-  const llmFor: LlmForUser = async (ownerUserId) => {
-    const key = await resolveAnthropicKey(env, ownerUserId)
+  // Per-owner Anthropic key → a GatewayClaudeProvider; null when the user has no
+  // key. The shared env key is only used for the beta firm (Slice A firm-gate);
+  // other firms must have their own user_credentials row or name resolution is
+  // skipped (best-effort — never blocks markEnriched).
+  const llmFor: LlmForUser = async (ownerUserId, firmId) => {
+    const key = await resolveAnthropicKey(env, ownerUserId, firmId)
     return key ? makeGatewayClaudeProvider(key) : null
   }
   try {
@@ -233,7 +241,7 @@ async function enrichOneMeeting(db: Db, m: EligibleMeeting, ctx: EnrichCtx): Pro
   // resolved name equals the seed, planCompanyNameUpdates emits nothing → no-op.
   if (ctx.llmFor) {
     try {
-      const llm = await ctx.llmFor(m.userId)
+      const llm = await ctx.llmFor(m.userId, firmId)
       if (llm) {
         const domains = [
           ...new Set(attendeeEmails.map((e) => extractEmailDomain(e)).filter((d): d is string => Boolean(d))),

@@ -50,4 +50,40 @@ describe('token-crypto', () => {
     const shortKey = randomBytes(16).toString('base64')
     expect(() => encryptToken('x', shortKey)).toThrow(TokenCryptoError)
   })
+
+  // Slice C — the kind discriminator + label, used by the credential resolver to
+  // tell legacy plaintext (tolerate) from a real decrypt failure (alarm).
+  test('kind: legacy for a non-iv:tag:ct value', () => {
+    const legacy = createHash('sha256').update('x').digest('hex')
+    expect.assertions(1)
+    try {
+      decryptToken(legacy, KEY)
+    } catch (err) {
+      expect((err as TokenCryptoError).kind).toBe('legacy')
+    }
+  })
+
+  test('kind: decrypt_failed for a tampered blob', () => {
+    const blob = encryptToken('secret', KEY)
+    const [iv, tag, ct] = blob.split(':')
+    const ctBuf = Buffer.from(ct, 'base64url')
+    ctBuf[0] ^= 0xff
+    expect.assertions(1)
+    try {
+      decryptToken([iv, tag, ctBuf.toString('base64url')].join(':'), KEY)
+    } catch (err) {
+      expect((err as TokenCryptoError).kind).toBe('decrypt_failed')
+    }
+  })
+
+  test('kind: bad_key, and the label names the right env var', () => {
+    const shortKey = randomBytes(16).toString('base64')
+    expect.assertions(2)
+    try {
+      encryptToken('x', shortKey, 'CREDENTIAL_ENC_KEY')
+    } catch (err) {
+      expect((err as TokenCryptoError).kind).toBe('bad_key')
+      expect((err as Error).message).toContain('CREDENTIAL_ENC_KEY')
+    }
+  })
 })

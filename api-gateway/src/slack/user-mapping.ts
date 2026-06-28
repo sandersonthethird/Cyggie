@@ -23,6 +23,8 @@ import { createId } from '@paralleldrive/cuid2'
 import { schema } from '@cyggie/db'
 import type { FastifyBaseLogger } from 'fastify'
 import type { getDb } from '../db'
+import type { GatewayEnv } from '../env'
+import { resolveFirmId } from '../shared/resolve-firm'
 import { Sentry } from '../sentry'
 import type { SlackClient } from './client'
 import { WebClient } from '@slack/web-api'
@@ -145,6 +147,85 @@ export async function resolveSlackUser(
   return cyggieUserId
     ? { kind: 'mapped', cyggieUserId, email }
     : { kind: 'unmapped', email: email || null }
+}
+
+// ─── resolveSlackIdentity (Slice D — fail-closed multi-firm) ──────────
+//
+// The single source of the Slack→Cyggie identity + firm rule, called by BOTH
+// the /search and /ask paths so the fallback logic lives in exactly one place.
+//
+//   resolveSlackIdentity(workspaceId, slackUserId)
+//        │ resolveSlackUser → state
+//   ┌────┴───────────────┬───────────────────────┐
+//  mapped          unmapped / transient    bot_token_revoked
+//   │                    │                        │
+// {userId,firmId,    workspace == BETA ?     workspace == BETA ?
+//  mapped:true}       ┌──┴──┐                  ┌──┴──┐
+//                    yes   no                 yes   no
+//                     │     │                  │     │
+//                 default refuse           default refuse(token_revoked)
+//                 (beta)  (no data) ◀ fail closed: a blip / second workspace
+//                                       can never serve Red Swan's data.
+//
+// `mapped:false` marks the beta default service-account user (audit attribution
+// should only credit a *real* mapped user, never the default).
+
+export type SlackIdentity =
+  | { kind: 'resolved'; userId: string; firmId: string | null; mapped: boolean }
+  | { kind: 'refuse'; reason: 'unmapped' | 'transient' | 'token_revoked' | 'unconfigured' }
+
+export interface ResolveSlackIdentityArgs {
+  db: ReturnType<typeof getDb>
+  env: GatewayEnv
+  workspaceId: string | undefined
+  slackUserId: string | undefined
+  log?: FastifyBaseLogger
+}
+
+export async function resolveSlackIdentity(
+  args: ResolveSlackIdentityArgs,
+): Promise<SlackIdentity> {
+  const { db, env, workspaceId, slackUserId, log } = args
+  const isBeta =
+    !!env.BETA_SLACK_WORKSPACE_ID && workspaceId === env.BETA_SLACK_WORKSPACE_ID
+
+  // Beta-workspace fallback to the default service-account user. ONLY for the
+  // beta workspace — every other workspace fails closed.
+  const betaFallback = async (): Promise<SlackIdentity | null> => {
+    if (!isBeta || !env.CYGGIE_SLACK_DEFAULT_USER_ID) return null
+    const userId = env.CYGGIE_SLACK_DEFAULT_USER_ID
+    return { kind: 'resolved', userId, firmId: await resolveFirmId(db, userId), mapped: false }
+  }
+
+  if (workspaceId && slackUserId && env.SLACK_BOT_TOKEN) {
+    const r = await resolveSlackUser({
+      db,
+      workspaceId,
+      slackUserId,
+      slackBotToken: env.SLACK_BOT_TOKEN,
+      log,
+    })
+    if (r.kind === 'mapped') {
+      return {
+        kind: 'resolved',
+        userId: r.cyggieUserId,
+        firmId: await resolveFirmId(db, r.cyggieUserId),
+        mapped: true,
+      }
+    }
+    // Not a confirmed mapping. Beta may still serve the default user; anything
+    // else fails closed (transient blip included — never leak across firms).
+    const fb = await betaFallback()
+    if (fb) return fb
+    if (r.kind === 'bot_token_revoked') return { kind: 'refuse', reason: 'token_revoked' }
+    if (r.kind === 'transient_failure') return { kind: 'refuse', reason: 'transient' }
+    return { kind: 'refuse', reason: 'unmapped' }
+  }
+
+  // Missing inputs to even attempt a mapping (no token / ids).
+  const fb = await betaFallback()
+  if (fb) return fb
+  return { kind: 'refuse', reason: env.SLACK_BOT_TOKEN ? 'unmapped' : 'unconfigured' }
 }
 
 // ─── Slack users.info ────────────────────────────────────────────────

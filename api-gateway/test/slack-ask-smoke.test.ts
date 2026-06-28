@@ -21,15 +21,23 @@ const TEST_BOT_TOKEN = 'xoxb-test-ask-smoke-bot-token'
 process.env['SLACK_SIGNING_SECRET'] = TEST_SIGNING_SECRET
 process.env['SLACK_BOT_TOKEN'] = TEST_BOT_TOKEN
 process.env['CYGGIE_SLACK_DEFAULT_USER_ID'] = 'test-ask-user'
+// Slice D: mark this test workspace as the beta workspace so resolveSlackIdentity
+// falls back to the default user (the pre-Slice-D behavior for the beta firm).
+process.env['BETA_SLACK_WORKSPACE_ID'] = 'T_ASK_TEST'
 
-// Mock Slack Web API.
+// Mock Slack Web API. users.info returns an email with no matching Cyggie user
+// → 'unmapped' → beta-workspace fallback to CYGGIE_SLACK_DEFAULT_USER_ID.
 const postMessageMock = vi.fn().mockResolvedValue({ ok: true, ts: '1.0' })
 const reactionsAddMock = vi.fn().mockResolvedValue({ ok: true })
 const reactionsRemoveMock = vi.fn().mockResolvedValue({ ok: true })
+const usersInfoMock = vi
+  .fn()
+  .mockResolvedValue({ ok: true, user: { profile: { email: 'nomatch-ask@example.com' } } })
 vi.mock('@slack/web-api', () => ({
   WebClient: vi.fn().mockImplementation(() => ({
     chat: { postMessage: postMessageMock },
     reactions: { add: reactionsAddMock, remove: reactionsRemoveMock },
+    users: { info: usersInfoMock },
   })),
 }))
 
@@ -143,7 +151,7 @@ async function postSlash(text: string, responseUrl = 'https://hooks.slack.com/co
     text,
     user_id: 'U_TEST',
     channel_id: 'C_TEST',
-    team_id: 'T_TEST',
+    team_id: 'T_ASK_TEST',
     response_url: responseUrl,
   })
   const body = params.toString()
@@ -168,6 +176,7 @@ async function postSlash(text: string, responseUrl = 'https://hooks.slack.com/co
 async function postAppMention(text: string, channel = 'C_TEST') {
   const body = JSON.stringify({
     type: 'event_callback',
+    team_id: 'T_ASK_TEST', // real Slack event_callback envelopes carry this
     event: {
       type: 'app_mention',
       user: 'U_TEST',

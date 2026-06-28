@@ -3,6 +3,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
 import { GatewayError } from '../plugins/error'
+import { Sentry } from '../sentry'
+import { decryptToken, TokenCryptoError } from '../auth/token-crypto'
 import type { GatewayEnv } from '../env'
 
 // T24/T32 key resolution. Lifted out of routes/chat.ts so meetings.ts and
@@ -17,6 +19,24 @@ import type { GatewayEnv } from '../env'
 //      fallback; T32 PR-B removes Deepgram fallback after verifying
 //      Sandy's row exists in Neon).
 //   3. null → caller throws a provider-specific 503.
+//
+// Slice A — the Anthropic env fallback is firm-gated so firm #2 can never bill
+// Red Swan's shared key:
+//
+//   resolveAnthropicKey(env, userId, firmId)
+//           │
+//      user_credentials row for (userId,'anthropic')?
+//           │
+//      ┌────┴─────┐
+//     yes         no
+//      │           │
+//    key      firmId === BETA_FIRM_ID ?
+//                 ┌────┴────┐
+//                yes        no
+//                 │          │
+//              env key      null ──▶ caller 503 (CHAT_UNAVAILABLE)
+//
+// (Slice C will wrap step 1 in decrypt; legacy plaintext tolerated transitionally.)
 
 async function resolveProviderKeyFromDb(
   env: GatewayEnv,
@@ -34,16 +54,83 @@ async function resolveProviderKeyFromDb(
       ),
     )
     .limit(1)
-  return rows[0]?.value ?? null
+  const stored = rows[0]?.value ?? null
+  if (stored == null) return null
+  return decryptStoredCredential(env, stored, provider, userId)
+}
+
+// Slice C — at-rest decryption with a transitional plaintext path.
+//
+//   stored value
+//        │
+//   CREDENTIAL_ENC_KEY set?
+//        │
+//   ┌────┴───────────┐
+//  no                yes
+//   │                 │
+//  iv:tag:ct shaped?  decryptToken(value, CREDENTIAL_ENC_KEY)
+//   ┌──┴──┐            ├─ ok ......................... → plaintext
+//  yes    no           ├─ TokenCryptoError 'legacy' .. → value verbatim (RS plaintext)
+//   │      │           └─ 'decrypt_failed'/'bad_key' . → Sentry + 503 (never upstream)
+// 503    verbatim
+// (misconfig:        (legacy plaintext, pre-encryption)
+//  key removed
+//  post-encrypt)
+//
+// The 'legacy' tolerance is transitional — removed once the re-encrypt script
+// confirms zero plaintext rows (TODOS.md MF-2).
+function decryptStoredCredential(
+  env: GatewayEnv,
+  stored: string,
+  provider: string,
+  userId: string,
+): string {
+  const looksEncrypted = stored.split(':').length === 3
+  if (!env.CREDENTIAL_ENC_KEY) {
+    // Pre-rollout: only legacy plaintext is expected. An encrypted-shaped value
+    // with no key configured is a misconfiguration (key removed after encrypting)
+    // — never hand ciphertext to a provider as if it were a key.
+    if (looksEncrypted) throw credentialUnreadable(provider, userId, 'enc_key_missing')
+    return stored
+  }
+  try {
+    return decryptToken(stored, env.CREDENTIAL_ENC_KEY, 'CREDENTIAL_ENC_KEY')
+  } catch (err) {
+    if (err instanceof TokenCryptoError && err.kind === 'legacy') {
+      return stored // Red Swan's pre-encryption plaintext (transitional, MF-2)
+    }
+    Sentry.captureException(err, {
+      tags: { source: 'credential-decrypt', provider },
+      extra: { userId },
+    })
+    throw credentialUnreadable(provider, userId, 'decrypt_failed')
+  }
+}
+
+function credentialUnreadable(provider: string, userId: string, reason: string): GatewayError {
+  return new GatewayError({
+    statusCode: 503,
+    code: 'CREDENTIAL_UNREADABLE',
+    message:
+      'A stored API key could not be decrypted. Re-enter it in desktop Settings → AI & Transcription.',
+    details: { provider, userId, reason },
+  })
 }
 
 export async function resolveAnthropicKey(
   env: GatewayEnv,
   userId: string,
+  firmId: string | null,
 ): Promise<string | null> {
   const fromDb = await resolveProviderKeyFromDb(env, userId, 'anthropic')
   if (fromDb) return fromDb
-  return env.ANTHROPIC_API_KEY ?? null
+  // Firm-gated env fallback: only the beta firm (Red Swan) may use the shared
+  // ANTHROPIC_API_KEY. Any other firm — or an unset BETA_FIRM_ID — gets null so
+  // the caller 503s instead of silently billing the shared key. See header.
+  if (firmId && env.BETA_FIRM_ID && firmId === env.BETA_FIRM_ID) {
+    return env.ANTHROPIC_API_KEY ?? null
+  }
+  return null
 }
 
 // T32 PR-B (2026-05-23) — Deepgram per-user key resolution. Env fallback

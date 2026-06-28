@@ -4,6 +4,8 @@ import { z } from 'zod'
 import { and, eq, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { getDb } from '../db'
+import { GatewayError } from '../plugins/error'
+import { encryptToken } from '../auth/token-crypto'
 import type { GatewayEnv } from '../env'
 
 // =============================================================================
@@ -14,10 +16,16 @@ import type { GatewayEnv } from '../env'
 // the user already pasted in desktop Settings. Mobile never talks to this
 // route — it's a desktop → gateway write only.
 //
-// Resolution order in chat routes (see chat.ts buildAnthropicClient):
-//   1. user_credentials row for this (user, provider)
-//   2. env.ANTHROPIC_API_KEY fallback (single-firm beta key)
-//   3. 503 CHAT_UNAVAILABLE
+// Resolution order (see llm/resolve-key.ts):
+//   1. user_credentials row for this (user, provider) — decrypted at read
+//   2. env.ANTHROPIC_API_KEY fallback, FIRM-GATED to the beta firm (Slice A)
+//   3. 503 (CHAT_UNAVAILABLE / deepgram_key_missing)
+//
+// Slice C — the stored `value` is AES-256-GCM encrypted at rest with
+// env.CREDENTIAL_ENC_KEY (reuses auth/token-crypto). The PUT below fails loudly
+// if that key is unset (never silently store plaintext under the new contract).
+// Reads tolerate Red Swan's legacy plaintext rows until the re-encrypt script
+// runs (TODOS.md MF-2).
 //
 // Why only desktop writes: desktop is the canonical source of credentials
 // (user pastes there in the Settings UI). Mobile-side credential entry
@@ -62,13 +70,24 @@ export async function registerUserCredentialRoutes(
       const { provider } = req.params
       const { value } = req.body
 
+      // Fail loudly rather than silently persist plaintext under the encrypted
+      // contract. Pre-rollout deploys without the key simply can't accept new keys.
+      if (!env.CREDENTIAL_ENC_KEY) {
+        throw new GatewayError({
+          statusCode: 503,
+          code: 'CREDENTIAL_ENC_UNAVAILABLE',
+          message: 'Credential encryption is not configured on the gateway. Contact the admin.',
+        })
+      }
+      const encrypted = encryptToken(value, env.CREDENTIAL_ENC_KEY, 'CREDENTIAL_ENC_KEY')
+
       const db = getDb(env.GATEWAY_DATABASE_URL)
       await db
         .insert(schema.userCredentials)
-        .values({ userId: user.sub, provider, value })
+        .values({ userId: user.sub, provider, value: encrypted })
         .onConflictDoUpdate({
           target: [schema.userCredentials.userId, schema.userCredentials.provider],
-          set: { value, updatedAt: sql`now()` },
+          set: { value: encrypted, updatedAt: sql`now()` },
         })
 
       return { ok: true as const }

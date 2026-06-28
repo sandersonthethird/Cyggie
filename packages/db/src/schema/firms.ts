@@ -37,6 +37,12 @@ export const firms = pgTable(
     // returning users with no firm_id are auto-added as members.
     // Off by default — admin opts in per firm.
     domainAutoJoin: boolean('domain_auto_join').notNull().default(false),
+    // Firm-type template id ('vc' | 'sales' | …) chosen at claim time. Drives the
+    // desktop's idempotent seed bundle (default views, labels, field options) via
+    // applyFirmTemplate. NULL → resolveFirmTemplate falls back to 'vc' (preserves
+    // pre-Slice-B firms like Red Swan, which seed the VC defaults). Surfaced to the
+    // desktop via GET /firms/me (NOT the JWT — keeps the 5 token-mint sites untouched).
+    templateId: text('template_id'),
     // 'trial' | 'paid' | 'expired' | 'archived'. V1 ships everyone on 'trial'
     // with manual toggles in Neon. Stripe wiring lands in Phase 2.
     plan: varchar('plan', { length: 32 }).notNull().default('trial'),

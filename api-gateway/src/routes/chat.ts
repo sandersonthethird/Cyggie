@@ -720,7 +720,7 @@ export async function registerChatRoutes(
         })
       }
 
-      const apiKey = await resolveAnthropicKey(env, user.sub)
+      const apiKey = await resolveAnthropicKey(env, user.sub, user.firm_id)
       if (!apiKey) {
         throw new GatewayError({
           statusCode: 503,
