@@ -1557,8 +1557,7 @@ export default function Settings() {
           </div>
         </div>
         <p className={styles.hint}>
-          Root folder containing per-company sub-folders. The app matches folders by company name.
-          Works with local folders and Google Drive folders synced via Drive for Desktop.
+          The root folder where your firm's existing company deal diligence lives. (Recommended: one top-level folder per company, labeled with that company's name.)
         </p>
         {!settings.companyLocalFilesRoot && <p className={styles.storageCardStatusWarn} style={{ marginTop: 8 }}>Not configured</p>}
         {/* Advanced: Drive URL fallback */}
