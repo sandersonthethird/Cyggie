@@ -551,6 +551,62 @@ describe('GET /sync/pull', () => {
     expect(row?.status).toBe('error')
     expect(row?.transcriptSegments).toEqual(sampleSegments)
   })
+
+  // T40 — lazyTranscripts client: transcript suppressed for ALL statuses, not
+  // just in-progress ones. Old clients (no param) keep getting transcripts (G3).
+  test('G5: lazyTranscripts=1 → transcribed meeting transcript suppressed', async () => {
+    const { userId, jwt } = await setupUser()
+    const id = await insertMeetingWithTranscript(userId, '44', 'transcribed', sampleSegments)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull?lazyTranscripts=1',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      meetings: Array<{ id: string; status: string; transcriptSegments: unknown }>
+    }
+    const row = body.meetings.find((m) => m.id === id)
+    expect(row?.status).toBe('transcribed')
+    expect(row?.transcriptSegments).toBeNull()
+  })
+
+  test('G6: lazyTranscripts=1 → summarized meeting transcript suppressed', async () => {
+    const { userId, jwt } = await setupUser()
+    const id = await insertMeetingWithTranscript(userId, '45', 'summarized', sampleSegments)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/sync/pull?lazyTranscripts=1',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const body = res.json() as {
+      meetings: Array<{ id: string; status: string; transcriptSegments: unknown }>
+    }
+    const row = body.meetings.find((m) => m.id === id)
+    expect(row?.transcriptSegments).toBeNull()
+  })
+
+  test('G7: lazyTranscripts=1 does not change row count or serverLamport', async () => {
+    const { userId, jwt } = await setupUser()
+    await insertMeetingWithTranscript(userId, '46', 'transcribed', sampleSegments)
+
+    const plain = await app.inject({
+      method: 'GET',
+      url: '/sync/pull',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const lazy = await app.inject({
+      method: 'GET',
+      url: '/sync/pull?lazyTranscripts=1',
+      headers: { authorization: `Bearer ${jwt}` },
+    })
+    const pb = plain.json() as { meetings: unknown[]; serverLamport: string }
+    const lb = lazy.json() as { meetings: unknown[]; serverLamport: string }
+    expect(lb.meetings.length).toBe(pb.meetings.length)
+    expect(lb.serverLamport).toBe(pb.serverLamport)
+  })
 })
 
 // Desktop parity for firm-shared notes: /sync/pull now returns a teammate's

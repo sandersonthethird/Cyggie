@@ -2,6 +2,10 @@ export const IPC_CHANNELS = {
   // Meeting operations
   MEETING_LIST: 'meeting:list',
   MEETING_GET: 'meeting:get',
+  // T40 — on-demand transcript fetch. Kept separate from MEETING_GET (which
+  // stays a fast, offline-safe local read) so a network round-trip only blocks
+  // the transcript pane, never the whole meeting-open.
+  MEETING_GET_TRANSCRIPT: 'meeting:get-transcript',
   MEETING_DELETE: 'meeting:delete',
   MEETING_UPDATE: 'meeting:update',
   MEETING_TAG_SPEAKER_CONTACT: 'meeting:tag-speaker-contact',

@@ -101,7 +101,11 @@ export async function pullSince(opts: {
       meetings: MeetingsFromPullRow[]
       serverLamport: string
       hasMore?: boolean
-    }>(`/sync/pull?since=${encodeURIComponent(since)}`, { signal: opts.signal })
+      // T40 — opt into lazy transcripts. The gateway suppresses
+      // transcript_segments from the pull payload; the meeting detail screen
+      // already fetches the transcript on-demand via GET /meetings/:id, so
+      // mobile never relied on the pulled transcript for display.
+    }>(`/sync/pull?since=${encodeURIComponent(since)}&lazyTranscripts=1`, { signal: opts.signal })
 
     allMeetings.push(...res.meetings)
     pages += 1

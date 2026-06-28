@@ -26,6 +26,7 @@ import { RecordKebabMenu, type KebabMenuItem } from '../components/common/Record
 import { useChatStore } from '../stores/chat.store'
 import type { ContextOption } from '../../shared/types/chat'
 import type { Meeting, CompanySuggestion } from '../../shared/types/meeting'
+import type { TranscriptSegment } from '../../shared/types/recording'
 import type { CompanyEntityType, CompanySummary } from '../../shared/types/company'
 import type { ContactSummary } from '../../shared/types/contact'
 import { usePicker } from '../hooks/usePicker'
@@ -261,6 +262,14 @@ export default function MeetingDetail() {
   // meeting has structured segments; old text-only transcripts (no
   // segments) fall through to markdown automatically.
   const [transcriptViewMode, setTranscriptViewMode] = useState<'bubbles' | 'markdown'>('bubbles')
+  // T40 — on-demand transcript fetch state. The transcript_segments column no
+  // longer arrives via /sync/pull (suppressed server-side); on a non-recording
+  // device we fetch it lazily when the meeting is opened. This state drives only
+  // the transcript pane — the rest of the meeting opens instantly regardless.
+  const [transcriptFetch, setTranscriptFetch] = useState<'idle' | 'loading' | 'error'>('idle')
+  // Tracks the meeting id we've already attempted a lazy fetch for, so the
+  // effect doesn't loop. Retry clears it.
+  const transcriptFetchAttemptedRef = useRef<string | null>(null)
   const [isSwappingMeSpeaker, setIsSwappingMeSpeaker] = useState(false)
   const [editingSpeaker, setEditingSpeaker] = useState<number | null>(null)
   // When the rename UI was triggered by double-clicking an inline transcript
@@ -799,11 +808,59 @@ export default function MeetingDetail() {
     setCompanyTagSelections({})
     setAttendeeContactMap({})
     setSummaryExists(false)
+    // T40 — reset lazy-transcript state so the new meeting re-attempts its fetch.
+    setTranscriptFetch('idle')
+    transcriptFetchAttemptedRef.current = null
   }, [id])
 
   useEffect(() => {
     loadMeeting()
   }, [loadMeeting])
+
+  // T40 — lazily fetch + cache the transcript on a non-recording device. The
+  // meetings row arrives via /sync/pull with transcript_segments suppressed, so
+  // when a finalized meeting has no local segments we pull them on-demand. The
+  // main-process handler caches the result into the local row (no outbox, no
+  // lamport bump), so this only runs once per device per meeting. Failure
+  // degrades the transcript pane to a retry button — the meeting stays open.
+  const lazyFetchTranscript = useCallback(async () => {
+    if (!id) return
+    setTranscriptFetch('loading')
+    transcriptFetchAttemptedRef.current = id
+    try {
+      const res = await api.invoke<{ transcriptSegments: TranscriptSegment[] }>(
+        IPC_CHANNELS.MEETING_GET_TRANSCRIPT,
+        id,
+      )
+      if (loadIdRef.current !== id) return // navigated away mid-fetch
+      setData((prev) =>
+        prev && prev.meeting.id === id
+          ? { ...prev, meeting: { ...prev.meeting, transcriptSegments: res.transcriptSegments } }
+          : prev,
+      )
+      setTranscriptFetch('idle')
+    } catch (err) {
+      console.error('[MeetingDetail] lazy transcript fetch failed:', err)
+      if (loadIdRef.current === id) setTranscriptFetch('error')
+    }
+  }, [id])
+
+  useEffect(() => {
+    if (!data || data.meeting.id !== id) return
+    const segs = data.meeting.transcriptSegments
+    const hasSegments = Array.isArray(segs) && segs.length > 0
+    // Only finalized meetings have a server-side transcript worth fetching.
+    const couldHaveTranscript =
+      data.meeting.status === 'transcribed' || data.meeting.status === 'summarized'
+    if (hasSegments || !couldHaveTranscript) return
+    if (transcriptFetchAttemptedRef.current === id) return
+    if (!navigator.onLine) {
+      // Offline: don't attempt — the pane shows a "connect to view" empty state.
+      setTranscriptFetch('error')
+      return
+    }
+    void lazyFetchTranscript()
+  }, [data, id, lazyFetchTranscript])
 
   // 2026-05-24 — refresh when sync-pull applies remote changes to this
   // meeting (or to the contacts / companies it references). Without
@@ -2684,9 +2741,33 @@ const handleLinkExistingCompany = useCallback(async (company: CompanySummary) =>
                 )}
               </div>
             )}
-            {!isThisMeetingRecording && !transcript && (
-              <div className={styles.noContent}>No transcript available yet.</div>
-            )}
+            {!isThisMeetingRecording && !transcript && !hasSegmentsForSearch && (() => {
+              // T40 — no transcript content locally. Either it's genuinely empty,
+              // or it hasn't been lazily fetched yet (non-recording device).
+              if (transcriptFetch === 'loading') {
+                return <div className={styles.noContent}>Loading transcript…</div>
+              }
+              if (transcriptFetch === 'error') {
+                return (
+                  <div className={styles.noContent}>
+                    {navigator.onLine ? (
+                      <>
+                        Couldn’t load the transcript.{' '}
+                        <button
+                          className={styles.transcriptViewToggle}
+                          onClick={() => void lazyFetchTranscript()}
+                        >
+                          Retry
+                        </button>
+                      </>
+                    ) : (
+                      'Transcript not downloaded — connect to the internet to view it.'
+                    )}
+                  </div>
+                )
+              }
+              return <div className={styles.noContent}>No transcript available yet.</div>
+            })()}
           </div>
         )}
         {activeTab === 'recording' && (

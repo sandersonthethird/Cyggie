@@ -797,6 +797,25 @@ function upsertFieldLwwRow(opts: FieldLwwUpsertOpts): void {
       const camel = snakeToCamel.get(col)
       if (!camel) continue
       if (winners.includes(col) && bind[camel] == null && local![col] != null) {
+        // The gateway nulls large columns (transcript_segments) on /sync/pull but
+        // leaves their field_lamport intact (T40). That lamport is our
+        // invalidation signal: compare it against the local copy's lamport.
+        //
+        //  • incoming lamport ≤ local → this is our own write round-tripping (or
+        //    an older suppressed copy). KEEP the local value + local lamport so a
+        //    cross-device metadata bump can't clobber a live/cached transcript.
+        //  • incoming lamport > local → someone genuinely updated the transcript
+        //    (e.g. re-transcription) and the value was suppressed in transit.
+        //    DON'T keep stale: let the null win + adopt the incoming lamport so
+        //    the local copy clears and the renderer re-fetches it on next open.
+        // Only invalidate when we have a per-field incoming lamport for THIS
+        // column. Without it (whole-row mode) we can't tell the transcript
+        // actually changed vs a metadata-only bump, so we keep local (safe).
+        const incomingLamp = incomingMap?.[col]
+        const localLamp = (existing[col] ?? (local!.lamport as string)) as string
+        const incomingIsNewer =
+          incomingLamp != null && BigInt(incomingLamp) > BigInt(localLamp)
+        if (incomingIsNewer) continue // leave col a winner: null value + incoming lamport win
         winners = winners.filter((w) => w !== col)
         if (existing[col] != null) mergedMap = { ...mergedMap, [col]: existing[col] }
         else {
@@ -2441,11 +2460,13 @@ function upsertMeetingRow(db: Database.Database, row: PulledMeetingRow): void {
     incomingFieldLamports: row.fieldLamports,
     incomingRowLamport: row.lamport,
     bind,
-    // 2A: the gateway nulls transcript_segments for in-progress meetings on the
-    // wire (api-gateway/src/routes/sync.ts MEETING_IN_PROGRESS_STATUSES). If it
-    // "wins" the field-LWW clock but arrives null while the local transcript is
-    // non-null, keep BOTH the local value AND the local clock — advancing the
-    // clock with a stale value would shadow a later real transcript update.
+    // The gateway nulls transcript_segments on the wire — for in-progress
+    // meetings always, and for ALL meetings to lazyTranscripts clients (T40;
+    // api-gateway/src/routes/sync.ts). If a null "wins" the field-LWW clock while
+    // the local transcript is non-null, upsertFieldLwwRow keeps BOTH the local
+    // value and clock UNLESS the incoming field_lamport is strictly newer (a real
+    // re-transcription) — in which case it clears the local copy so the renderer
+    // re-fetches the fresh one. See the keepLocal branch in upsertFieldLwwRow.
     largeColNullKeepLocal: ['transcript_segments'],
     insert: (b) =>
       db

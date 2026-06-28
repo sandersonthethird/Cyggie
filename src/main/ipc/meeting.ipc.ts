@@ -27,6 +27,8 @@ import { getDatabase } from '@cyggie/db/sqlite/connection'
 import type { Meeting, MeetingListFilter } from '../../shared/types/meeting'
 import type { MeetingPlatform } from '../../shared/constants/meeting-apps'
 import { getCurrentUserId, getCurrentUserProfile } from '../security/current-user'
+import { fetchTranscript } from '../services/sync-bootstrap'
+import type { TranscriptSegment } from '../../shared/types/recording'
 import { getUser } from '@cyggie/db/sqlite/repositories/user.repo'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 
@@ -454,6 +456,32 @@ export function registerMeetingHandlers(): void {
     }
 
     return { meeting, transcript, summary, linkedCompanies }
+  })
+
+  // T40 — on-demand transcript fetch + local cache. Called by the renderer when
+  // a meeting's transcript_segments is null/empty locally (a non-recording
+  // device that received the row via /sync/pull, which now suppresses the fat
+  // column). Pulls the transcript from the gateway and caches it into the local
+  // meetings row so subsequent opens are instant and work offline.
+  //
+  // [2A] The cache-write is a DELIBERATE raw UPDATE that bypasses the sync
+  // barrel. It must NOT emit an outbox row (this device must not push a
+  // transcript it merely fetched back to Neon) and must NOT bump
+  // lamport/field_lamports (a cache fill is not a user edit). A bare prepared
+  // statement skips both the outbox wrapper and the dev-mode raw-write
+  // assertion (which lives inside the repo functions, not arbitrary SQL).
+  ipcMain.handle(IPC_CHANNELS.MEETING_GET_TRANSCRIPT, async (_event, id: string): Promise<{
+    transcriptSegments: TranscriptSegment[]
+  }> => {
+    const segments = await fetchTranscript(id)
+    if (segments.length > 0) {
+      const db = getDatabase()
+      db.prepare('UPDATE meetings SET transcript_segments = @segments WHERE id = @id').run({
+        id,
+        segments: JSON.stringify(segments),
+      })
+    }
+    return { transcriptSegments: segments }
   })
 
   ipcMain.handle(IPC_CHANNELS.MEETING_UPDATE, (_event, id: string, data: Parameters<typeof meetingRepo.updateMeeting>[1]) => {

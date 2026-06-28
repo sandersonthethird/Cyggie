@@ -65,6 +65,21 @@ describe('pullSince — drains all pages', () => {
     expect(getLastPullLamport()).toBe('5')
   })
 
+  // T40 — mobile opts into lazy transcripts (gateway suppresses transcript_segments
+  // on /sync/pull). Mobile's detail screen already fetches the transcript on-demand
+  // via GET /meetings/:id, so it never relied on the pulled transcript for display.
+  it('requests lazyTranscripts=1 on every page', async () => {
+    queuePages(
+      { meetings: [{ id: 'm1' }], serverLamport: '10', hasMore: true },
+      { meetings: [{ id: 'm2' }], serverLamport: '20', hasMore: false },
+    )
+    await pullSince()
+    expect(apiGetMock).toHaveBeenCalledTimes(2)
+    for (const call of apiGetMock.mock.calls) {
+      expect(call[0] as string).toContain('lazyTranscripts=1')
+    }
+  })
+
   it('persists the cursor per page, so a mid-drain failure resumes from the last page', async () => {
     apiGetMock.mockReset()
     apiGetMock.mockResolvedValueOnce({ meetings: [{ id: 'm1' }], serverLamport: '10', hasMore: true })

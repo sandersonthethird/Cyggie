@@ -491,6 +491,61 @@ export async function registerMeetingRoutes(
   })
 
   // ───────────────────────────────────────────────────────────────────────
+  // GET /meetings/:id/transcript — T40. On-demand transcript fetch.
+  //
+  // The /sync/pull firehose no longer ships transcript_segments to
+  // lazyTranscripts clients (see sync.ts), so a non-recording device fetches
+  // the transcript here when the user opens a meeting and caches it locally.
+  // Returns ONLY the (normalized) segments — not the full meeting detail — so
+  // the cache-fill doesn't drag unrelated large fields over the wire.
+  // Same firm-scoped + owner-aware visibility guard as GET /meetings/:id.
+  // ───────────────────────────────────────────────────────────────────────
+  fastifyTyped.route({
+    method: 'GET',
+    url: '/meetings/:id/transcript',
+    schema: {
+      params: z.object({ id: z.string().min(1).max(64) }),
+      response: {
+        200: z.object({ transcriptSegments: z.array(TranscriptSegmentSchema) }),
+      },
+    },
+    handler: async (req) => {
+      const user = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const { id } = req.params
+      const t0 = Date.now()
+
+      const meeting = await db.query.meetings.findFirst({
+        where: and(eq(schema.meetings.id, id), entityVisibilityFilter('meetings', user)),
+        columns: { transcriptSegments: true, speakerMap: true },
+      })
+      if (!meeting) {
+        // T40 observability: a 404 spike here = a sync/visibility bug (clients
+        // asking for transcripts they can't see), distinct from a normal miss.
+        req.log.warn({ metric: 'meetings.transcript.not_found', meetingId: id, userId: user.sub })
+        throw new GatewayError({
+          statusCode: 404,
+          code: 'MEETING_NOT_FOUND',
+          message: 'Meeting not found',
+        })
+      }
+
+      const speakerMap = (meeting.speakerMap as Record<string, unknown> | null) ?? null
+      const { segments } = normalizeSegments(meeting.transcriptSegments, speakerMap)
+      // T40 observability: a fetch-volume spike = transcripts viewed more than
+      // expected (egress creeping back); durationMs tracks the on-demand cost.
+      req.log.info({
+        metric: 'meetings.transcript.fetch',
+        meetingId: id,
+        userId: user.sub,
+        segmentCount: segments.length,
+        durationMs: Date.now() - t0,
+      })
+      return { transcriptSegments: segments }
+    },
+  })
+
+  // ───────────────────────────────────────────────────────────────────────
   // POST /meetings/from-calendar-event — idempotent find-or-create.
   //
   // Mobile taps a calendar event card → calls this → lands on the meeting
@@ -1088,7 +1143,7 @@ export async function registerMeetingRoutes(
       // Resolve key just before the Anthropic call — keeps the
       // earlier gates (ownership, transcript shape, template id) free
       // to return their proper status codes for users with no key set.
-      const apiKey = await resolveAnthropicKey(env, user.sub)
+      const apiKey = await resolveAnthropicKey(env, user.sub, user.firm_id)
       if (!apiKey) {
         req.log.warn(
           { metric: 'meetings.enhance.rejected_no_key', meetingId: id, userId: user.sub },

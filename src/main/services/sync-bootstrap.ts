@@ -21,6 +21,7 @@ import {
   refresh as refreshCyggieAuth,
   signOut as signOutCyggieAuth,
 } from '../auth/cyggie-auth'
+import type { TranscriptSegment } from '../../shared/types/recording'
 
 // =============================================================================
 // sync-bootstrap.ts — wires the SyncAgent into the desktop main process.
@@ -141,7 +142,11 @@ const pullTransport: PullTransport = {
     if (!tokenA) {
       throw Object.assign(new Error('NO_ACCESS_TOKEN'), { status: 401 })
     }
-    const url = `${GATEWAY_URL}/sync/pull?since=${encodeURIComponent(since)}`
+    // T40 — opt into lazy transcripts. The gateway suppresses transcript_segments
+    // from the pull firehose; we fetch them on-demand via fetchTranscript() when
+    // a meeting is opened. Old desktop builds omit this param and keep receiving
+    // full transcripts, so the rollout has no degradation window.
+    const url = `${GATEWAY_URL}/sync/pull?since=${encodeURIComponent(since)}&lazyTranscripts=1`
     const tryOnce = async (token: string): Promise<Response> =>
       fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
 
@@ -245,6 +250,58 @@ export async function purgeEntityRemote(
   const body = (await res.json()) as { purged: boolean }
   pullService?.triggerPull() // pull the tombstone → local hard-delete
   return body.purged
+}
+
+/**
+ * T40 — on-demand transcript fetch. The /sync/pull firehose no longer ships
+ * transcript_segments (we send lazyTranscripts=1), so when the user opens a
+ * meeting whose transcript isn't cached locally, we pull it from the gateway
+ * here. Same 401 → refresh → retry pattern as the pull transport.
+ *
+ * Returns the segments in the desktop's stored shape (drops the gateway's
+ * resolved `speakerLabel` — the renderer resolves names from the local
+ * speakerMap, which still arrives via pull — and stamps `isFinal: true` since
+ * a fetched transcript is always finalized). Throws on non-2xx so the caller
+ * can surface a retry; the meeting itself still opens.
+ */
+export async function fetchTranscript(meetingId: string): Promise<TranscriptSegment[]> {
+  const tokenA = await getAccessTokenForSync()
+  if (!tokenA) throw Object.assign(new Error('NO_ACCESS_TOKEN'), { status: 401 })
+  const url = `${GATEWAY_URL}/meetings/${encodeURIComponent(meetingId)}/transcript`
+  const tryOnce = (token: string): Promise<Response> =>
+    fetch(url, { method: 'GET', headers: { Authorization: `Bearer ${token}` } })
+
+  let res = await tryOnce(tokenA)
+  if (res.status === 401) {
+    const fresh = await refreshCyggieAuth()
+    if (!fresh) throw Object.assign(new Error('UNAUTHORIZED'), { status: 401 })
+    res = await tryOnce(fresh)
+  }
+  if (res.status === 401) {
+    await signOutCyggieAuth()
+    throw Object.assign(new Error('UNAUTHORIZED'), { status: 401 })
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => `${res.status}`)
+    throw Object.assign(new Error(`gateway ${res.status}: ${text.slice(0, 200)}`), {
+      status: res.status,
+    })
+  }
+  const body = (await res.json()) as {
+    transcriptSegments: Array<{
+      speaker: number
+      text: string
+      startTime: number
+      endTime: number
+    }>
+  }
+  return (body.transcriptSegments ?? []).map((s) => ({
+    speaker: s.speaker,
+    text: s.text,
+    startTime: s.startTime,
+    endTime: s.endTime,
+    isFinal: true,
+  }))
 }
 
 /**
