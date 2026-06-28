@@ -1634,6 +1634,28 @@ low-frequency and single-firm beta limits blast radius today).
 **Depends on / blocked by:** None technically; benefits from on-device merge
 QA since it can't be fully validated in-process.
 
+### T43 — Generalize the lazy-fat-column pattern to `chat_session_messages`
+**What:** Apply T40's "suppress on `/sync/pull` + on-demand fetch + local cache"
+approach to the next-largest synced column, `chat_session_messages` (and future
+audio refs). Gate suppression on the same `lazyTranscripts`-style client
+capability param; add a `GET /chat-sessions/:id/messages` (or equivalent)
+on-demand route; cache into the local row without an outbox/lamport bump; reuse
+the lamport-aware invalidation already added for transcripts
+([sync-remote-apply.ts](src/main/services/sync-remote-apply.ts) `keepLocal`).
+**Why:** Once T40 removes transcript bytes, chat messages become the largest
+remaining payload on the pull firehose. Same egress argument; T40 is the template.
+**Pros:** Moves further toward the "pull is pure metadata, fat columns are lazy"
+ideal; the pattern is already proven + tested by T40.
+**Cons:** Another on-demand route + renderer fetch surface; adds the same
+offline-not-downloaded limitation to chat history.
+**Context:** T40 established the seam: `lazyTranscripts` query param on
+`/sync/pull`, `GET /meetings/:id/transcript`, `MEETING_GET_TRANSCRIPT` IPC +
+direct-SQL cache write, and the strict `incoming field_lamport > local`
+invalidation rule. Mirror each piece for chat.
+**Effort:** M. **Priority:** P3.
+**Depends on / blocked by:** T40 shipped + post-T40 egress measurement showing
+chat egress actually matters (don't pre-build it).
+
 ---
 
 ## P2 — Contacts (Performance)

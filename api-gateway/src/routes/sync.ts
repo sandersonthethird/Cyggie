@@ -732,6 +732,16 @@ export async function registerSyncRoutes(
     schema: {
       querystring: z.object({
         since: z.string().min(1).max(40).default('0'),
+        // T40 — client-capability signal for lazy transcripts. When a client
+        // sends lazyTranscripts=1 it promises to fetch transcript_segments
+        // on-demand (GET /meetings/:id/transcript), so we suppress the fat
+        // column from the pull firehose for ALL meetings, not just in-progress
+        // ones. Old clients omit the param and keep receiving full transcripts
+        // until they upgrade — async client rollout has no degradation window.
+        lazyTranscripts: z
+          .enum(['0', '1'])
+          .optional()
+          .transform((v) => v === '1'),
       }),
       response: {
         200: z.object({
@@ -1043,13 +1053,20 @@ export async function registerSyncRoutes(
           .orderBy(sql`CAST(${schema.tombstones.lamport} AS numeric) ASC`).limit(PULL_PAGE_SIZE),
       ])
 
-      // Suppress transcript_segments for in-progress meetings so the recording
-      // desktop doesn't re-download its own growing transcript every 60s. The
-      // apply-side COALESCE in upsertMeetingRow (sync-remote-apply.ts) treats
-      // null as "preserve local" so a cross-device metadata bump on an
-      // in-progress meeting can't clobber the desktop's live transcript.
+      // Suppress transcript_segments from the pull firehose. Two regimes:
+      //  • lazyTranscripts client (T40): suppress for EVERY meeting — the client
+      //    fetches the transcript on-demand via GET /meetings/:id/transcript and
+      //    caches it locally. ~95% cut to the meetings-row payload.
+      //  • legacy client: suppress only for in-progress meetings so the recording
+      //    desktop doesn't re-download its own growing transcript every 60s.
+      // The apply-side largeColNullKeepLocal in upsertFieldLwwRow
+      // (sync-remote-apply.ts) treats null as "preserve local UNLESS the incoming
+      // field_lamport is newer" so neither a live transcript nor a stale cache is
+      // clobbered. Note we null the VALUE but leave field_lamports intact — that
+      // lamport is the invalidation signal the apply side relies on.
+      const lazyTranscripts = req.query.lazyTranscripts === true
       for (const m of meetings as Array<{ status: string; transcriptSegments: unknown }>) {
-        if (MEETING_IN_PROGRESS_STATUSES.has(m.status)) {
+        if (lazyTranscripts || MEETING_IN_PROGRESS_STATUSES.has(m.status)) {
           m.transcriptSegments = null
         }
       }

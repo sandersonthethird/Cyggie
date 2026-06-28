@@ -513,32 +513,83 @@ describe('applyRemoteMeetings', () => {
   })
 
   // ── Field-LWW (Phase 4.5) ──────────────────────────────────────────────────
-  it('2A: a winning-but-null transcript keeps the local value AND the local clock', () => {
-    // Local mid-recording: transcript present, clock 5 for transcript_segments.
+  it('keepLocal: a null transcript at the SAME field clock keeps local value + clock', () => {
+    // Recorder's own write round-tripping (or an in-progress suppression): the
+    // transcript was nulled in transport but its field clock matches local —
+    // there is no newer transcript, so keep the local copy and clock. A teammate
+    // retitle (sparse stamping → only title's clock advances to 10) must not
+    // disturb the transcript.
     db.prepare(
       `INSERT INTO meetings (id, title, date, lamport, field_lamports, transcript_segments)
-       VALUES ('mtg-2a', 'Local', '2026-05-22T10:00:00.000Z', '5',
+       VALUES ('mtg-keep', 'Local', '2026-05-22T10:00:00.000Z', '5',
                '{"transcript_segments":"5","title":"5"}', '[{"text":"local"}]')`,
     ).run()
-    // A teammate retitles (clock 10) while the gateway nulls the in-progress
-    // transcript on the wire, but its field clock still advances to 10.
     applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
       makeRow({
-        id: 'mtg-2a',
+        id: 'mtg-keep',
         lamport: '10',
         title: 'Renamed',
         transcriptSegments: null,
-        fieldLamports: { transcript_segments: '10', title: '10' },
+        // transcript clock UNCHANGED (only title was edited) — realistic sparse map.
+        fieldLamports: { transcript_segments: '5', title: '10' },
       }),
     ])
     const row = db
       .prepare('SELECT title, transcript_segments, field_lamports FROM meetings WHERE id = ?')
-      .get('mtg-2a') as { title: string; transcript_segments: string; field_lamports: string }
+      .get('mtg-keep') as { title: string; transcript_segments: string; field_lamports: string }
     expect(row.title).toBe('Renamed') // the real winner applied
     expect(row.transcript_segments).toBe('[{"text":"local"}]') // local transcript preserved
-    // clock NOT advanced for transcript_segments (else a later real update loses)
-    expect(JSON.parse(row.field_lamports).transcript_segments).toBe('5')
+    expect(JSON.parse(row.field_lamports).transcript_segments).toBe('5') // clock unchanged
     expect(JSON.parse(row.field_lamports).title).toBe('10')
+  })
+
+  it('3A: a null transcript at a NEWER field clock clears the local copy (forces refetch)', () => {
+    // The transcript was genuinely re-generated elsewhere (clock 5 → 10) and the
+    // value was suppressed on the wire (T40). Keeping the local copy would show a
+    // stale transcript forever, so we clear it and adopt the new clock; the
+    // renderer then refetches via MEETING_GET_TRANSCRIPT on next open.
+    db.prepare(
+      `INSERT INTO meetings (id, title, date, lamport, field_lamports, transcript_segments)
+       VALUES ('mtg-3a', 'Local', '2026-05-22T10:00:00.000Z', '5',
+               '{"transcript_segments":"5"}', '[{"text":"stale"}]')`,
+    ).run()
+    applyRemoteMeetings(db, DEVICE_ID, USER_ID, [
+      makeRow({
+        id: 'mtg-3a',
+        lamport: '10',
+        transcriptSegments: null,
+        fieldLamports: { transcript_segments: '10' },
+      }),
+    ])
+    const row = db
+      .prepare('SELECT transcript_segments, field_lamports FROM meetings WHERE id = ?')
+      .get('mtg-3a') as { transcript_segments: string | null; field_lamports: string }
+    expect(row.transcript_segments).toBeNull() // stale copy cleared
+    expect(JSON.parse(row.field_lamports).transcript_segments).toBe('10') // adopt newer clock
+  })
+
+  it('2A: the lazy cache-fill UPDATE writes the transcript without an outbox row or clock bump', () => {
+    // Mirrors the MEETING_GET_TRANSCRIPT handler's deliberate raw write
+    // (meeting.ipc.ts): a bare UPDATE that bypasses withSync. It must not emit an
+    // outbox row (this device must not push a transcript it merely fetched back)
+    // nor bump field_lamports (a cache fill is not an edit).
+    db.prepare(
+      `INSERT INTO meetings (id, title, date, lamport, field_lamports, transcript_segments)
+       VALUES ('mtg-2a', 'Local', '2026-05-22T10:00:00.000Z', '5',
+               '{"transcript_segments":"5"}', NULL)`,
+    ).run()
+    db.prepare('UPDATE meetings SET transcript_segments = @segments WHERE id = @id').run({
+      id: 'mtg-2a',
+      segments: JSON.stringify([{ speaker: 0, text: 'fetched', startTime: 0, endTime: 1, isFinal: true }]),
+    })
+    const row = db
+      .prepare('SELECT transcript_segments, field_lamports, lamport FROM meetings WHERE id = ?')
+      .get('mtg-2a') as { transcript_segments: string; field_lamports: string; lamport: string }
+    expect(JSON.parse(row.transcript_segments)[0].text).toBe('fetched')
+    expect(JSON.parse(row.field_lamports).transcript_segments).toBe('5') // clock NOT bumped
+    expect(row.lamport).toBe('5')
+    const outboxCount = db.prepare('SELECT COUNT(*) AS n FROM outbox').get() as { n: number }
+    expect(outboxCount.n).toBe(0) // no push generated
   })
 
   it('NULL field_lamports (migrated row) → first field-LWW write degrades to whole-row', () => {
