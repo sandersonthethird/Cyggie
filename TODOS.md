@@ -1108,10 +1108,20 @@ gateway (Neon) can't drift:
   and can't be integration-tested. *Where to start:* `resolveWebShareKey` exists
   ([resolve-key.ts:80](api-gateway/src/llm/resolve-key.ts#L80)); wire a `fetchHtml` impl and
   pass it where the sweep currently passes `fetchHtml: async () => null`. **Effort: S–M. P3.**
-- **Slice 3 — observability + rollout.** Sweep metrics/alerts (it's an invisible bg path) +
-  ramp `GATEWAY_ENRICHMENT_ENABLED`. **Not started.**
-- **To activate Slice 1+2 (deploy):** apply Neon migrations 0051/0052, ship desktop builds
-  with SQLite migration 138, then flip `GATEWAY_ENRICHMENT_ENABLED=true`.
+- **Slice 3 — observability** ✅ shipped. The sweep emits rich `enrichment.sweep.complete`
+  metrics (processed/enriched/failed/deadLettered/contacts/companies/links/namesUpdated/
+  durationMs); per-meeting failures log every time but Sentry-fire only on DEAD-LETTER
+  (`source:enrichment-sweep`); whole-pass failures Sentry-fire each pass
+  (`source:enrichment-sweep-pass`). Runbook comment at the top of `enrichment-sweep.ts`.
+  - **External alerts to configure (ops, NOT code):** (a) Sentry alert on either
+    `source:enrichment-sweep[-pass]` tag; (b) Fly log alert on `enrichment.sweep.dead_letter`
+    rate. No "sweep hasn't run" alert — idle scale-to-zero makes silence normal.
+  - **Follow-up (P3, S):** `llm_fallback_rate` isn't cleanly observable — `resolveCompanyName`
+    returns a name without saying LLM-vs-heuristic. Have it report the tier if the rate is
+    ever needed; `namesUpdated` is the current proxy.
+- **To activate (deploy, ops):** apply Neon migrations 0051/0052, ship desktop builds with
+  SQLite migration 138, then flip `GATEWAY_ENRICHMENT_ENABLED=true` (boolean; single-firm beta).
+  Whole feature is code-complete + DORMANT until that flag flips.
 
 **What:** Extract `syncContactsFromAttendees` + company-enrichment from
 the desktop main-process IPC layer into `@cyggie/services` so the

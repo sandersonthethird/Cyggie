@@ -10,6 +10,7 @@
 //
 // Gated behind env.GATEWAY_ENRICHMENT_ENABLED (default OFF).
 
+import * as Sentry from '@sentry/node'
 import { and, eq, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
 import { buildCandidates, planCompanyNameUpdates, planMeetingEnrichment } from '@cyggie/db/meeting-enrichment/plan'
@@ -35,10 +36,25 @@ const SWEEP_LIMIT = 10 // bound work per pass (pool safety)
 const MIN_AGE_MS = 30 * 60 * 1000 // give desktop ~30 min to do it first
 const MAX_ATTEMPTS = 3 // dead-letter after N failures (poison-meeting guard)
 
+// OBSERVABILITY / RUNBOOK (Slice 3). The sweep is a background, off-request path, so
+// its failures are invisible unless surfaced here. Two signals reach Sentry:
+//   • source:'enrichment-sweep'      — a meeting DEAD-LETTERED (failed maxAttempts times)
+//   • source:'enrichment-sweep-pass' — the whole pass threw (e.g. DB down) — 1/pass
+// Everything else is a structured `metric:` log (consumed via Fly logs):
+//   enrichment.sweep.complete | .error | .dead_letter | .name_resolution_error
+// Alerts to configure EXTERNALLY (not in code): a Sentry alert on either source tag; a
+// Fly log alert on enrichment.sweep.dead_letter rate. No "sweep hasn't run" alert —
+// idle scale-to-zero makes silence normal.
 export interface SweepResult {
   processed: number
   enriched: number
   failed: number
+  deadLettered: number
+  contactsCreated: number
+  companiesCreated: number
+  linksCreated: number
+  namesUpdated: number
+  durationMs: number
 }
 
 export interface SweepOptions {
@@ -70,7 +86,10 @@ export async function maybeRunEnrichmentSweep(env: GatewayEnv): Promise<void> {
   try {
     await runEnrichmentSweep(getDb(env.GATEWAY_DATABASE_URL), { llmFor })
   } catch (err) {
-    console.error('[enrichment-sweep] pass failed', err)
+    // Whole pass failed (e.g. DB down) — surfaces here as ONE event/pass, not one per
+    // meeting. Background path, so Sentry won't auto-capture it.
+    console.error({ err, metric: 'enrichment.sweep.pass_error' }, '[enrichment-sweep] pass failed')
+    Sentry.captureException(err, { tags: { source: 'enrichment-sweep-pass' } })
   }
 }
 
@@ -80,7 +99,11 @@ export async function runEnrichmentSweep(db: Db, opts: SweepOptions = {}): Promi
   const minAgeMs = opts.minAgeMs ?? MIN_AGE_MS
   const maxAttempts = opts.maxAttempts ?? MAX_ATTEMPTS
   const log = opts.log ?? console
-  const result: SweepResult = { processed: 0, enriched: 0, failed: 0 }
+  const startedAt = Date.now()
+  const result: SweepResult = {
+    processed: 0, enriched: 0, failed: 0, deadLettered: 0,
+    contactsCreated: 0, companiesCreated: 0, linksCreated: 0, namesUpdated: 0, durationMs: 0,
+  }
 
   const cutoff = new Date(Date.now() - minAgeMs)
   const eligible = await db
@@ -111,20 +134,33 @@ export async function runEnrichmentSweep(db: Db, opts: SweepOptions = {}): Promi
   for (const m of eligible) {
     result.processed += 1
     try {
-      await enrichOneMeeting(db, m, { llmFor: opts.llmFor, domainCache, log })
+      const counts = await enrichOneMeeting(db, m, { llmFor: opts.llmFor, domainCache, log })
       result.enriched += 1
+      result.contactsCreated += counts.contactsCreated
+      result.companiesCreated += counts.companiesCreated
+      result.linksCreated += counts.linksCreated
+      result.namesUpdated += counts.namesUpdated
     } catch (err) {
       result.failed += 1
       log.error({ meetingId: m.id, userId: m.userId, firmId: m.firmId, err, metric: 'enrichment.sweep.error' }, 'enrichment sweep: meeting failed')
       // Bump the attempt counter WITHOUT a lamport bump (gateway-internal, not pulled).
-      await db
+      const bumped = await db
         .update(schema.meetings)
         .set({ enrichAttempts: sql`coalesce(${schema.meetings.enrichAttempts}, 0) + 1` })
         .where(eq(schema.meetings.id, m.id))
-        .catch(() => {})
+        .returning({ attempts: schema.meetings.enrichAttempts })
+        .catch(() => [] as Array<{ attempts: number | null }>)
+      // When a meeting crosses maxAttempts it's permanently broken (dead-lettered) — the
+      // ONE place per-meeting failures reach Sentry (every retry is logged, only this alerts).
+      if ((bumped[0]?.attempts ?? 0) >= maxAttempts) {
+        result.deadLettered += 1
+        log.error({ meetingId: m.id, firmId: m.firmId, attempts: bumped[0]?.attempts, metric: 'enrichment.sweep.dead_letter' }, 'enrichment sweep: meeting dead-lettered')
+        Sentry.captureException(err, { tags: { source: 'enrichment-sweep' }, extra: { meetingId: m.id, firmId: m.firmId ?? null } })
+      }
     }
   }
 
+  result.durationMs = Date.now() - startedAt
   if (result.processed > 0) {
     log.info({ ...result, metric: 'enrichment.sweep.complete' }, 'enrichment sweep complete')
   }
@@ -146,9 +182,18 @@ interface EnrichCtx {
   log: NonNullable<SweepOptions['log']>
 }
 
-async function enrichOneMeeting(db: Db, m: EligibleMeeting, ctx: EnrichCtx): Promise<void> {
+interface MeetingCounts {
+  contactsCreated: number
+  companiesCreated: number
+  linksCreated: number
+  namesUpdated: number
+}
+
+const NO_COUNTS: MeetingCounts = { contactsCreated: 0, companiesCreated: 0, linksCreated: 0, namesUpdated: 0 }
+
+async function enrichOneMeeting(db: Db, m: EligibleMeeting, ctx: EnrichCtx): Promise<MeetingCounts> {
   const firmId = m.firmId
-  if (!firmId) return // filtered out by the query, but keep the type narrow
+  if (!firmId) return NO_COUNTS // filtered out by the query, but keep the type narrow
 
   const ownerRow = await db
     .select({ email: schema.users.email })
@@ -179,7 +224,8 @@ async function enrichOneMeeting(db: Db, m: EligibleMeeting, ctx: EnrichCtx): Pro
     companies: undefined,
   })
 
-  const { seedKeyToId } = await applyWritePlan(db, { userId: m.userId, firmId, plan, loaded, attendeeEmails })
+  const { stats, seedKeyToId } = await applyWritePlan(db, { userId: m.userId, firmId, plan, loaded, attendeeEmails })
+  let namesUpdated = 0
 
   // Slice 2 — resolve REAL company names (created companies only). Best-effort: a
   // failure leaves the seed/heuristic name but never blocks markEnriched.
@@ -203,7 +249,7 @@ async function enrichOneMeeting(db: Db, m: EligibleMeeting, ctx: EnrichCtx): Pro
         }
         if (resolved.length > 0) {
           const updates = planCompanyNameUpdates(plan, loaded.state, resolved)
-          await applyCompanyNameUpdates(db, { firmId, updates, seedKeyToId })
+          namesUpdated = await applyCompanyNameUpdates(db, { firmId, updates, seedKeyToId })
         }
       }
     } catch (err) {
@@ -217,6 +263,8 @@ async function enrichOneMeeting(db: Db, m: EligibleMeeting, ctx: EnrichCtx): Pro
     .update(schema.meetings)
     .set({ enrichedAt: new Date(), lamport: String(Date.now()), updatedAt: new Date() })
     .where(eq(schema.meetings.id, m.id))
+
+  return { contactsCreated: stats.contactsCreated, companiesCreated: stats.companiesCreated, linksCreated: stats.linksCreated, namesUpdated }
 }
 
 function asStringArray(v: unknown): string[] {
