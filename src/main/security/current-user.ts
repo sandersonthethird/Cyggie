@@ -1,6 +1,12 @@
 import os from 'os'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import * as userRepo from '@cyggie/db/sqlite/repositories/user.repo'
+import { getCyggieUserId } from '../auth/cyggie-auth-storage'
+
+/** Setting that durably mirrors the current user's gateway id (JWT sub). Written
+ *  on sign-in and survives sign-out, so note ownership still recognises the
+ *  user's gateway-stamped rows as their own while signed out. */
+export const GATEWAY_ID_SETTING = 'currentUserGatewayId'
 
 let cachedUserId: string | null = null
 
@@ -48,6 +54,23 @@ export function getCurrentUserId(): string {
   userRepo.ensureTeamMembership(user.id, 'admin')
   persistCurrentUser(user.id, user.displayName, user.email)
   return user.id
+}
+
+/**
+ * Every id that belongs to the current user. A note is the user's own when its
+ * `created_by_user_id` matches ANY of these — the desktop-local id, plus the
+ * gateway id (cuid2 JWT sub) under which round-tripped rows come back. Without
+ * this union, the user's own gateway-stamped notes look foreign and lock
+ * read-only. A real teammate's note carries the teammate's gateway id, which is
+ * never in this set, so it stays read-only.
+ */
+export function getMyUserIds(): string[] {
+  const ids = new Set<string>([getCurrentUserId()])
+  const persisted = (settingsRepo.getSetting(GATEWAY_ID_SETTING) || '').trim()
+  if (persisted) ids.add(persisted) // durable alias, present even when signed out
+  const live = getCyggieUserId()
+  if (live) ids.add(live) // present while signed in
+  return [...ids]
 }
 
 export function getCurrentUserProfile(): userRepo.UserRecord {

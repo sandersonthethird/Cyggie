@@ -14,6 +14,7 @@ import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from '@cyggie
 import { cleanupOrphanedTempFiles, getActiveRecordingMeetingId } from './video/video-writer'
 import { getPendingForQuit } from './ipc/_finalizations'
 import { getCurrentUserId } from './security/current-user'
+import { reconcileGatewayIdentity } from './security/identity-reconcile'
 import {
   migrateLegacyEncryptedCredentials,
   migrateLegacyEncryptedApiKeys,
@@ -349,6 +350,11 @@ app.whenReady().then(() => {
   // configureSyncGlobals can resolve user_id on each call).
   void startupUserId
   bootstrapSync()
+
+  // One-time heal of notes mis-stamped with the gateway id (the two-identity
+  // split). No-op when signed out or already reconciled; runs after credential
+  // migration so getCyggieUserId() can resolve.
+  reconcileGatewayIdentity()
 
   // T24 — push the user's local Anthropic key up to the gateway so
   // mobile chat uses the same value. Idempotent (gateway upserts), so

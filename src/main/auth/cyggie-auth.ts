@@ -137,6 +137,16 @@ export async function handleAuthCallback(
   })
   broadcastStatus()
 
+  // Now that the gateway id is known, heal any notes mis-stamped with it so the
+  // user's own round-tripped notes aren't locked read-only. Best-effort + runs
+  // once; safe to call on every sign-in.
+  try {
+    const { reconcileGatewayIdentity } = await import('../security/identity-reconcile')
+    reconcileGatewayIdentity()
+  } catch {
+    // Module not loaded (e.g. tests) — startup will reconcile on next launch.
+  }
+
   // Trigger an immediate sync drain — the outbox may have rows pending from
   // the paused_no_auth period. Late-binding via require avoids the circular
   // import (sync-bootstrap imports cyggie-auth).

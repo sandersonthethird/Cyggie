@@ -23,6 +23,11 @@ const ACCESS_TOKEN_KEY = 'cyggie_access_token'
 const REFRESH_TOKEN_KEY = 'cyggie_refresh_token'
 const USER_ID_KEY = 'cyggie_user_id'
 const USER_EMAIL_KEY = 'cyggie_user_email'
+// Durable mirror of the gateway id used by note ownership (see current-user.ts's
+// GATEWAY_ID_SETTING). Deliberately NOT cleared on sign-out, and stored as a
+// plain setting (not a credential) — it's an identity, not a secret. String
+// literal rather than an import to avoid a cycle with current-user.ts.
+const GATEWAY_ID_SETTING = 'currentUserGatewayId'
 
 let accessTokenCache: string | null = null
 
@@ -41,6 +46,10 @@ export function storeCyggieTokens(tokens: CyggieTokens): void {
   // and logs), but going through the same path keeps the layout uniform.
   storeCredential(USER_ID_KEY, tokens.userId)
   storeCredential(USER_EMAIL_KEY, tokens.email)
+  // Durably mirror the gateway id so note ownership recognises gateway-stamped
+  // rows as the user's own even after sign-out (USER_ID_KEY above is wiped on
+  // sign-out; this one is not).
+  settingsRepo.setSetting(GATEWAY_ID_SETTING, tokens.userId)
   accessTokenCache = tokens.accessToken
 }
 

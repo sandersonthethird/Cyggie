@@ -4,7 +4,7 @@ import * as path from 'path'
 import { randomUUID } from 'crypto'
 import { IPC_CHANNELS } from '../../shared/constants/channels'
 import * as notesRepo from '@cyggie/db/sqlite/repositories'
-import { getCurrentUserId } from '../security/current-user'
+import { getCurrentUserId, getMyUserIds } from '../security/current-user'
 import { isForeignNote, stampReadOnly } from './note-ownership'
 import { logAudit } from '@cyggie/db/sqlite/repositories/audit.repo'
 import { getDatabase } from '@cyggie/db/sqlite/connection'
@@ -199,8 +199,9 @@ export function registerNotesHandlers(): void {
         ? notesRepo.searchNotes(query.trim(), folderPath, hideClaimedMeetingNotes)
         : notesRepo.listNotes(filter, folderPath, hideClaimedMeetingNotes)
       // Firm-shared notes from teammates land read-only; flag them so the
-      // renderer can disable editing.
-      const me = getCurrentUserId()
+      // renderer can disable editing. Match against all of the user's ids
+      // (local + gateway) so their own round-tripped notes stay editable.
+      const me = getMyUserIds()
       return rows.map((n) => stampReadOnly(n, me))
     }
   )
@@ -209,7 +210,7 @@ export function registerNotesHandlers(): void {
     if (!noteId) throw new Error('noteId is required')
     const note = notesRepo.getNote(noteId)
     if (!note) return null
-    return stampReadOnly(hydrateCompanionNote(note), getCurrentUserId())
+    return stampReadOnly(hydrateCompanionNote(note), getMyUserIds())
   })
 
   ipcMain.handle(IPC_CHANNELS.NOTES_CREATE, (_event, data: NoteCreateData) => {
@@ -230,7 +231,7 @@ export function registerNotesHandlers(): void {
       // never reaches the outbox (the gateway would reject it anyway).
       const userId = getCurrentUserId()
       const existing = notesRepo.getNote(noteId)
-      if (existing && isForeignNote(existing, userId)) {
+      if (existing && isForeignNote(existing, getMyUserIds())) {
         throw new Error('This note is owned by a teammate and is read-only.')
       }
       const note = notesRepo.updateNote(noteId, updates || {}, userId)
@@ -250,7 +251,7 @@ export function registerNotesHandlers(): void {
     // Read-only foreign notes can't be deleted locally (would desync + reject).
     const userId = getCurrentUserId()
     const existing = notesRepo.getNote(noteId)
-    if (existing && isForeignNote(existing, userId)) {
+    if (existing && isForeignNote(existing, getMyUserIds())) {
       throw new Error('This note is owned by a teammate and is read-only.')
     }
     // Soft delete (sets deleted_at + bumps lamport) so the deletion replicates
