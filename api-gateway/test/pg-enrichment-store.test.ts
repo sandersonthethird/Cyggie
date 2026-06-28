@@ -76,7 +76,7 @@ async function enrich(meetingId: string, attendees: string[], attendeeEmails: st
     isGroupEvent: false,
     companies: undefined,
   })
-  return applyWritePlan(db, { userId: USER_ID, firmId: FIRM_ID, plan, loaded, attendeeEmails })
+  return (await applyWritePlan(db, { userId: USER_ID, firmId: FIRM_ID, plan, loaded, attendeeEmails })).stats
 }
 
 async function countContacts(): Promise<number> {
@@ -200,7 +200,7 @@ describe('PgEnrichmentStore.applyWritePlan', () => {
       isGroupEvent: true, // group event → empty plan
       companies: undefined,
     })
-    const stats = await applyWritePlan(db, { userId: USER_ID, firmId: FIRM_ID, plan, loaded, attendeeEmails })
+    const { stats } = await applyWritePlan(db, { userId: USER_ID, firmId: FIRM_ID, plan, loaded, attendeeEmails })
     expect(stats).toEqual({ contactsCreated: 0, companiesCreated: 0, linksCreated: 0 })
     expect(await countContacts()).toBe(0)
     expect(await countCompanies()).toBe(0)

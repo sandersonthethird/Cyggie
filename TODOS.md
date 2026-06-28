@@ -1083,21 +1083,35 @@ exception but not the entry contents.
 calendar-tap PR).
 
 ### T3 — Port enrichment to `@cyggie/services` so gateway can fire it
-**STATUS (2026-06-26):** In progress, sliced per the design doc
-[`~/.claude/plans/t3-enrichment-services-port-design.md`]. The enrichment
-DECISIONS are being lifted into a pure, shared planner
-([`packages/db/src/meeting-enrichment/plan.ts`](packages/db/src/meeting-enrichment/plan.ts))
-so desktop (SQLite) and the gateway (Neon) can't drift:
-- **Slice 0 — shared planner + desktop persister.** Pt 1 (committed): relocated +
-  split the planner. Pt 2 (this work): desktop's contact-sync + meeting↔company-link
-  decisions now run through `planContacts` / `planContactDecisions` / `planCompanyLinks`,
-  applied by the new `SqliteEnrichmentStore`
-  ([`enrichment-store.ts`](packages/db/src/sqlite/repositories/enrichment-store.ts)).
-  No behavior change — proven by a rows+outbox baseline (`enrichment-store-parity`).
-- **Slice 0b — name resolution** (`resolveCompanyName` + `planCompanyNameUpdates`):
-  still on current desktop code, not yet shared.
-- **Slice 1 — gateway** `PgEnrichmentStore` + firing the route + the `EnrichmentStore`
-  interface: not started.
+**STATUS (2026-06-27):** Shared planner + both persisters shipped; gateway fallback
+built but DORMANT (flag off). The enrichment DECISIONS live in a pure, shared planner
+([`plan.ts`](packages/db/src/meeting-enrichment/plan.ts)) so desktop (SQLite) and the
+gateway (Neon) can't drift:
+- **Slice 0 / 0b — shared planner + desktop persister + shared name resolution** ✅
+  shipped. Desktop runs through `SqliteEnrichmentStore`
+  ([`enrichment-store.ts`](packages/db/src/sqlite/repositories/enrichment-store.ts)) +
+  the shared `resolveCompanyName` ([`name.ts`](packages/services/src/meeting-enrichment/name.ts)).
+- **Slice 1 — gateway fallback** ✅ shipped. `enriched_at` dedup marker (both DBs + sync
+  + desktop stamp); `PgEnrichmentStore`
+  ([`pg-enrichment-store.ts`](api-gateway/src/services/enrichment/pg-enrichment-store.ts),
+  atomic/idempotent/firm-scoped); a desktop-OWNS / gateway-FALLBACK sweep
+  ([`enrichment-sweep.ts`](api-gateway/src/services/enrichment/enrichment-sweep.ts)) fired
+  request-piggybacked + throttled off `/sync/pull`, behind `GATEWAY_ENRICHMENT_ENABLED`
+  (default OFF).
+- **Slice 2 — gateway company-name resolution (LLM)** ✅ shipped. `GatewayClaudeProvider`
+  drives the shared `resolveCompanyName` (LLM-only — WebShare homepage tier deferred);
+  created companies only; per-pass domain cache.
+- **Slice 2b (DEFERRED) — WebShare homepage-fetch tier.** *What:* add the homepage-parse
+  tier to gateway name resolution (`fetchHtmlViaWebShare`). *Why:* upgrades obscure-domain
+  names the LLM doesn't know. *Blocked by:* needs a proxy-agent dep + WebShare's proxy
+  format + is an SSRF surface (must reject internal IPs before proxying, null when no key)
+  and can't be integration-tested. *Where to start:* `resolveWebShareKey` exists
+  ([resolve-key.ts:80](api-gateway/src/llm/resolve-key.ts#L80)); wire a `fetchHtml` impl and
+  pass it where the sweep currently passes `fetchHtml: async () => null`. **Effort: S–M. P3.**
+- **Slice 3 — observability + rollout.** Sweep metrics/alerts (it's an invisible bg path) +
+  ramp `GATEWAY_ENRICHMENT_ENABLED`. **Not started.**
+- **To activate Slice 1+2 (deploy):** apply Neon migrations 0051/0052, ship desktop builds
+  with SQLite migration 138, then flip `GATEWAY_ENRICHMENT_ENABLED=true`.
 
 **What:** Extract `syncContactsFromAttendees` + company-enrichment from
 the desktop main-process IPC layer into `@cyggie/services` so the

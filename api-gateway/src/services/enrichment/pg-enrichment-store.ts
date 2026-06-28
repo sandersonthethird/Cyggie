@@ -30,6 +30,7 @@ import {
   normalizeEmail,
 } from '@cyggie/db/meeting-enrichment/helpers'
 import type {
+  CompanyNameUpdate,
   ExistingCompany,
   ExistingContact,
   ExistingState,
@@ -261,11 +262,14 @@ export interface PgApplyStats {
 export async function applyWritePlan(
   db: Db,
   opts: { userId: string; firmId: string; plan: WritePlan; loaded: PgLoadedState; attendeeEmails: string[] },
-): Promise<PgApplyStats> {
+): Promise<{ stats: PgApplyStats; seedKeyToId: Map<string, string> }> {
   const { userId, firmId, plan, loaded } = opts
   const stats: PgApplyStats = { contactsCreated: 0, companiesCreated: 0, linksCreated: 0 }
   const lamport = String(Date.now())
   const now = new Date()
+  // seedKey → the id of the company this apply created (or matched) for it; returned so
+  // a follow-up name-resolution pass can rename just the companies THIS sweep created.
+  const seedKeyToId = new Map<string, string>()
 
   await db.transaction(async (tx) => {
     // 1. New contacts — tombstone-skip, insert, attach email, infer primary company.
@@ -338,7 +342,6 @@ export async function applyWritePlan(
     }
 
     // 5. Companies to create — onConflict(firm_id, normalized_name) then re-find within firm.
-    const seedKeyToId = new Map<string, string>()
     for (const co of plan.companiesToCreate) {
       const id = createId()
       const inserted = await tx
@@ -414,7 +417,55 @@ export async function applyWritePlan(
     }
   })
 
-  return stats
+  return { stats, seedKeyToId }
+}
+
+// ─── NAME RESOLUTION (Slice 2) ───────────────────────────────────────────────
+
+/**
+ * Apply resolved company names — CREATED companies only. We rename only the companies
+ * THIS sweep created (matched by seedKey → the id captured in applyWritePlan); an
+ * existing company's name (update.companyId) is NEVER touched, so a user-curated name
+ * can't be clobbered. Own transaction, best-effort: a resolved name that collides with
+ * another firm company on the per-firm normalized_name unique index is caught + skipped
+ * (the company keeps its seed name), so name resolution never rolls back enrichment.
+ */
+export async function applyCompanyNameUpdates(
+  db: Db,
+  opts: { firmId: string; updates: CompanyNameUpdate[]; seedKeyToId: Map<string, string> },
+): Promise<number> {
+  const { firmId, updates, seedKeyToId } = opts
+  const lamport = String(Date.now())
+  const now = new Date()
+  let applied = 0
+
+  for (const u of updates) {
+    // Created-only: an existing-company update has companyId set + seedKey null → skip it.
+    if (!u.seedKey) continue
+    const companyId = seedKeyToId.get(u.seedKey)
+    if (!companyId) continue
+    try {
+      await db.transaction(async (tx) => {
+        await tx
+          .update(schema.orgCompanies)
+          .set({ canonicalName: u.canonicalName, normalizedName: u.normalizedName, updatedAt: now, lamport })
+          .where(and(eq(schema.orgCompanies.id, companyId), eq(schema.orgCompanies.firmId, firmId)))
+      })
+      applied += 1
+    } catch (err) {
+      // A per-firm normalized_name collision (another company already has that name) →
+      // keep the seed name. Other errors are likewise non-fatal to enrichment.
+      if (!isUniqueViolation(err)) {
+        console.error('[enrichment] company name update failed', { companyId, firmId, err })
+      }
+    }
+  }
+  return applied
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  const code = (err as { code?: string; cause?: { code?: string } })?.code ?? (err as { cause?: { code?: string } })?.cause?.code
+  return code === '23505'
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

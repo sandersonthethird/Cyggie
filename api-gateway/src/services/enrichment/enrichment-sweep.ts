@@ -12,12 +12,21 @@
 
 import { and, eq, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import { schema } from '@cyggie/db'
-import { buildCandidates, planMeetingEnrichment } from '@cyggie/db/meeting-enrichment/plan'
-import { deriveSeedCompanyNames } from '@cyggie/db/meeting-enrichment/helpers'
+import { buildCandidates, planCompanyNameUpdates, planMeetingEnrichment } from '@cyggie/db/meeting-enrichment/plan'
+import { deriveSeedCompanyNames, extractEmailDomain } from '@cyggie/db/meeting-enrichment/helpers'
+import { resolveCompanyName } from '@cyggie/services/meeting-enrichment/name'
+import type { LLMProvider } from '@cyggie/services/llm/provider'
 import { GROUP_EVENT_ATTENDEE_THRESHOLD } from '@cyggie/shared'
 import { getDb } from '../../db'
 import type { GatewayEnv } from '../../env'
-import { applyWritePlan, loadExistingState } from './pg-enrichment-store'
+import { resolveAnthropicKey } from '../../llm/resolve-key'
+import { makeGatewayClaudeProvider } from '../../llm/gateway-claude-provider'
+import { applyCompanyNameUpdates, applyWritePlan, loadExistingState } from './pg-enrichment-store'
+
+/** Per-owner LLM provider factory (null = no key → name resolution skipped). */
+export type LlmForUser = (ownerUserId: string) => Promise<LLMProvider | null>
+
+const MAX_DOMAINS_PER_MEETING = 10 // cap LLM calls per meeting
 
 type Db = ReturnType<typeof getDb>
 
@@ -38,6 +47,8 @@ export interface SweepOptions {
   maxAttempts?: number
   /** Scope the sweep to one firm — test isolation only; production runs global. */
   firmId?: string
+  /** Per-owner LLM provider (Slice 2 name resolution). Absent/returns-null → skip naming. */
+  llmFor?: LlmForUser
   /** Injected logger; defaults to console. */
   log?: { info: (o: unknown, m?: string) => void; error: (o: unknown, m?: string) => void }
 }
@@ -50,8 +61,14 @@ export async function maybeRunEnrichmentSweep(env: GatewayEnv): Promise<void> {
   const now = Date.now()
   if (now - lastSweptAt < THROTTLE_MS) return
   lastSweptAt = now
+  // Per-owner Anthropic key → a GatewayClaudeProvider; null when the user has no key
+  // (single-firm beta: resolveAnthropicKey falls back to the env key).
+  const llmFor: LlmForUser = async (ownerUserId) => {
+    const key = await resolveAnthropicKey(env, ownerUserId)
+    return key ? makeGatewayClaudeProvider(key) : null
+  }
   try {
-    await runEnrichmentSweep(getDb(env.GATEWAY_DATABASE_URL))
+    await runEnrichmentSweep(getDb(env.GATEWAY_DATABASE_URL), { llmFor })
   } catch (err) {
     console.error('[enrichment-sweep] pass failed', err)
   }
@@ -89,10 +106,12 @@ export async function runEnrichmentSweep(db: Db, opts: SweepOptions = {}): Promi
     .orderBy(schema.meetings.createdAt)
     .limit(limit)
 
+  // One domain→name cache per pass — a domain shared across meetings hits the LLM once.
+  const domainCache = new Map<string, string>()
   for (const m of eligible) {
     result.processed += 1
     try {
-      await enrichOneMeeting(db, m)
+      await enrichOneMeeting(db, m, { llmFor: opts.llmFor, domainCache, log })
       result.enriched += 1
     } catch (err) {
       result.failed += 1
@@ -121,7 +140,13 @@ interface EligibleMeeting {
   isGroupEvent: boolean
 }
 
-async function enrichOneMeeting(db: Db, m: EligibleMeeting): Promise<void> {
+interface EnrichCtx {
+  llmFor?: LlmForUser
+  domainCache: Map<string, string>
+  log: NonNullable<SweepOptions['log']>
+}
+
+async function enrichOneMeeting(db: Db, m: EligibleMeeting, ctx: EnrichCtx): Promise<void> {
   const firmId = m.firmId
   if (!firmId) return // filtered out by the query, but keep the type narrow
 
@@ -154,7 +179,37 @@ async function enrichOneMeeting(db: Db, m: EligibleMeeting): Promise<void> {
     companies: undefined,
   })
 
-  await applyWritePlan(db, { userId: m.userId, firmId, plan, loaded, attendeeEmails })
+  const { seedKeyToId } = await applyWritePlan(db, { userId: m.userId, firmId, plan, loaded, attendeeEmails })
+
+  // Slice 2 — resolve REAL company names (created companies only). Best-effort: a
+  // failure leaves the seed/heuristic name but never blocks markEnriched.
+  // resolveCompanyName always returns a name (heuristic on LLM failure); when the
+  // resolved name equals the seed, planCompanyNameUpdates emits nothing → no-op.
+  if (ctx.llmFor) {
+    try {
+      const llm = await ctx.llmFor(m.userId)
+      if (llm) {
+        const domains = [
+          ...new Set(attendeeEmails.map((e) => extractEmailDomain(e)).filter((d): d is string => Boolean(d))),
+        ].slice(0, MAX_DOMAINS_PER_MEETING)
+        const resolved: Array<{ domain: string; name: string }> = []
+        for (const domain of domains) {
+          let name = ctx.domainCache.get(domain)
+          if (name === undefined) {
+            name = await resolveCompanyName(domain, { fetchHtml: async () => null, llm })
+            ctx.domainCache.set(domain, name)
+          }
+          resolved.push({ domain, name })
+        }
+        if (resolved.length > 0) {
+          const updates = planCompanyNameUpdates(plan, loaded.state, resolved)
+          await applyCompanyNameUpdates(db, { firmId, updates, seedKeyToId })
+        }
+      }
+    } catch (err) {
+      ctx.log.error({ meetingId: m.id, err, metric: 'enrichment.sweep.name_resolution_error' }, 'name resolution failed (non-fatal)')
+    }
+  }
 
   // Mark done AFTER the apply commits, with a lamport bump so it pulls to desktop
   // (the row was created with lamport '0'). The desktop guard then skips re-enriching.
