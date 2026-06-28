@@ -20,6 +20,15 @@ const EnvSchema = z.object({
   // in loadKey() at use.
   GOOGLE_TOKEN_ENC_KEY: z.string().min(32),
 
+  // AES-256-GCM key for user_credentials provider API keys at rest (Slice C).
+  // SEPARATE from GOOGLE_TOKEN_ENC_KEY — different secret domain, different blast
+  // radius. base64 of 32 random bytes (`openssl rand -base64 32`); exact length
+  // enforced in token-crypto loadKey() at use. Optional so the gateway still
+  // boots pre-rollout, BUT the PUT /user-credentials route fails loudly if it's
+  // missing (never silently store plaintext under the new contract); reads still
+  // tolerate Red Swan's legacy plaintext rows until the re-encrypt script runs.
+  CREDENTIAL_ENC_KEY: z.string().min(32).optional(),
+
   // Required: Google OAuth client (Web application type — not the desktop client).
   GOOGLE_CLIENT_ID: z.string().min(1),
   GOOGLE_CLIENT_SECRET: z.string().min(1),
@@ -57,6 +66,16 @@ const EnvSchema = z.object({
 
   // Optional: deferred until LLM features come online.
   ANTHROPIC_API_KEY: z.string().optional(),
+
+  // Multi-firm gate (Slice A). The shared ANTHROPIC_API_KEY fallback above is a
+  // single-firm-beta convenience that would otherwise bill any firm's usage to
+  // Red Swan's key. resolveAnthropicKey() only honours the env fallback when the
+  // caller's firm matches BETA_FIRM_ID; every other firm must have its own
+  // user_credentials row. Set to Red Swan's firm id (Fly secret). When unset, NO
+  // firm gets the env fallback (fail-safe: a firm without its own key 503s rather
+  // than silently using the shared key). Retired entirely once every firm has its
+  // own key (TODOS.md MF-4).
+  BETA_FIRM_ID: z.string().optional(),
 
   // APNs push (M3). Optional so the gateway boots without an Apple Developer
   // Program seat — if any of these is missing, the apns module logs and no-ops
@@ -174,6 +193,14 @@ const EnvSchema = z.object({
   // If unset, search / NL queries return a clear "Cyggie not yet
   // linked" message to the Slack user.
   CYGGIE_SLACK_DEFAULT_USER_ID: z.string().min(1).optional(),
+
+  // Slice D (multi-firm): the Slack workspace id (team id, e.g. T0123ABCD) of
+  // the beta firm (Red Swan). resolveSlackIdentity only falls back to
+  // CYGGIE_SLACK_DEFAULT_USER_ID for THIS workspace; any other workspace fails
+  // closed (unmapped/transient → refuse) so a second firm's Slack can never
+  // resolve to Red Swan's user. Retired with CYGGIE_SLACK_DEFAULT_USER_ID once
+  // all RS users are auto-mapped (TODOS.md MF-3).
+  BETA_SLACK_WORKSPACE_ID: z.string().min(1).optional(),
 
   // ─── Slice 10 — cyggie_execute_sql tool ─────────────────────────────
   // Gates the MCP `cyggie_execute_sql` tool. Default false in prod;

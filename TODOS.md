@@ -44,6 +44,32 @@ and never got a ✅ line. Code-verified and moved to ✅ this pass (see each ent
   **T28/T29/T35/T36/T37** (user signal), **T3 `llm_fallback_rate`** follow-up (P3).
 - *Untracked idea (not in TODOS):* iOS Live Activity — raise separately if wanted.
 
+### 2026-06-28 — Multi-firm onboarding (firm #2) fast-follows
+
+Deferred items from the "Safely Onboard Firm #2" plan + eng-review
+(`~/.claude/plans/scope-multi-firm-onboarding-into-deep-clover.md`). The plan's
+six slices (A–F) are shipped; these are the follow-ups left out of the concierge
+go-live:
+
+- **MF-1 — Move portfolio funds out of the shared base into per-template `options_json`.**
+  Slice B only routes firm #2 to a clean template; Fund I–V labels still ship from
+  `PORTFOLIO_FUND_OPTIONS` (`src/shared/types/company.ts`) for all firms. Full removal
+  needs a migration mapping Red Swan's stored codes (`fund_iv`) to seeded labels so
+  existing company views don't break (the codes-vs-labels clash documented in the
+  `company.ts` header). *Depends on: Slice B shipped.*
+- **MF-2 — Drop the resolver's legacy-plaintext tolerance** once the Slice C external
+  re-encrypt script (`scripts/reencrypt-user-credentials.ts`) confirms zero plaintext
+  `user_credentials` rows. Makes decryption mandatory on reads — final hardening after
+  encryption ships. *Depends on: Slice C deployed + backfill run + verified.*
+- **MF-3 — Decommission `CYGGIE_SLACK_DEFAULT_USER_ID` + `BETA_SLACK_WORKSPACE_ID`**
+  once all Red Swan Slack users are auto-mapped. Retires the beta-only fallback and
+  shrinks the cross-firm leak surface. *Depends on: Slice D shipped + RS users mapped.*
+- **MF-4 — Remove the Anthropic env-key fallback entirely (retire `BETA_FIRM_ID`)** —
+  completes the original T24 intent once every firm has its own `user_credentials`
+  rows; no firm should depend on a shared key. *Depends on: all RS users have an
+  `anthropic` row.* (Supersedes the deferred **T30 multi-tenant/abuse** note for the
+  key-isolation portion.)
+
 ### Obsolescence pass (2026-06-22, second sweep)
 
 A follow-up sweep looked for items not *shipped* but *obviated* by the work above.

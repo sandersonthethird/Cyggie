@@ -129,6 +129,60 @@ describe('multi-tenant onboarding', () => {
     expect(payload.sub).toBe(aliceId)
   })
 
+  test('Slice B: template_id persists on claim and surfaces on GET /firms/me', async () => {
+    const email = `tmpl-${TEST_PREFIX}@example.com`
+    const userId = await insertTestUser({ email })
+    const jwt = await mintJwt({ userId, firmId: null, role: 'member' })
+
+    const slug = (TEST_PREFIX + 'salesfirm').replace(/_/g, '-').toLowerCase()
+    const claim = await app.inject({
+      method: 'POST',
+      url: '/auth/firms/claim',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: { name: 'Sales Firm (test)', slug, template_id: 'sales' },
+    })
+    expect(claim.statusCode).toBe(200)
+    const claimBody = claim.json() as { access_token: string; firm: { id: string } }
+    cleanup.track(schema.firms, schema.firms.id, claimBody.firm.id)
+
+    // Persisted on the firms row.
+    const firmRow = await db.query.firms.findFirst({
+      where: eq(schema.firms.id, claimBody.firm.id),
+    })
+    expect(firmRow?.templateId).toBe('sales')
+
+    // Surfaced on GET /firms/me (the desktop's read path).
+    const me = await app.inject({
+      method: 'GET',
+      url: '/firms/me',
+      headers: { authorization: `Bearer ${claimBody.access_token}` },
+    })
+    expect(me.statusCode).toBe(200)
+    expect((me.json() as { template_id: string | null }).template_id).toBe('sales')
+  })
+
+  test('Slice B: claim without template_id defaults to vc', async () => {
+    const email = `tmpldef-${TEST_PREFIX}@example.com`
+    const userId = await insertTestUser({ email })
+    const jwt = await mintJwt({ userId, firmId: null, role: 'member' })
+
+    const slug = (TEST_PREFIX + 'defaultfirm').replace(/_/g, '-').toLowerCase()
+    const claim = await app.inject({
+      method: 'POST',
+      url: '/auth/firms/claim',
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
+      payload: { name: 'Default Firm (test)', slug },
+    })
+    expect(claim.statusCode).toBe(200)
+    const claimBody = claim.json() as { firm: { id: string } }
+    cleanup.track(schema.firms, schema.firms.id, claimBody.firm.id)
+
+    const firmRow = await db.query.firms.findFirst({
+      where: eq(schema.firms.id, claimBody.firm.id),
+    })
+    expect(firmRow?.templateId).toBe('vc')
+  })
+
   test('Flow A: slug collision returns 409', async () => {
     const bobEmail = `bob-${TEST_PREFIX}@example.com`
     const bobId = await insertTestUser({ email: bobEmail })

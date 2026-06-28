@@ -12,6 +12,7 @@ import {
   getCyggieUserEmail,
   clearCyggieTokens,
 } from './cyggie-auth-storage'
+import { getCurrentFirmId } from '../security/current-firm'
 
 // =============================================================================
 // cyggie-auth.ts — orchestrator for the desktop's gateway-OAuth flow.
@@ -69,6 +70,10 @@ export interface CyggieAuthStatus {
   signedIn: boolean
   email: string | null
   userId: string | null
+  // firm_id decoded from the access token (null until onboarding completes).
+  // Slice B: lets the renderer key its firm-template seed marker without a
+  // network round-trip, so the /firms/me fetch only fires the first time.
+  firmId: string | null
 }
 
 export function getStatus(): CyggieAuthStatus {
@@ -77,6 +82,7 @@ export function getStatus(): CyggieAuthStatus {
     signedIn: token != null && token.length > 0,
     email: getCyggieUserEmail(),
     userId: getCyggieUserId(),
+    firmId: getCurrentFirmId(),
   }
 }
 

@@ -37,15 +37,21 @@ process.env['SLACK_BOT_TOKEN'] = TEST_BOT_TOKEN
 // before importing env so the gateway picks it up.
 const TEST_USER_ID = `test-slack-search-${createId().slice(0, 8)}`
 process.env['CYGGIE_SLACK_DEFAULT_USER_ID'] = TEST_USER_ID
+// Slice D: mark this test workspace as the beta workspace so the default-user
+// fallback applies (preserves the pre-Slice-D behavior for the beta firm).
+process.env['BETA_SLACK_WORKSPACE_ID'] = 'T_SEARCH_TEST'
 
-// Mock @slack/web-api so we don't need a real Slack workspace; the
-// slash command path uses synchronous JSON reply, not chat.postMessage,
-// but mocking avoids a real SDK instantiation that would try to validate
-// the token.
+// Mock @slack/web-api so we don't need a real Slack workspace. resolveSlackIdentity
+// now attempts a Slack→Cyggie mapping first; users.info returns an email with no
+// matching Cyggie user → 'unmapped' → beta-workspace fallback to the default user.
 const postMessageMock = vi.fn().mockResolvedValue({ ok: true, ts: '1.0' })
+const usersInfoMock = vi
+  .fn()
+  .mockResolvedValue({ ok: true, user: { profile: { email: 'nomatch-slack@example.com' } } })
 vi.mock('@slack/web-api', () => ({
   WebClient: vi.fn().mockImplementation(() => ({
     chat: { postMessage: postMessageMock },
+    users: { info: usersInfoMock },
   })),
 }))
 
@@ -99,7 +105,7 @@ async function postSlash(text: string) {
     text,
     user_id: 'U_TEST',
     channel_id: 'C_TEST',
-    team_id: 'T_TEST',
+    team_id: 'T_SEARCH_TEST',
     // response_url required by slice 5's NL Q&A dispatcher for the
     // async-reply path; harmless for slices 1+2's synchronous replies.
     response_url: 'https://hooks.slack.com/commands/T_TEST/12345/abc',
@@ -191,13 +197,13 @@ describe('POST /slack/events — search when CYGGIE_SLACK_DEFAULT_USER_ID unset'
     if (appNoUser) await appNoUser.close()
   })
 
-  test('search returns "Cyggie not yet linked" message', async () => {
+  test('search with no resolvable identity returns the "not linked" refusal', async () => {
     const params = new URLSearchParams({
       command: '/cyggie',
       text: 'search anything',
       user_id: 'U_TEST',
       channel_id: 'C_TEST',
-      team_id: 'T_TEST',
+      team_id: 'T_SEARCH_TEST',
     })
     const body = params.toString()
     const timestamp = String(Math.floor(Date.now() / 1000))
@@ -219,7 +225,7 @@ describe('POST /slack/events — search when CYGGIE_SLACK_DEFAULT_USER_ID unset'
     expect(res.statusCode).toBe(200)
     const reply = res.json()
     expect(reply.response_type).toBe('ephemeral')
-    expect(reply.text).toContain('not yet linked')
-    expect(reply.text).toContain('CYGGIE_SLACK_DEFAULT_USER_ID')
+    // Slice D: unmapped Slack user with no beta default → fail-closed refusal.
+    expect(reply.text).toContain("isn’t linked to a Cyggie account")
   })
 })

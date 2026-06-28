@@ -11,13 +11,16 @@ import { users } from './auth'
 // `user_credentials` is "AI provider routing"; gateway code that touches
 // `settings` is "user preferences." No accidental cross-contamination.
 //
-// Storage posture (V1):
+// Storage posture (Slice C — multi-firm):
 //   • TLS in transit (Neon requires it).
-//   • At-rest encryption via Neon's storage encryption.
-//   • NO app-level encryption (no pgcrypto), no per-row key wrapping.
-//     This is acceptable for single-firm beta. When multi-tenant onboarding
-//     lands, add pgcrypto with a server-rotation key and a one-shot
-//     re-encrypt migration.
+//   • At-rest encryption via Neon's storage encryption, PLUS app-level
+//     AES-256-GCM envelope encryption of `value` (iv:authTag:ciphertext) keyed
+//     by env.CREDENTIAL_ENC_KEY — a Fly secret, separate trust domain from Neon,
+//     so a DB leak alone yields no usable provider keys. See auth/token-crypto.ts.
+//   • The PUT route encrypts on write; llm/resolve-key.ts decrypts on read and
+//     tolerates pre-encryption plaintext rows (Red Swan) transitionally until the
+//     re-encrypt script (scripts/reencrypt-user-credentials.mjs) backfills them.
+//     That tolerance is removed once zero plaintext rows remain (TODOS.md MF-2).
 //
 // Sync posture: NOT in OWNED_TABLES — credentials don't flow through the
 // Phase 1.5a outbox. Desktop POSTs directly to the gateway via the
