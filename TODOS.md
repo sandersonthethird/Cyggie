@@ -20,6 +20,30 @@ two-stage finalize) reference the abandoned design; the T38 body-limit note (10 
 steady state, the 50 MB attempt OOM'd); ScreenHeader migration is PARTIAL (4 screens
 left); notes hard-purge's soft-delete half shipped (migration 130).
 
+### 2026-06-28 reconciliation — second code-verified audit
+
+A repeat of the 2026-06-22 pass after the T3 epic shipped. Same failure mode: "what's
+next" kept landing on work already done because the entry bodies predated the feature
+and never got a ✅ line. Code-verified and moved to ✅ this pass (see each entry for evidence):
+
+- **T1** — `/sync/pull` pagination. Shipped as **page-size** pagination (`PULL_PAGE_SIZE` /
+  `SYNC_PULL_PAGE_SIZE` + per-table more-pages flag in `sync.ts`), not the proposed `limit`+`cursor`.
+- **T4** — desktop pulls from Neon. Whole pull path live (`sync-pull.service.ts` +
+  `sync-remote-apply.ts`); bidirectional sync closed for the tables on the pull path.
+- **T16** — impromptu meetings on mobile. `ImpromptuRecordingsSection` on the calendar tab.
+- **T19** — multi-turn chat. `truncate-history.ts` wired into `routes/chat.ts`.
+- Also confirmed: the **mobile Summary/Enhance tab** is fully shipped + flag-on
+  (`EXPO_PUBLIC_FEATURE_SUMMARY_TAB=1`) — no stale TODO existed (T27 was already `OBSOLETE`).
+- The **T3 epic** (Slices 0/0b/1/2/3) is code-complete + DORMANT behind `GATEWAY_ENRICHMENT_ENABLED`.
+
+**Genuinely open after this pass** (so the next "what's next" reads off truth):
+- *Buildable now, not blocked:* **T6** (chaos test — no Maestro harness), **T7** (Maestro E2E),
+  **T3 Slice 2b** (WebShare homepage tier, P3), **T26** (enhance SSE — ready-to-ship paste of T18).
+- *Correctly deferred, blocked on a signal:* **T15** (3rd polling service), **T39** / **T-MC.3-pull**
+  (multi-desktop), **T40** / **T41** (post-deploy egress data), **T30** (multi-tenant/abuse),
+  **T28/T29/T35/T36/T37** (user signal), **T3 `llm_fallback_rate`** follow-up (P3).
+- *Untracked idea (not in TODOS):* iOS Live Activity — raise separately if wanted.
+
 ### Obsolescence pass (2026-06-22, second sweep)
 
 A follow-up sweep looked for items not *shipped* but *obviated* by the work above.
@@ -907,7 +931,7 @@ fill out full M5 in subsequent passes.
 |---|---|---|---|---|
 | **T17** | **Chat session persistence + Neon sync** | Mobile Chat tab forgets every conversation on tab unmount. Desktop has `chat_sessions` + `chat_session_messages` tables (migrations 078-080) but they're SQLite-local — never written to Neon. To make mobile chat persist AND sync to desktop, mirror those tables in Neon, add `GET /chat/sessions`, `POST /chat/sessions`, `GET /chat/sessions/:id/messages`, then route desktop writes through the Phase 1.5a outbox the same way `meetings` flow does. **PRIORITY:** promoted from P2 → **P1** on 2026-05-23 (plan-ceo-review REDUCTION pass) — multiplayer-by-default in V1 means chat history must survive across teammates and devices. | L (~3-5 days) | Reuses `withSync` wrapper + applyRemote primitive from Phase 1.5a/c. T14 covers the multi-table pull side. |
 | **T18** | **✅ SHIPPED — SSE streaming for /chat/messages** | Route honors `Accept: text/event-stream` and emits token deltas via `reply.raw.write()`. Tests: `api-gateway/test/chat-sessions-stream.test.ts` (6 cases — token stream + done + error). | M (~2 days) | Mobile-side `expo-fetch` SSE consumer landed alongside. |
-| **T19** | **Multi-turn chat (history sent with each message)** | The current route is one-shot — every message is a fresh conversation. Users will expect "as we just discussed…" follow-ups. Cheapest path: client sends `messages: [{role,content}…]` array, gateway forwards as-is to Anthropic. Needs context-budget management (truncate oldest user turns when total exceeds ~50KB). | S (~half day) | Depends on T17 only if we want history to survive app kill. Without T17, history lives in `useState`. |
+| **T19** | **✅ SHIPPED — Multi-turn chat (history sent with each message)** | Client sends the `messages: [{role,content}…]` array; the gateway forwards history to Anthropic with context-budget management in [api-gateway/src/llm/truncate-history.ts](api-gateway/src/llm/truncate-history.ts) (truncates oldest turns past the budget), wired into [api-gateway/src/routes/chat.ts](api-gateway/src/routes/chat.ts). *Original:* one-shot route — every message a fresh conversation; needed ~50KB truncation of oldest turns. | S (~half day) | Depended on T17 only for survive-app-kill; without it history lived in `useState`. |
 | **T20** | **Citations into transcript ranges** | When the chat reply references a meeting, link `[1]` `[2]` style citations back to specific transcript segments. Tap a citation in mobile → scrolls to that point in the meeting detail's transcript view. | L (~3 days) | Requires the chat prompt to ask for structured `<cite seg="…">` blocks + a parse step on the gateway. Mobile UI changes are small once the data shape lands. |
 | **T21** | **Tiptap notes editor (replace plain TextInput on meeting detail)** | Plain TextInput works but is single-style and clunky for multi-paragraph notes. Tiptap (via `@tiptap/react-native` or equivalent) gets us bullets, headings, links. Desktop already uses Tiptap — porting brings parity. | L (~4-5 days) | Notes Enhance still works through Tiptap (replace the editor content via the doc API). |
 | **T22** | **"Diff modal" for Enhance** | Today's Enhance is silent-replace (with a confirm dialog). Better UX: show before/after side-by-side, let user accept/reject hunks. | M (~2 days) | Use existing `diff` package (already a mobile dep). Mobile diff UI patterns from MeetingDetail conflict modal. |
@@ -1046,7 +1070,18 @@ the mobile calendar-tap-to-view + notes-editing PR. Stage 1 of that PR
 shipped the gateway + migration + tests; the remaining mobile work and
 these TODOs follow.
 
-### T1 — `/sync/pull` pagination
+### T1 — `/sync/pull` pagination ✅ shipped
+**STATUS (2026-06-28 reconciliation):** ✅ shipped — solved by **page-size
+pagination**, not the originally-proposed `limit`+`cursor`. `GET /sync/pull`
+now caps EVERY owned table at `PULL_PAGE_SIZE` (env-tunable via
+`SYNC_PULL_PAGE_SIZE`) and returns a per-table "more pages remain" flag so the
+client keeps pulling until each table is drained
+([api-gateway/src/routes/sync.ts:29,764,805](api-gateway/src/routes/sync.ts#L764) —
+every table query carries `.limit(PULL_PAGE_SIZE)` + `.orderBy(lamport ASC)`).
+The unbounded-response cliff (~500 meetings/user) is closed; lamport ordering
+makes the page boundary the cursor implicitly. **Original scope below preserved
+for archaeology.**
+
 **What:** Add `limit` + `cursor` to `GET /sync/pull`. The endpoint
 returns all user-scoped meetings with `lamport > since` ordered by
 lamport ASC; for first-launch (since=0) on a heavy account this could
@@ -1138,7 +1173,18 @@ in real-time.
 (Drive, Gmail, AI) that would need to run server-side.
 **Depends on:** Phase 1.5c bidirectional sync (T4).
 
-### T4 — Phase 1.5c: desktop pulls from Neon
+### T4 — Phase 1.5c: desktop pulls from Neon ✅ shipped
+**STATUS (2026-06-28 reconciliation):** ✅ shipped — the desktop pull path is
+live. [src/main/services/sync-pull.service.ts](src/main/services/sync-pull.service.ts)
+polls `GET /sync/pull` on the same 60s/backoff cadence as the push SyncAgent and
+applies rows via [src/main/services/sync-remote-apply.ts](src/main/services/sync-remote-apply.ts)
+(`applyRemoteMeetings` + the per-table `TableSpec` primitives), with lamport LWW
+reconciling the two outboxes. Bidirectional sync is closed for the tables on the
+pull path (meetings, notes, org_companies, aliases, contacts, contact_emails, +
+the rest enumerated in T14); remaining tables are tracked as their own deferred
+items (T39 memos, T-MC.3-pull flagged files). **Original scope below preserved
+for archaeology.**
+
 **What:** Mirror of `GET /sync/pull` on the desktop side — the desktop
 SyncAgent polls the gateway for rows updated by mobile and applies them
 to the local SQLite. Closes the round-trip so mobile-originated edits
@@ -1369,7 +1415,13 @@ are the merge targets.
 **Priority:** P3 — code-quality investment, no user-visible effect.
 **Depends on / blocked by:** Third polling service landing.
 
-### T16 — Mobile: surface impromptu (no-cal-event) meetings somewhere
+### T16 — Mobile: surface impromptu (no-cal-event) meetings somewhere ✅ shipped
+**STATUS (2026-06-28 reconciliation):** ✅ shipped — chose **Option 1** (a
+"My Recordings"-style section on the calendar tab). `ImpromptuRecordingsSection`
+renders in [mobile/app/(tabs)/calendar.tsx:48,122,591](mobile/app/(tabs)/calendar.tsx#L122),
+giving impromptu rows (`calendar_event_id = null`) a permanent UI entry point so
+they survive closing the app / killing the recording screen. **Original scope
+below preserved for archaeology.**
 
 **What:** Add a way to find past impromptu meetings on mobile.
 Impromptu rows (Record FAB outside any calendar slot) have
