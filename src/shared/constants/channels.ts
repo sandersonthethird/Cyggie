@@ -331,10 +331,6 @@ export const IPC_CHANNELS = {
   // Title rename
   MEETING_RENAME_TITLE: 'meeting:rename-title',
 
-  // Two-tier storage (Slice 3f): flip a meeting's privacy + relocate its files
-  // between the private (local) and shared (Drive) roots.
-  MEETING_SET_PRIVACY: 'meeting:set-privacy',
-
   // Notes
   MEETING_SAVE_NOTES: 'meeting:save-notes',
   MEETING_SAVE_SUMMARY: 'meeting:save-summary',
