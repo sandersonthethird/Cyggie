@@ -1,10 +1,24 @@
-import { existsSync, unlinkSync, renameSync, readdirSync, statSync, writeFileSync } from 'fs'
-import { join, extname, basename } from 'path'
+import { existsSync, unlinkSync, renameSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'fs'
+import { join, extname, basename, dirname } from 'path'
 import { spawn, spawnSync } from 'child_process'
 import type { ChildProcessByStdio } from 'child_process'
 import type { Readable, Writable } from 'stream'
 import { once } from 'events'
-import { getRecordingsDir } from '../storage/paths'
+import { getRecordingsDir, getStagingDir } from '../storage/paths'
+import {
+  isTwoTierStorageEnabled,
+  placeFinalizedFile,
+  resolveExistingFile,
+  resolveRecordingFilePath,
+  recordingProbeDirs,
+  stagingPathFor,
+} from '../storage/routing'
+import { enqueueHeldFile } from '../storage/hold-queue'
+
+interface MeetingRef {
+  id: string
+  isPrivate?: boolean | null
+}
 
 interface ActiveRecording {
   meetingId: string
@@ -204,21 +218,28 @@ async function concatVideoFiles(
 }
 
 function findRecordingByMeetingId(meetingId: string): string | null {
-  const dir = getRecordingsDir()
-  if (!existsSync(dir)) return null
-
+  // recordingProbeDirs() is [recordingsDir] when the flag is off (identical to
+  // the original single-dir scan) and [private, shared, staging] when on.
+  const dirs = recordingProbeDirs()
   const shortId = meetingId.split('-')[0]
-  const candidates = readdirSync(dir).filter((name) => {
-    const lower = name.toLowerCase()
-    const isMedia = lower.endsWith('.mp4') || lower.endsWith('.webm')
-    if (!isMedia) return false
-    return (
-      name.includes(`(${shortId})`) ||
-      name.startsWith(`${meetingId}.`) ||
-      name.startsWith(meetingId) ||
-      name.includes(meetingId)
-    )
-  })
+
+  const candidates: Array<{ name: string; dir: string }> = []
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue
+    for (const name of readdirSync(dir)) {
+      const lower = name.toLowerCase()
+      const isMedia = lower.endsWith('.mp4') || lower.endsWith('.webm')
+      if (!isMedia) continue
+      if (
+        name.includes(`(${shortId})`) ||
+        name.startsWith(`${meetingId}.`) ||
+        name.startsWith(meetingId) ||
+        name.includes(meetingId)
+      ) {
+        candidates.push({ name, dir })
+      }
+    }
+  }
   if (candidates.length === 0) return null
 
   const score = (name: string): number => {
@@ -232,29 +253,30 @@ function findRecordingByMeetingId(meetingId: string): string | null {
   }
 
   candidates.sort((a, b) => {
-    const scoreDiff = score(b) - score(a)
+    const scoreDiff = score(b.name) - score(a.name)
     if (scoreDiff !== 0) return scoreDiff
     try {
-      const aMtime = statSync(join(dir, a)).mtimeMs
-      const bMtime = statSync(join(dir, b)).mtimeMs
+      const aMtime = statSync(join(a.dir, a.name)).mtimeMs
+      const bMtime = statSync(join(b.dir, b.name)).mtimeMs
       return bMtime - aMtime
     } catch {
       return 0
     }
   })
 
-  return candidates[0] || null
+  return candidates[0]?.name || null
 }
 
 export function resolveMeetingRecordingFilename(
   meetingId: string,
   recordingPath: string | null | undefined
 ): string | null {
-  const dir = getRecordingsDir()
+  // resolveRecordingFilePath probes the single recordings dir (flag off) or both
+  // roots + the held-staging slot (flag on), so the alternate-extension search
+  // below transparently spans wherever the file actually landed.
   const normalized = (recordingPath || '').trim()
   if (normalized) {
-    const fullPath = join(dir, normalized)
-    if (existsSync(fullPath)) {
+    if (resolveRecordingFilePath(normalized)) {
       return normalized
     }
 
@@ -262,7 +284,7 @@ export function resolveMeetingRecordingFilename(
     const base = basename(normalized, ext)
     const alternates = [`${base}.mp4`, `${base}.webm`, `${base}.play.mp4`]
     for (const alternate of alternates) {
-      if (existsSync(join(dir, alternate))) {
+      if (resolveRecordingFilePath(alternate)) {
         return alternate
       }
     }
@@ -280,7 +302,13 @@ export function startVideoFile(meetingId: string): void {
   const ffmpegPath = resolveFfmpegPath()
   ensureFfmpegAvailable(ffmpegPath)
   const encoderConfig = resolveEncoderConfig(ffmpegPath)
-  const tempPath = join(getRecordingsDir(), `${meetingId}.tmp.mp4`)
+  // Issue 2A: when two-tier is on, the in-progress capture streams to the local
+  // staging dir (never a synced root) so a public-then-private toggle can't
+  // pre-leak bytes to Drive. Placed into the routed root at finalize. Flag OFF →
+  // the legacy recordings dir, byte-identical to before.
+  const tempPath = isTwoTierStorageEnabled()
+    ? join(getStagingDir(), `${meetingId}.tmp.mp4`)
+    : join(getRecordingsDir(), `${meetingId}.tmp.mp4`)
 
   const ffmpegArgs = [
     '-hide_banner',
@@ -412,7 +440,8 @@ async function waitForProcessExit(recording: ActiveRecording, timeoutMs: number)
 export async function finalizeVideoFile(
   meetingId: string,
   filename: string,
-  previousRecordingPath?: string
+  previousRecordingPath?: string,
+  isPrivate?: boolean | null
 ): Promise<string> {
   if (!activeRecording || activeRecording.meetingId !== meetingId) {
     throw new Error('No active video recording for this meeting')
@@ -457,42 +486,106 @@ export async function finalizeVideoFile(
     throw recording.error
   }
 
-  const dir = getRecordingsDir()
-  const finalPath = join(dir, filename)
+  if (!isTwoTierStorageEnabled()) {
+    // ===== Legacy single-root finalize — byte-identical to pre-two-tier. =====
+    const dir = getRecordingsDir()
+    const finalPath = join(dir, filename)
 
-  // Check for an existing recording to concatenate with
-  const previousFullPath = previousRecordingPath
-    ? join(dir, previousRecordingPath)
+    // Check for an existing recording to concatenate with
+    const previousFullPath = previousRecordingPath
+      ? join(dir, previousRecordingPath)
+      : null
+
+    if (previousFullPath && existsSync(previousFullPath)) {
+      const prevTempPath = join(dir, `${meetingId}.prev.tmp.mp4`)
+      renameSync(previousFullPath, prevTempPath)
+
+      try {
+        await concatVideoFiles(recording.ffmpegPath, [prevTempPath, tempPath], finalPath)
+        // Clean up segment temp files
+        if (existsSync(prevTempPath)) unlinkSync(prevTempPath)
+        if (existsSync(tempPath)) unlinkSync(tempPath)
+        console.log(
+          `[VideoWriter] Concatenated segments into ${finalPath} (${recording.ffmpegPath})`
+        )
+      } catch (err) {
+        console.warn('[VideoWriter] Concat failed, saving new segment only:', err)
+        // Restore previous file and save new segment separately
+        if (existsSync(prevTempPath)) {
+          try {
+            renameSync(prevTempPath, previousFullPath)
+          } catch {
+            // ignore
+          }
+        }
+        renameSync(tempPath, finalPath)
+      }
+    } else {
+      renameSync(tempPath, finalPath)
+      console.log(
+        `[VideoWriter] Finalized ${finalPath} (${(bytesWritten / 1024 / 1024).toFixed(1)} MB via ${recording.ffmpegPath})`
+      )
+    }
+
+    return filename
+  }
+
+  // ===== Two-tier finalize: stage→place into the routed root, HOLD when the
+  // public shared root is unresolved (Issue 3A). =====
+  const meeting: MeetingRef = { id: meetingId, isPrivate }
+  // Canonical local staging slot. placeFinalizedFile moves it into the routed
+  // root, or — on HOLD — leaves it here, where resolveExistingFile's staging
+  // fallback still finds it for playback.
+  const canonicalStaging = stagingPathFor('recording', filename)
+  mkdirSync(dirname(canonicalStaging), { recursive: true })
+
+  // A prior segment may live in EITHER root (or held in staging) — resolve
+  // across them before concatenating.
+  const previousResolved = previousRecordingPath
+    ? resolveExistingFile(meeting, 'recording', previousRecordingPath)
     : null
 
-  if (previousFullPath && existsSync(previousFullPath)) {
-    const prevTempPath = join(dir, `${meetingId}.prev.tmp.mp4`)
-    renameSync(previousFullPath, prevTempPath)
-
+  if (previousResolved && existsSync(previousResolved)) {
+    // Concat the previous segment (read in place) + the new staged segment into a
+    // DISTINCT combined temp, so input and output never alias when the previous
+    // segment is itself the held same-named file.
+    const combinedTemp = join(getStagingDir(), `${meetingId}.combined.tmp.mp4`)
     try {
-      await concatVideoFiles(recording.ffmpegPath, [prevTempPath, tempPath], finalPath)
-      // Clean up segment temp files
-      if (existsSync(prevTempPath)) unlinkSync(prevTempPath)
+      await concatVideoFiles(recording.ffmpegPath, [previousResolved, tempPath], combinedTemp)
       if (existsSync(tempPath)) unlinkSync(tempPath)
-      console.log(
-        `[VideoWriter] Concatenated segments into ${finalPath} (${recording.ffmpegPath})`
-      )
+      // The combined file subsumes the previous segment — drop it, then move the
+      // combined result into the canonical staging slot.
+      if (existsSync(previousResolved)) unlinkSync(previousResolved)
+      renameSync(combinedTemp, canonicalStaging)
+      console.log(`[VideoWriter] Concatenated segments (${recording.ffmpegPath})`)
     } catch (err) {
       console.warn('[VideoWriter] Concat failed, saving new segment only:', err)
-      // Restore previous file and save new segment separately
-      if (existsSync(prevTempPath)) {
+      if (existsSync(combinedTemp)) {
         try {
-          renameSync(prevTempPath, previousFullPath)
+          unlinkSync(combinedTemp)
         } catch {
           // ignore
         }
       }
-      renameSync(tempPath, finalPath)
+      // Keep the previous segment intact; stage just the new segment.
+      renameSync(tempPath, canonicalStaging)
     }
   } else {
-    renameSync(tempPath, finalPath)
+    renameSync(tempPath, canonicalStaging)
+  }
+
+  const placed = placeFinalizedFile(meeting, 'recording', filename, canonicalStaging)
+  if (placed.kind === 'held') {
+    // The file waits in staging (still readable via the resolve-staging
+    // fallback). Enqueue so the held-finalize queue drains it into the shared
+    // root once it recovers (Slice 3e).
+    enqueueHeldFile({ meetingId, kind: 'recording', filename, stagingPath: placed.stagingPath })
+    console.warn(
+      `[VideoWriter] Recording HELD — shared root unresolved, staged at ${placed.stagingPath}`
+    )
+  } else {
     console.log(
-      `[VideoWriter] Finalized ${finalPath} (${(bytesWritten / 1024 / 1024).toFixed(1)} MB via ${recording.ffmpegPath})`
+      `[VideoWriter] Finalized ${placed.path} (${(bytesWritten / 1024 / 1024).toFixed(1)} MB via ${recording.ffmpegPath})`
     )
   }
 
@@ -575,13 +668,15 @@ export async function getPlayableRecordingFilename(filename: string): Promise<st
     return filename
   }
 
-  const sourcePath = join(getRecordingsDir(), filename)
-  if (!existsSync(sourcePath)) {
+  const sourcePath = resolveRecordingFilePath(filename)
+  if (!sourcePath) {
     return filename
   }
 
   const playbackFilename = buildPlaybackFilename(filename)
-  const playbackPath = join(getRecordingsDir(), playbackFilename)
+  // Co-locate the playback copy with its source root (private / shared / staging)
+  // so the media:// two-root probe serves it from wherever the source lives.
+  const playbackPath = join(dirname(sourcePath), playbackFilename)
   if (existsSync(playbackPath)) {
     return playbackFilename
   }
@@ -608,18 +703,23 @@ export async function getPlayableRecordingFilename(filename: string): Promise<st
 }
 
 export function cleanupOrphanedTempFiles(): void {
-  const dir = getRecordingsDir()
-  if (!existsSync(dir)) return
-  const tmpFiles = readdirSync(dir).filter(
-    (f) =>
-      f.endsWith('.webm.tmp') ||
-      f.endsWith('.mp4.tmp') ||
-      f.endsWith('.tmp.mp4') ||
-      f.endsWith('.prev.tmp.mp4') ||
-      f.endsWith('.concat.txt')
-  )
-  for (const f of tmpFiles) {
-    unlinkSync(join(dir, f))
-    console.log(`[VideoWriter] Cleaned up orphaned temp file: ${f}`)
+  // Flag ON: in-progress / concat temps live in the local staging dir, so sweep
+  // it too. (Held canonical recordings sit in staging's `recording/` subdir with
+  // real filenames — they don't match the temp patterns and are left untouched.)
+  const dirs = isTwoTierStorageEnabled()
+    ? [getRecordingsDir(), getStagingDir()]
+    : [getRecordingsDir()]
+  const isTemp = (f: string): boolean =>
+    f.endsWith('.webm.tmp') ||
+    f.endsWith('.mp4.tmp') ||
+    f.endsWith('.tmp.mp4') || // also matches .prev.tmp.mp4 / .combined.tmp.mp4
+    f.endsWith('.concat.txt')
+  for (const dir of dirs) {
+    if (!existsSync(dir)) continue
+    for (const f of readdirSync(dir)) {
+      if (!isTemp(f)) continue
+      unlinkSync(join(dir, f))
+      console.log(`[VideoWriter] Cleaned up orphaned temp file: ${f}`)
+    }
   }
 }

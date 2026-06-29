@@ -3360,6 +3360,7 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
         m.duration_seconds,
         m.summary_path,
         m.summary_drive_id,
+        m.is_private,
         (m.notes IS NOT NULL AND TRIM(m.notes) != '') AS has_non_empty_notes
       FROM meetings m
       WHERE m.id IN (
@@ -3383,6 +3384,7 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
     duration_seconds: number | null
     summary_path: string | null
     summary_drive_id: string | null
+    is_private: number | null
     has_non_empty_notes: number
   }>
 
@@ -3394,6 +3396,7 @@ export function listCompanyMeetings(companyId: string): CompanyMeetingRef[] {
     durationSeconds: row.duration_seconds,
     summaryPath: row.summary_path,
     summaryDriveId: row.summary_drive_id,
+    isPrivate: row.is_private === 1,
     hasNonEmptyNotes: row.has_non_empty_notes === 1,
   }))
 }
@@ -3445,11 +3448,11 @@ export function listCompanyMeetingsCreatedSince(
   }))
 }
 
-export function listCompanyMeetingSummaryPaths(companyId: string): Array<{ meetingId: string; title: string; date: string; summaryPath: string }> {
+export function listCompanyMeetingSummaryPaths(companyId: string): Array<{ meetingId: string; title: string; date: string; summaryPath: string; isPrivate: boolean }> {
   const db = getDatabase()
   const rows = db
     .prepare(`
-      SELECT m.id, m.title, m.date, m.summary_path
+      SELECT m.id, m.title, m.date, m.summary_path, m.is_private
       FROM meetings m
       WHERE m.summary_path IS NOT NULL
         AND m.id IN (
@@ -3465,13 +3468,14 @@ export function listCompanyMeetingSummaryPaths(companyId: string): Array<{ meeti
         )
       ORDER BY datetime(m.date) DESC
     `)
-    .all(companyId, companyId) as Array<{ id: string; title: string; date: string; summary_path: string }>
+    .all(companyId, companyId) as Array<{ id: string; title: string; date: string; summary_path: string; is_private: number | null }>
 
   return rows.map((row) => ({
     meetingId: row.id,
     title: row.title,
     date: row.date,
-    summaryPath: row.summary_path
+    summaryPath: row.summary_path,
+    isPrivate: row.is_private === 1
   }))
 }
 

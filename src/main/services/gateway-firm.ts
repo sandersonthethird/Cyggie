@@ -49,6 +49,39 @@ export async function fetchFirmTemplateId(): Promise<FirmTemplateFetchResult> {
   }
 }
 
+/**
+ * Best-effort firm name for the onboarding Storage step's member info line
+ * ("Shared files go to your firm's <name> folder"). Same /firms/me GET +
+ * 401→refresh→retry pattern. Returns null on any failure (the UI falls back to
+ * a generic phrasing).
+ */
+export async function fetchFirmName(): Promise<string | null> {
+  const tokenA = await getAccessToken()
+  if (!tokenA) return null
+
+  const tryOnce = (token: string): Promise<Response> =>
+    fetch(`${GATEWAY_URL}/firms/me`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+  try {
+    let res = await tryOnce(tokenA)
+    if (res.status === 401) {
+      const fresh = await refreshCyggieAuth()
+      if (!fresh) return null
+      res = await tryOnce(fresh)
+    }
+    if (!res.ok) return null
+    const body = (await res.json()) as { name?: string | null }
+    return typeof body.name === 'string' && body.name.length > 0 ? body.name : null
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[gateway-firm] /firms/me name fetch failed err=${msg}`)
+    return null
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Two-tier storage (Slice 2) — the firm-wide SHARED files location.
 //

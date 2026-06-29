@@ -6,7 +6,10 @@ import {
   decideGate,
   deriveFieldProfile,
   fieldKeyFromLabel,
+  deriveSharedRelPath,
+  looksLikeCloudMount,
   STEP,
+  SETUP_STEPS,
   type OnboardingSignals,
   type ProfileMappingInput,
 } from '../renderer/components/onboarding/onboarding-logic'
@@ -73,6 +76,41 @@ describe('deriveOnboardingStatus', () => {
     expect(withImport.steps.import).toBe(true)
     expect(withImport.allCoreDone).toBe(true)
     expect(withImport.firstIncomplete).toBe('team')
+  })
+  it('storage step (Slice 4) is always done + optional — never firstIncomplete, never core', () => {
+    // Even on a totally fresh install, storage is "done" (local default), so the
+    // resume point is workspace, not storage.
+    const fresh = deriveOnboardingStatus(base)
+    expect(fresh.steps.storage).toBe(true)
+    expect(fresh.firstIncomplete).toBe('workspace')
+    // storage sits after workspace in the bar order.
+    expect(SETUP_STEPS).toEqual(['workspace', 'storage', 'google', 'keys', 'import', 'team'])
+    expect(STEP.storage).toBe(2)
+    expect(STEP.done).toBe(7)
+  })
+})
+
+describe('deriveSharedRelPath / looksLikeCloudMount (Slice 4)', () => {
+  it('strips the CloudStorage/GoogleDrive-<acct>/ prefix to a mount-relative spec', () => {
+    expect(
+      deriveSharedRelPath(
+        '/Users/sandy/Library/CloudStorage/GoogleDrive-sandy@firm.com/Shared drives/Cyggie/Meeting Notes',
+      ),
+    ).toBe('Shared drives/Cyggie/Meeting Notes')
+  })
+  it('returns null for a path that is not under a Google Drive mount', () => {
+    expect(deriveSharedRelPath('/Users/sandy/Documents/Cyggie')).toBeNull()
+    expect(deriveSharedRelPath('/Users/sandy/Library/CloudStorage/Dropbox/Shared')).toBeNull()
+  })
+  it('trims a trailing slash', () => {
+    expect(
+      deriveSharedRelPath('/Users/x/Library/CloudStorage/GoogleDrive-x@y.com/My Drive/Cyggie/'),
+    ).toBe('My Drive/Cyggie')
+  })
+  it('flags cloud-synced locations for the private-folder warning', () => {
+    expect(looksLikeCloudMount('/Users/x/Library/CloudStorage/GoogleDrive-x@y.com/My Drive')).toBe(true)
+    expect(looksLikeCloudMount('/Users/x/Dropbox/Cyggie')).toBe(true)
+    expect(looksLikeCloudMount('/Users/x/Documents/Cyggie')).toBe(false)
   })
 })
 
@@ -145,7 +183,8 @@ describe('decideGate (smart backfill)', () => {
     const d = decideGate({ ...base, signedIn: true, hasDeepgram: true, hasAnthropic: true })
     expect(d.kind).toBe('flow')
     if (d.kind === 'flow') {
-      expect(d.doneSteps).toEqual(['keys']) // keys done; workspace/google/team not
+      // storage is always "done" (local default) so it pre-checks alongside keys.
+      expect(d.doneSteps).toEqual(['storage', 'keys']) // workspace/google/team not done
       expect(d.startStep).toBe(STEP.workspace) // first incomplete in order
     }
   })

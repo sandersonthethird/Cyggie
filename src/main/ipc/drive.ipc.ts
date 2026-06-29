@@ -25,6 +25,19 @@ export function registerDriveHandlers(): void {
         return { success: false, error: 'share_failed', message: 'Meeting not found.' }
       }
 
+      // Slice 5 — a meeting marked private must never reach a shared Drive
+      // location. This on-demand export is the last manual path a private file
+      // could leak to a firm-shared place, so refuse up front — before returning
+      // any pre-existing link (a meeting toggled private after an earlier upload)
+      // and before uploading. Straight refusal copy (privacy guard, no voice).
+      if (meeting.isPrivate) {
+        return {
+          success: false,
+          error: 'private_meeting',
+          message: 'This meeting is private and can’t be exported to Google Drive.',
+        }
+      }
+
       // If we already have a Drive ID, return its link
       const existingDriveId = meeting.summaryDriveId || meeting.transcriptDriveId
       if (existingDriveId) {

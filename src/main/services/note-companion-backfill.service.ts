@@ -141,7 +141,7 @@ export function ensureCompanyMeetingSummaryNotes(
     for (const row of rows) {
       let summary: string | null = null
       try {
-        summary = readSummary(row.summaryPath)
+        summary = readSummary(row.summaryPath, { id: row.meetingId, isPrivate: row.isPrivate })
       } catch (err) {
         console.warn('[noteCompanionBackfill] Failed to read summary:', err)
         continue
@@ -187,7 +187,7 @@ export function ensureContactMeetingSummaryNotes(
     const db = getDatabase()
     const rows = db
       .prepare(`
-        SELECT m.id as meetingId, m.title, m.date, m.summary_path as summaryPath
+        SELECT m.id as meetingId, m.title, m.date, m.summary_path as summaryPath, m.is_private as isPrivate
         FROM meetings m
         WHERE m.summary_path IS NOT NULL
           AND m.id IN (
@@ -214,12 +214,13 @@ export function ensureContactMeetingSummaryNotes(
         title: string
         date: string
         summaryPath: string
+        isPrivate: number | null
       }>
 
     for (const row of rows) {
       let summary: string | null = null
       try {
-        summary = readSummary(row.summaryPath)
+        summary = readSummary(row.summaryPath, { id: row.meetingId, isPrivate: row.isPrivate === 1 })
       } catch (err) {
         console.warn('[noteCompanionBackfill] Failed to read summary:', err)
         continue

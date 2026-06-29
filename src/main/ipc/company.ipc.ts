@@ -706,7 +706,7 @@ export function registerCompanyHandlers(): void {
     if (!companyId) throw new Error('companyId is required')
     return companyRepo.listCompanyMeetings(companyId).map((m) => ({
       ...m,
-      hasReadableSummary: summaryFileExists(m.summaryPath),
+      hasReadableSummary: summaryFileExists(m.summaryPath, m),
       hasSummaryDriveId: !!m.summaryDriveId,
     }))
   })
@@ -911,7 +911,7 @@ export function registerCompanyHandlers(): void {
     const rows = companyRepo.listCompanyMeetingSummaryPaths(companyId)
     return rows
       .map((row) => {
-        const content = readSummary(row.summaryPath)
+        const content = readSummary(row.summaryPath, { id: row.meetingId, isPrivate: row.isPrivate })
         if (!content) return null
         return { meetingId: row.meetingId, title: row.title, date: row.date, summary: content }
       })

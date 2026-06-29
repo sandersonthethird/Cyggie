@@ -201,7 +201,7 @@ export async function buildUnifiedEntitiesContext(
     loadFull: (id) => {
       const full = meetingRepo.getMeeting(id)
       if (!full) return null
-      return { id: full.id, summaryPath: full.summaryPath, transcriptPath: full.transcriptPath }
+      return { id: full.id, summaryPath: full.summaryPath, transcriptPath: full.transcriptPath, isPrivate: full.isPrivate }
     },
     summaryCaps: MULTI_SUMMARY_CAPS,
     transcriptCaps: MULTI_TRANSCRIPT_CAPS,

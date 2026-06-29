@@ -19,16 +19,17 @@ export function hydrateCompanionNote(note: Note): Note {
 
   const db = getDatabase()
   const meeting = db
-    .prepare('SELECT summary_path, transcript_path FROM meetings WHERE id = ?')
+    .prepare('SELECT id, summary_path, transcript_path, is_private FROM meetings WHERE id = ?')
     .get(note.sourceMeetingId) as
-    | { summary_path: string | null; transcript_path: string | null }
+    | { id: string; summary_path: string | null; transcript_path: string | null; is_private: number | null }
     | undefined
 
   if (!meeting) return note
 
+  const meetingRef = { id: meeting.id, isPrivate: meeting.is_private === 1 }
   const raw =
-    (meeting.summary_path ? readSummary(meeting.summary_path) : null) ??
-    (meeting.transcript_path ? readTranscript(meeting.transcript_path) : null)
+    (meeting.summary_path ? readSummary(meeting.summary_path, meetingRef) : null) ??
+    (meeting.transcript_path ? readTranscript(meeting.transcript_path, meetingRef) : null)
 
   if (!raw) return note
 

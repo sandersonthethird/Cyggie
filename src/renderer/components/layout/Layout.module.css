@@ -247,3 +247,23 @@
   white-space: nowrap;
 }
 
+/* Two-tier storage: persistent "shared files paused" status banner (Issue 3A).
+ * Amber/warning, NOT red (this is an operational pause, not an error). Stacked
+ * above the bottom-right meeting/recording banners so the two never overlap. */
+.storagePausedBanner {
+  position: fixed;
+  bottom: 80px;
+  right: 24px;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+  max-width: 360px;
+  background: #fffbeb;
+  border: 1px solid var(--color-warning, #d97706);
+  color: var(--color-warning-text, #92400e);
+}
+

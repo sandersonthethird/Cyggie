@@ -456,7 +456,7 @@ export async function getContactSummaryUpdateProposalsFromMeetingId(
   if (!meeting) return []
   if (!meeting.summaryPath) return []
 
-  const summary = readSummary(meeting.summaryPath)
+  const summary = readSummary(meeting.summaryPath, meeting)
   if (!summary) return []
 
   const emails = meeting.attendeeEmails || []

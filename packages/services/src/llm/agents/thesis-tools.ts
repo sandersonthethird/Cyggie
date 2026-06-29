@@ -118,7 +118,7 @@ const readMeetingSummary = defineTool({
     const summaryPaths = companyRepo.listCompanyMeetingSummaryPaths(ctx.companyId)
     const path = summaryPaths.find(s => s.meetingId === meetingId)
     if (!path) return { error: 'no_summary_for_meeting' }
-    const content = readSummary(path.summaryPath)
+    const content = readSummary(path.summaryPath, { id: path.meetingId, isPrivate: path.isPrivate })
     if (!content) return { error: 'summary_file_unreadable' }
     return { meetingId, title: path.title, date: path.date, content }
   },
@@ -136,7 +136,7 @@ const readMeetingTranscript = defineTool({
     if (!linkedMeetings.find(m => m.id === meetingId)) return { error: 'meeting_not_linked_to_company' }
     const meeting = meetingRepo.getMeeting(meetingId)
     if (!meeting?.transcriptPath) return { error: 'no_transcript_path' }
-    const content = readTranscript(meeting.transcriptPath)
+    const content = readTranscript(meeting.transcriptPath, meeting)
     if (!content) return { error: 'transcript_file_unreadable' }
     return { meetingId, title: meeting.title, date: meeting.date, content }
   },

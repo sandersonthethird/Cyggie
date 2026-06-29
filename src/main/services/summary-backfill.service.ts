@@ -46,6 +46,7 @@ import { readSummary } from '../storage/file-manager'
 interface BackfillRow {
   id: string
   summary_path: string
+  is_private: number | null
 }
 
 export interface BackfillSummariesResult {
@@ -70,11 +71,14 @@ export interface BackfillSummariesResult {
  * caller doesn't need to know the retry happened.
  */
 const MAX_READ_ATTEMPTS = 3
-function readSummaryWithEintrRetry(path: string): string | null {
+function readSummaryWithEintrRetry(
+  path: string,
+  meeting: { id: string; isPrivate?: boolean | null },
+): string | null {
   let lastErr: unknown
   for (let attempt = 1; attempt <= MAX_READ_ATTEMPTS; attempt++) {
     try {
-      return readSummary(path)
+      return readSummary(path, meeting)
     } catch (err) {
       const isEintr =
         typeof err === 'object' &&
@@ -109,7 +113,7 @@ export function backfillMissingSummaries(
   const db = getDatabase()
   const rows = db
     .prepare(`
-      SELECT id, summary_path
+      SELECT id, summary_path, is_private
       FROM meetings
       WHERE summary IS NULL AND summary_path IS NOT NULL
     `)
@@ -122,7 +126,7 @@ export function backfillMissingSummaries(
   for (const row of rows) {
     let content: string | null = null
     try {
-      content = readSummaryWithEintrRetry(row.summary_path)
+      content = readSummaryWithEintrRetry(row.summary_path, { id: row.id, isPrivate: row.is_private === 1 })
     } catch (err) {
       console.warn(
         `[summary-backfill] readSummary failed after ${MAX_READ_ATTEMPTS} attempt(s) for meeting ${row.id}:`,

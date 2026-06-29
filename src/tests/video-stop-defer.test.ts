@@ -182,14 +182,14 @@ describe('VIDEO_STOP — return then finalize', () => {
     expect(mockFinalizeVideoFile).not.toHaveBeenCalled()
   })
 
-  it('passes previousRecordingPath (resume case) to finalizeVideoFile', async () => {
+  it('passes previousRecordingPath (resume case) + isPrivate to finalizeVideoFile', async () => {
     mockGetMeeting.mockReturnValue({
       id: 'mtg-1', title: 't', date: '2026-05-15', attendees: [],
-      recordingPath: 'previous-segment.mp4',
+      recordingPath: 'previous-segment.mp4', isPrivate: false,
     })
     mockFinalizeVideoFile.mockResolvedValue(undefined)
     await (getStopHandler() as (...args: unknown[]) => Promise<unknown>)(null, 'mtg-1')
     await getPending('video', 'mtg-1')
-    expect(mockFinalizeVideoFile).toHaveBeenCalledWith('mtg-1', 'recording-test.mp4', 'previous-segment.mp4')
+    expect(mockFinalizeVideoFile).toHaveBeenCalledWith('mtg-1', 'recording-test.mp4', 'previous-segment.mp4', false)
   })
 })

@@ -891,7 +891,7 @@ export class RecordingSession {
         }
 
         const transcriptPath = timeStep('write-transcript', () =>
-          writeTranscript(meetingId, transcriptMd, meeting?.title, meeting?.date, meeting?.attendees),
+          writeTranscript(meetingId, transcriptMd, meeting?.title, meeting?.date, meeting?.attendees, meeting?.isPrivate),
         )
         const fullText = assembler.getFullText()
 

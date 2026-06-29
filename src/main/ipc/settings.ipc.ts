@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from '../../shared/constants/channels'
 import { ENCRYPTED_KEYS, UNCONFIGURED_KEY, type MaskedKey } from '../../shared/types/settings'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { backfillMeetingSummaryNotes } from '../services/meeting-notes-backfill.service'
+import { onTwoTierSettingChanged } from '../storage/two-tier-bootstrap'
 import { getCurrentUserId } from '../security/current-user'
 import { isSafeStorageActive } from '../security/credentials'
 import {
@@ -105,6 +106,12 @@ export function registerSettingsHandlers(): void {
     // threat surface as the rest of the on-disk SQLite DB, and matches
     // storeCredential() in credentials.ts.
     settingsRepo.setSetting(key, storedValue)
+
+    // Slice 3b — flipping the two-tier flag re-reads the cached value and, if now
+    // on, immediately resolves the shared root instead of waiting for the tick.
+    if (key === 'twoTierStorageEnabled') {
+      onTwoTierSettingChanged()
+    }
 
     // T24 — mirror the Claude key to the gateway so mobile chat resolves
     // it from user_credentials instead of a separate gateway env key.

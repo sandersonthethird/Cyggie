@@ -137,7 +137,7 @@ export async function assembleCompanyContext(companyId: string): Promise<Company
     loadFull: (id) => {
       const full = meetingRepo.getMeeting(id)
       if (!full) return null
-      return { id: full.id, summaryPath: full.summaryPath, transcriptPath: full.transcriptPath }
+      return { id: full.id, summaryPath: full.summaryPath, transcriptPath: full.transcriptPath, isPrivate: full.isPrivate }
     },
     summaryCaps: COMPANY_SUMMARY_CAPS,
     transcriptCaps: COMPANY_TRANSCRIPT_CAPS,
@@ -281,7 +281,7 @@ export function assembleContactContext(contactId: string): ContactContextSignals
     loadFull: (id) => {
       const full = meetingRepo.getMeeting(id)
       if (!full) return null
-      return { id: full.id, summaryPath: full.summaryPath, transcriptPath: full.transcriptPath }
+      return { id: full.id, summaryPath: full.summaryPath, transcriptPath: full.transcriptPath, isPrivate: full.isPrivate }
     },
     summaryCaps: CONTACT_SUMMARY_CAPS,
     transcriptCaps: CONTACT_TRANSCRIPT_CAPS,
@@ -398,7 +398,7 @@ export function assembleSearchResultsContext(meetingIds: string[]): string {
 
     // Prefer summary over transcript
     if (meeting.summaryPath) {
-      const summary = readSummary(meeting.summaryPath)
+      const summary = readSummary(meeting.summaryPath, meeting)
       if (summary) {
         parts.push('**Summary:**')
         parts.push(summary)
@@ -413,7 +413,7 @@ export function assembleSearchResultsContext(meetingIds: string[]): string {
     }
 
     if (meeting.transcriptPath) {
-      const transcript = readTranscript(meeting.transcriptPath)
+      const transcript = readTranscript(meeting.transcriptPath, meeting)
       if (transcript) {
         const excerptLength = meeting.summaryPath ? 1500 : 3000
         const excerpt = transcript.length > excerptLength

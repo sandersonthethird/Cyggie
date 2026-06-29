@@ -331,6 +331,10 @@ export const IPC_CHANNELS = {
   // Title rename
   MEETING_RENAME_TITLE: 'meeting:rename-title',
 
+  // Two-tier storage (Slice 3f): flip a meeting's privacy + relocate its files
+  // between the private (local) and shared (Drive) roots.
+  MEETING_SET_PRIVACY: 'meeting:set-privacy',
+
   // Notes
   MEETING_SAVE_NOTES: 'meeting:save-notes',
   MEETING_SAVE_SUMMARY: 'meeting:save-summary',
@@ -480,6 +484,17 @@ export const IPC_CHANNELS = {
   PARTNER_MEETING_RECONCILE_PROPOSAL: 'partner-meeting:reconcile-proposal',
   PARTNER_MEETING_RECONCILE_CANCEL: 'partner-meeting:reconcile-cancel',
   PARTNER_MEETING_APPLY_RECONCILIATION: 'partner-meeting:apply-reconciliation',
+
+  // Two-tier storage (Slice 3e): shared-folder availability for the renderer's
+  // persistent "shared files paused" banner. STATUS = pull snapshot;
+  // STATUS_CHANGED = push when the held-finalize queue depth changes.
+  STORAGE_SHARED_STATUS: 'storage:shared-status',
+  STORAGE_SHARED_STATUS_CHANGED: 'storage:shared-status-changed',
+  // Slice 4 onboarding Storage step.
+  STORAGE_ONBOARDING_INFO: 'storage:onboarding-info', // { role, firmName, privatePath }
+  STORAGE_SET_PRIVATE_DIR: 'storage:set-private-dir', // (absPath) → { ok }
+  STORAGE_SET_SHARED_DIR: 'storage:set-shared-dir', // (relPath) → { ok }
+  APP_DIR_WRITABLE: 'app:dir-writable', // (absPath) → boolean (additive, read-only)
 
   // App
   APP_CHECK_PERMISSIONS: 'app:check-permissions',

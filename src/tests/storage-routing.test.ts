@@ -9,13 +9,16 @@ vi.mock('electron', () => ({
   app: { getPath: (n: string) => (n === 'documents' ? DOCS : TEMP) },
 }))
 
-import { setStoragePath, setResolvedSharedRoot, getStoragePath } from '../main/storage/paths'
+import { setStoragePath, setResolvedSharedRoot, getStoragePath, getStagingDir } from '../main/storage/paths'
 import {
   rootForMeeting,
   resolveExistingFile,
   placeFinalizedFile,
   stagingPathFor,
   isTwoTierStorageEnabled,
+  recordingProbeDirs,
+  resolveRecordingFilePath,
+  setTwoTierSettingProvider,
   __setTwoTierFlagForTests,
   __resetResolveCacheForTests,
   invalidateResolveCache,
@@ -36,6 +39,7 @@ beforeEach(() => {
   setStoragePath(LOCAL) // private root == storagePath today
   setResolvedSharedRoot(null)
   __setTwoTierFlagForTests(null)
+  setTwoTierSettingProvider(null)
   __resetResolveCacheForTests()
   rmSync(LOCAL, { recursive: true, force: true })
   rmSync(SHARED, { recursive: true, force: true })
@@ -87,6 +91,35 @@ describe('isTwoTierStorageEnabled — defaults OFF', () => {
     __setTwoTierFlagForTests(null)
     delete process.env['CYGGIE_TWO_TIER_STORAGE']
     expect(isTwoTierStorageEnabled()).toBe(false)
+  })
+})
+
+describe('isTwoTierStorageEnabled — injected setting provider (Slice 3b)', () => {
+  beforeEach(() => {
+    __setTwoTierFlagForTests(null)
+    delete process.env['CYGGIE_TWO_TIER_STORAGE']
+  })
+  afterAll(() => {
+    setTwoTierSettingProvider(null)
+    __setTwoTierFlagForTests(null)
+  })
+
+  it('reads the provider when no test/env override is set', () => {
+    setTwoTierSettingProvider(() => true)
+    expect(isTwoTierStorageEnabled()).toBe(true)
+    setTwoTierSettingProvider(() => false)
+    expect(isTwoTierStorageEnabled()).toBe(false)
+  })
+
+  it('test override and env both win over the provider', () => {
+    setTwoTierSettingProvider(() => false)
+    __setTwoTierFlagForTests(true)
+    expect(isTwoTierStorageEnabled()).toBe(true) // test override wins
+    __setTwoTierFlagForTests(null)
+    process.env['CYGGIE_TWO_TIER_STORAGE'] = '1'
+    expect(isTwoTierStorageEnabled()).toBe(true) // env wins over provider
+    delete process.env['CYGGIE_TWO_TIER_STORAGE']
+    setTwoTierSettingProvider(null)
   })
 })
 
@@ -198,4 +231,73 @@ describe('placeFinalizedFile — stage→finalize (2A) + hold (3A)', () => {
   })
 
   afterAll(() => rmSync(STAGING, { recursive: true, force: true }))
+})
+
+describe('recordingProbeDirs / resolveRecordingFilePath — media:// filename probe (Slice 3d)', () => {
+  function seedRecording(root: string, filename: string, body = 'mp4'): void {
+    const dir = join(root, 'recordings')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, filename), body)
+  }
+  // The held-recording slot is the canonical staging path's directory.
+  const heldDir = dirname(stagingPathFor('recording', 'x'))
+
+  beforeEach(() => rmSync(heldDir, { recursive: true, force: true }))
+  afterAll(() => rmSync(heldDir, { recursive: true, force: true }))
+
+  it('FLAG OFF → probes only the single recordings dir', () => {
+    __setTwoTierFlagForTests(false)
+    expect(recordingProbeDirs()).toEqual([join(getStoragePath(), 'recordings')])
+  })
+
+  it('FLAG ON → probes private root, shared root, then the held-staging slot', () => {
+    __setTwoTierFlagForTests(true)
+    setResolvedSharedRoot(SHARED)
+    expect(recordingProbeDirs()).toEqual([
+      join(LOCAL, 'recordings'),
+      join(SHARED, 'recordings'),
+      join(getStagingDir(), 'recording'),
+    ])
+  })
+
+  it('FLAG ON → omits the shared root from the probe list when unresolved', () => {
+    __setTwoTierFlagForTests(true)
+    setResolvedSharedRoot(null)
+    expect(recordingProbeDirs()).toEqual([
+      join(LOCAL, 'recordings'),
+      join(getStagingDir(), 'recording'),
+    ])
+  })
+
+  it('resolves a public recording living in the shared root', () => {
+    __setTwoTierFlagForTests(true)
+    setResolvedSharedRoot(SHARED)
+    seedRecording(SHARED, 'pub.mp4')
+    expect(resolveRecordingFilePath('pub.mp4')).toBe(join(SHARED, 'recordings', 'pub.mp4'))
+  })
+
+  it('resolves a HELD recording from the staging slot (shared root unresolved)', () => {
+    __setTwoTierFlagForTests(true)
+    setResolvedSharedRoot(null)
+    const held = stagingPathFor('recording', 'held.mp4')
+    mkdirSync(dirname(held), { recursive: true })
+    writeFileSync(held, 'mp4')
+    expect(resolveRecordingFilePath('held.mp4')).toBe(held)
+  })
+
+  it('returns null for a missing file and rejects ../ path traversal', () => {
+    __setTwoTierFlagForTests(true)
+    setResolvedSharedRoot(SHARED)
+    expect(resolveRecordingFilePath('does-not-exist.mp4')).toBeNull()
+    expect(resolveRecordingFilePath('../../../../etc/hosts')).toBeNull()
+  })
+
+  it('FLAG OFF → single-root lookup (today’s behavior)', () => {
+    __setTwoTierFlagForTests(false)
+    seedRecording(getStoragePath(), 'legacy.mp4')
+    expect(resolveRecordingFilePath('legacy.mp4')).toBe(
+      join(getStoragePath(), 'recordings', 'legacy.mp4'),
+    )
+    expect(resolveRecordingFilePath('missing.mp4')).toBeNull()
+  })
 })

@@ -27,3 +27,29 @@ export function getCurrentFirmId(): string | null {
     return null
   }
 }
+
+/**
+ * Read the `role` claim out of the cached gateway access token. The gateway
+ * signs 'admin' | 'member' into every token (api-gateway/src/auth/jwt.ts);
+ * first-from-firm is admin, invitees are member. Same decode-only (no signature
+ * check) discipline as getCurrentFirmId. Defaults to 'member' when signed out /
+ * malformed / pre-onboarding — the least-privileged, safest fallback (member UI
+ * never lets you set the firm-wide shared folder).
+ */
+export type FirmRole = 'admin' | 'member'
+
+export function getCurrentFirmRole(): FirmRole {
+  const token = getCyggieAccessTokenSync()
+  if (!token) return 'member'
+
+  const parts = token.split('.')
+  if (parts.length !== 3) return 'member'
+
+  try {
+    const json = Buffer.from(parts[1], 'base64url').toString('utf8')
+    const claims = JSON.parse(json) as { role?: unknown }
+    return claims.role === 'admin' ? 'admin' : 'member'
+  } catch {
+    return 'member'
+  }
+}

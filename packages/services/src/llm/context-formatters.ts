@@ -53,6 +53,8 @@ export interface MeetingFull {
   id: string
   summaryPath?: string | null
   transcriptPath?: string | null
+  // Carried so two-tier file reads resolve the is_private-implied root first.
+  isPrivate?: boolean | null
 }
 
 /**
@@ -92,7 +94,7 @@ export function formatMeetingsSection(opts: {
     if (summaryTotal >= summaryCaps.total) break
     const full = loadFull(m.id)
     if (!full?.summaryPath) continue
-    const content = readSummary(full.summaryPath)
+    const content = readSummary(full.summaryPath, full)
     if (!content) continue
     const excerpt = content.length > summaryCaps.perItem
       ? content.substring(0, summaryCaps.perItem) + '...'
@@ -110,7 +112,7 @@ export function formatMeetingsSection(opts: {
     if (summariesAdded.has(m.id)) continue
     const full = loadFull(m.id)
     if (!full?.transcriptPath) continue
-    const content = readTranscript(full.transcriptPath)
+    const content = readTranscript(full.transcriptPath, full)
     if (!content) continue
     const excerpt = content.length > transcriptCaps.perItem
       ? content.substring(0, transcriptCaps.perItem) + '...'

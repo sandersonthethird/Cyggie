@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { join, normalize } from 'path'
 import { existsSync, mkdirSync, renameSync, copyFileSync, unlinkSync } from 'fs'
 import {
   getStoragePath,
@@ -27,15 +27,30 @@ import {
 
 export type StorageKind = 'transcript' | 'summary' | 'recording' | 'memo'
 
-/** Feature flag. Slice 3b wires this to a setting; default OFF keeps legacy
- *  single-root behavior so a half-rolled-out fleet stays correct. */
+// Feature flag. Resolution order (first decisive wins):
+//   1. test override (__setTwoTierFlagForTests) — non-null forces a value
+//   2. env CYGGIE_TWO_TIER_STORAGE=1 — manual/dev opt-in
+//   3. injected setting provider (Slice 3b) — reads the `twoTierStorageEnabled`
+//      setting; injected from the main layer so routing stays db-dependency-free
+//      (keeps the storage unit tests from needing a built better-sqlite3).
+// Default OFF keeps legacy single-root behavior so a half-rolled-out fleet stays
+// correct.
 let flagOverride: boolean | null = null
+let settingProvider: (() => boolean) | null = null
+
 export function __setTwoTierFlagForTests(v: boolean | null): void {
   flagOverride = v
 }
+
+/** Inject the setting-backed flag reader (Slice 3b). Pass null to clear. */
+export function setTwoTierSettingProvider(fn: (() => boolean) | null): void {
+  settingProvider = fn
+}
+
 export function isTwoTierStorageEnabled(): boolean {
   if (flagOverride !== null) return flagOverride
-  return process.env['CYGGIE_TWO_TIER_STORAGE'] === '1'
+  if (process.env['CYGGIE_TWO_TIER_STORAGE'] === '1') return true
+  return settingProvider ? settingProvider() : false
 }
 
 export type RouteResult =
@@ -68,6 +83,41 @@ export function rootForMeeting(meeting: MeetingPrivacy): RouteResult {
   const shared = getSharedRoot()
   if (shared == null) return { kind: 'hold', reason: 'shared-unresolved' }
   return { kind: 'root', root: shared }
+}
+
+/**
+ * Ordered recording directories the media:// handler and filename-resolvers
+ * probe when they only have a filename — the media:// URL carries no meetingId,
+ * so they can't call rootForMeeting. Flag OFF → the single recordings dir
+ * (today's behavior). Flag ON → private root, shared root (when resolved), then
+ * the local staging slot where a HELD recording waits for the shared root to
+ * recover.
+ */
+export function recordingProbeDirs(): string[] {
+  if (!isTwoTierStorageEnabled()) return [getRecordingsDir()]
+  const dirs = [getRecordingsDir(getPrivateRoot())]
+  const shared = getSharedRoot()
+  if (shared != null) dirs.push(getRecordingsDir(shared))
+  dirs.push(join(getStagingDir(), 'recording')) // canonical slot for HELD recordings
+  return dirs
+}
+
+/**
+ * Resolve a recording FILENAME to an absolute on-disk path by probing every
+ * candidate root + the held-staging slot, applying a path-traversal guard per
+ * candidate (the filename arrives from an untrusted media:// URL). Returns the
+ * first existing match, or null. Flag OFF → single-root lookup (today's
+ * behavior, traversal-guarded exactly as the inline handler was).
+ */
+export function resolveRecordingFilePath(filename: string): string | null {
+  if (!filename) return null
+  for (const baseRaw of recordingProbeDirs()) {
+    const baseDir = normalize(join(baseRaw, '/'))
+    const candidate = normalize(join(baseDir, filename))
+    if (!candidate.startsWith(baseDir)) continue // reject ../ traversal
+    if (existsSync(candidate)) return candidate
+  }
+  return null
 }
 
 function dirFor(kind: StorageKind, root: string): string {
@@ -202,6 +252,9 @@ export function placeFinalizedFile(
 ): PlaceResult {
   const route = rootForMeeting(meeting)
   if (route.kind === 'hold') {
+    console.warn(
+      `[TwoTier] place HELD meeting=${meeting.id} kind=${kind} file=${filename} reason=${route.reason}`,
+    )
     return { kind: 'held', reason: route.reason, stagingPath }
   }
   const dir = dirFor(kind, route.root)
@@ -209,5 +262,8 @@ export function placeFinalizedFile(
   const dest = join(dir, filename)
   moveFile(stagingPath, dest)
   resolveCache.set(cacheKey(meeting.id, kind, filename), dest)
+  console.log(
+    `[TwoTier] place OK meeting=${meeting.id} kind=${kind} file=${filename} private=${!isPublic(meeting)}`,
+  )
   return { kind: 'placed', path: dest }
 }

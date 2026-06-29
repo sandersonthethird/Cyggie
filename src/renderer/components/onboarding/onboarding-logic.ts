@@ -9,19 +9,22 @@
 //   deriveOnboardingStatus ▶ gate: skip / full flow / resume-at-first-incomplete
 // =============================================================================
 
-/** The setup steps the flat progress bar spans (sign-in is step 0, no bar). */
-export type SetupStepId = 'workspace' | 'google' | 'keys' | 'import' | 'team'
-export const SETUP_STEPS: SetupStepId[] = ['workspace', 'google', 'keys', 'import', 'team']
+/** The setup steps the flat progress bar spans (sign-in is step 0, no bar).
+ *  'storage' (Slice 4) sits after workspace and is OPTIONAL — a local private
+ *  folder is always available + the default, so it never gates the flow. */
+export type SetupStepId = 'workspace' | 'storage' | 'google' | 'keys' | 'import' | 'team'
+export const SETUP_STEPS: SetupStepId[] = ['workspace', 'storage', 'google', 'keys', 'import', 'team']
 
-/** Step indices in the full flow (0 = SignIn … 6 = Done). */
+/** Step indices in the full flow (0 = SignIn … 7 = Done). */
 export const STEP = {
   signin: 0,
   workspace: 1,
-  google: 2,
-  keys: 3,
-  import: 4,
-  team: 5,
-  done: 6,
+  storage: 2,
+  google: 3,
+  keys: 4,
+  import: 5,
+  team: 6,
+  done: 7,
 } as const
 
 // ── slugify ──────────────────────────────────────────────────────────────────
@@ -35,6 +38,35 @@ export function slugify(name: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 48)
     .replace(/-+$/g, '') // re-trim if the slice landed on a hyphen
+}
+
+// ── shared-folder spec (Slice 4) ─────────────────────────────────────────────
+//
+// A firm shared Drive folder resolves to a different absolute path on every
+// machine (the CloudStorage prefix embeds the Google account):
+//   ~/Library/CloudStorage/GoogleDrive-alice@firm.com/Shared drives/Cyggie/Notes
+// We store only the MOUNT-RELATIVE tail ("Shared drives/Cyggie/Notes") on Neon;
+// each client re-resolves it against its own mount (storage/shared-root.ts).
+
+/**
+ * Strip the `…/CloudStorage/GoogleDrive-<acct>/` prefix off a picked absolute
+ * path, returning the mount-relative spec. Returns null when the path isn't
+ * under a Google Drive mount (the caller shows a non-blocking "not a Drive
+ * folder" warning). Tolerates both `/` and `\` separators.
+ */
+export function deriveSharedRelPath(absPath: string): string | null {
+  const norm = absPath.replace(/\\/g, '/')
+  // Match the GoogleDrive-<acct> mount segment and capture everything after it.
+  const m = norm.match(/\/CloudStorage\/GoogleDrive-[^/]+\/(.+)$/)
+  if (!m || !m[1]) return null
+  return m[1].replace(/\/+$/, '') // trim any trailing slash
+}
+
+/** True when a picked path looks like it lives inside a cloud-sync mount — used
+ *  for the non-blocking "this private folder is in a synced location" warning. */
+export function looksLikeCloudMount(absPath: string): boolean {
+  const norm = absPath.replace(/\\/g, '/')
+  return /\/Library\/CloudStorage\//.test(norm) || /\/(Dropbox|OneDrive|Google Drive)(\/|$)/.test(norm)
 }
 
 // ── email ──────────────────────────────────────────────────────────────────
@@ -80,6 +112,7 @@ const CORE_STEPS: SetupStepId[] = ['workspace', 'google', 'keys']
 export function deriveOnboardingStatus(s: OnboardingSignals): OnboardingStatus {
   const steps: Record<SetupStepId, boolean> = {
     workspace: s.hasFirmName,
+    storage: true, // optional, never blocks — local private folder is the default
     google: s.calendarConnected,
     keys: s.hasDeepgram && s.hasAnthropic,
     import: Boolean(s.csvImported), // optional, never blocks

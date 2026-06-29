@@ -66,7 +66,7 @@ export function recoverSummaryFromCompanionNote(meeting: Meeting): string | null
     if (!recovered) return null
 
     // Repair: write summary file + update DB so future loads skip recovery
-    const newSummaryPath = writeSummary(meeting.id, recovered, meeting.title, meeting.date, meeting.attendees)
+    const newSummaryPath = writeSummary(meeting.id, recovered, meeting.title, meeting.date, meeting.attendees, meeting.isPrivate)
     meetingRepo.updateMeeting(meeting.id, { summaryPath: newSummaryPath }, getCurrentUserId())
 
     console.log('[SummaryRecovery] Recovered summary from companion note for meeting:', meeting.id)
