@@ -10,8 +10,7 @@ import { getTemplate } from '@cyggie/db/sqlite/repositories/template.repo'
 import * as meetingRepo from '@cyggie/db/sqlite/repositories'
 import { readTranscript, writeSummary } from '@main/storage/file-manager'
 import { updateSummaryIndex } from '@cyggie/db/sqlite/repositories/search.repo'
-import { hasDriveScope } from '@main/calendar/google-auth'
-import { uploadSummary as uploadSummaryToDrive } from '@main/drive/google-drive'
+import { uploadSummary as uploadSummaryToDrive, shouldAutoUploadToDrive } from '@main/drive/google-drive'
 import { getSummariesDir } from '@main/storage/paths'
 import { join } from 'path'
 import { critiqueText, shouldRefineSummaries } from './critique'
@@ -208,8 +207,10 @@ export async function generateSummary(
     console.log(`[Contact AutoFill] ${contactUpdateProposals.length} proposals for meeting ${meetingId}`)
   }
 
-  // Upload summary to Drive (fire-and-forget)
-  if (hasDriveScope()) {
+  // Upload summary to the Drive API (fire-and-forget) — only for explicitly
+  // public meetings when two-tier is off (two-tier routes public files to the
+  // Drive mount itself). See shouldAutoUploadToDrive.
+  if (shouldAutoUploadToDrive(meeting)) {
     const fullPath = join(getSummariesDir(), summaryPath)
     uploadSummaryToDrive(fullPath)
       .then(({ driveId }) => {
