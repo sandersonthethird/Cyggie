@@ -4,6 +4,7 @@ import {
   getStoragePath,
   getPrivateRoot,
   getSharedRoot,
+  getStagingDir,
   getTranscriptsDir,
   getSummariesDir,
   getRecordingsDir,
@@ -82,6 +83,14 @@ function dirFor(kind: StorageKind, root: string): string {
   }
 }
 
+/** Standard local staging location for an in-progress/held file, namespaced by
+ *  kind so a transcript and a summary with the same meeting-id filename don't
+ *  collide. Writers stage here; resolveExistingFile checks here as a last resort
+ *  so a HELD public file (shared root unresolved) is still readable locally. */
+export function stagingPathFor(kind: StorageKind, filename: string): string {
+  return join(getStagingDir(), kind, filename)
+}
+
 // Per-(meeting,kind,filename) resolution cache (Issue 4A) so the common file-open
 // never re-stats a slow Drive online-only path. Cleared when a file relocates.
 const resolveCache = new Map<string, string>()
@@ -143,6 +152,11 @@ export function resolveExistingFile(
       return p
     }
   }
+  // Last resort: a HELD public file (shared root was unresolved at write time)
+  // still sits in local staging — find it so the desktop can read it meanwhile.
+  // Not cached (it's transient — the queue will move it into a root).
+  const staged = stagingPathFor(kind, filename)
+  if (existsSync(staged)) return staged
   return null
 }
 

@@ -14,11 +14,13 @@ import {
   rootForMeeting,
   resolveExistingFile,
   placeFinalizedFile,
+  stagingPathFor,
   isTwoTierStorageEnabled,
   __setTwoTierFlagForTests,
   __resetResolveCacheForTests,
   invalidateResolveCache,
 } from '../main/storage/routing'
+import { dirname } from 'path'
 
 // Two real on-disk roots: a local (private) root and a "shared" root.
 const LOCAL = join(tmpdir(), 'cyggie-routing-local')
@@ -178,6 +180,21 @@ describe('placeFinalizedFile — stage→finalize (2A) + hold (3A)', () => {
     const src = stage('legacy.md')
     const res = placeFinalizedFile({ id: 'p4', isPrivate: false }, 'summary', 'legacy.md', src)
     expect(res).toEqual({ kind: 'placed', path: join(getStoragePath(), 'summaries', 'legacy.md') })
+  })
+
+  it('a HELD public file (shared unresolved) stays readable via the staging fallback', () => {
+    __setTwoTierFlagForTests(true)
+    setResolvedSharedRoot(null) // public → HOLD
+    const filename = 'heldread.md'
+    // Writer stages at the canonical staging path, then places (→ held).
+    const src = stagingPathFor('transcript', filename)
+    mkdirSync(dirname(src), { recursive: true })
+    writeFileSync(src, 'pending content')
+    const res = placeFinalizedFile({ id: 'h1', isPrivate: false }, 'transcript', filename, src)
+    expect(res.kind).toBe('held')
+    // resolveExistingFile finds the held file in staging so the desktop can read it.
+    expect(resolveExistingFile({ id: 'h1', isPrivate: false }, 'transcript', filename)).toBe(src)
+    rmSync(src, { force: true })
   })
 
   afterAll(() => rmSync(STAGING, { recursive: true, force: true }))
