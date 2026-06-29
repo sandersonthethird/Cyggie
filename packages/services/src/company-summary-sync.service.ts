@@ -539,7 +539,7 @@ export async function getCompanyEnrichmentProposalsFromMeetings(
           if (!meeting) return null
 
           let text: string | null = null
-          if (meeting.summaryPath) text = readSummary(meeting.summaryPath)
+          if (meeting.summaryPath) text = readSummary(meeting.summaryPath, meeting)
           if (!text?.trim()) text = meeting.notes ?? null
           if (!text?.trim()) text = await downloadSummaryFromDrive(meeting.summaryDriveId ?? null)
           if (!text?.trim()) return null

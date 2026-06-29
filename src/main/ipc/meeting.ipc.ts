@@ -8,6 +8,7 @@ import * as meetingRepo from '@cyggie/db/sqlite/repositories'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { readTranscript, readSummary, updateTranscriptContent, updateSummaryContent, deleteTranscript, deleteSummary, deleteRecording, renameTranscript, renameSummary, renameRecording } from '../storage/file-manager'
 import { recoverSummaryFromCompanionNote } from '@cyggie/services/meeting-summary-recovery'
+import { relocateMeetingFiles } from '../storage/relocate'
 import { removeFromIndex } from '@cyggie/db/sqlite/repositories/search.repo'
 import { getStoragePath, setStoragePath } from '../storage/paths'
 import { renameFile as renameDriveFile } from '../drive/google-drive'
@@ -73,9 +74,10 @@ function rewriteTranscriptSpeakers(
   transcriptPath: string | null | undefined,
   oldSpeakerMap: Record<number, string>,
   newSpeakerMap: Record<number, string>,
+  meeting: { id: string; isPrivate?: boolean | null },
 ): void {
   if (!transcriptPath) return
-  let content = readTranscript(transcriptPath)
+  let content = readTranscript(transcriptPath, meeting)
   if (!content) return
 
   const fileNames = new Set<string>()
@@ -121,7 +123,7 @@ function rewriteTranscriptSpeakers(
     }
   }
 
-  if (changed) updateTranscriptContent(transcriptPath, content)
+  if (changed) updateTranscriptContent(transcriptPath, content, meeting)
 }
 
 const TWITTER_HOSTS = new Set([
@@ -433,8 +435,8 @@ export function registerMeetingHandlers(): void {
     const meeting = meetingRepo.getMeeting(id)
     if (!meeting) return null
 
-    const transcript = meeting.transcriptPath ? readTranscript(meeting.transcriptPath) : null
-    let summary = meeting.summaryPath ? readSummary(meeting.summaryPath) : null
+    const transcript = meeting.transcriptPath ? readTranscript(meeting.transcriptPath, meeting) : null
+    let summary = meeting.summaryPath ? readSummary(meeting.summaryPath, meeting) : null
 
     const db = getDatabase()
     const linkedCompanies = db
@@ -553,7 +555,7 @@ export function registerMeetingHandlers(): void {
       const oldSpeakerMap = meeting.speakerMap
 
       meetingRepo.updateMeeting(id, { speakerMap: newSpeakerMap }, userId)
-      rewriteTranscriptSpeakers(meeting.transcriptPath, oldSpeakerMap, newSpeakerMap)
+      rewriteTranscriptSpeakers(meeting.transcriptPath, oldSpeakerMap, newSpeakerMap, meeting)
 
       logAudit(userId, 'meeting', id, 'update', { speakerMap: newSpeakerMap })
       return meetingRepo.getMeeting(id)
@@ -641,9 +643,42 @@ export function registerMeetingHandlers(): void {
       const meeting = meetingRepo.getMeeting(id)
       if (!meeting) throw new Error('Meeting not found')
       if (!meeting.summaryPath) throw new Error('Meeting has no summary file')
-      updateSummaryContent(meeting.summaryPath, summaryContent)
+      updateSummaryContent(meeting.summaryPath, summaryContent, meeting)
       meetingRepo.updateMeeting(id, { summaryPath: meeting.summaryPath }, userId)
       logAudit(userId, 'meeting', id, 'update', { summaryEdited: true })
+      return meetingRepo.getMeeting(id)
+    }
+  )
+
+  // Slice 3f — flip a meeting's privacy and relocate its files between the
+  // private (local) and shared (Drive) roots. The flag write + reply are
+  // synchronous; the relocation (a copy that may cross to a Drive mount) runs in
+  // the background off the reply. Two-tier-OFF: relocateMeetingFiles is a no-op,
+  // so this is just the flag write.
+  ipcMain.handle(
+    IPC_CHANNELS.MEETING_SET_PRIVACY,
+    (_event, id: string, isPrivate: boolean) => {
+      const userId = getCurrentUserId()
+      const meeting = meetingRepo.getMeeting(id)
+      if (!meeting) throw new Error('Meeting not found')
+      if (meeting.isPrivate === isPrivate) return meeting // no-op, no relocation
+
+      meetingRepo.updateMeeting(id, { isPrivate }, userId)
+
+      const files = {
+        transcript: meeting.transcriptPath,
+        summary: meeting.summaryPath,
+        recording: meeting.recordingPath,
+      }
+      setImmediate(() => {
+        try {
+          relocateMeetingFiles(id, isPrivate, files)
+        } catch (err) {
+          console.error(`[MEETING_SET_PRIVACY] relocation failed for ${id}:`, err)
+        }
+      })
+
+      logAudit(userId, 'meeting', id, 'update', { isPrivate })
       return meetingRepo.getMeeting(id)
     }
   )
@@ -964,7 +999,7 @@ export function registerMeetingHandlers(): void {
         if (!updated) throw new Error('Failed to update meeting')
 
         meetingRepo.linkMeetingSpeakerContact(meetingId, speakerIndex, contactId)
-        rewriteTranscriptSpeakers(meeting.transcriptPath, meeting.speakerMap, updatedSpeakerMap)
+        rewriteTranscriptSpeakers(meeting.transcriptPath, meeting.speakerMap, updatedSpeakerMap, meeting)
 
         // Auto-tag companion note (first-link-wins, non-fatal). Uses the
         // wrapped tagNote so the contact_id propagates to mobile.
@@ -991,7 +1026,7 @@ export function registerMeetingHandlers(): void {
         if (!updated) throw new Error('Failed to update meeting')
 
         meetingRepo.unlinkMeetingSpeakerContact(meetingId, speakerIndex)
-        rewriteTranscriptSpeakers(meeting.transcriptPath, meeting.speakerMap, updatedSpeakerMap)
+        rewriteTranscriptSpeakers(meeting.transcriptPath, meeting.speakerMap, updatedSpeakerMap, meeting)
 
         logAudit(userId, 'meeting', meetingId, 'untag_speaker_contact', { speakerIndex })
       }

@@ -83,7 +83,7 @@ export function registerWebShareHandlers(): void {
         }
       }
 
-      const transcript = readTranscript(meeting.transcriptPath)
+      const transcript = readTranscript(meeting.transcriptPath, meeting)
       if (!transcript) {
         return {
           success: false,
@@ -92,7 +92,7 @@ export function registerWebShareHandlers(): void {
         }
       }
 
-      let summary = meeting.summaryPath ? readSummary(meeting.summaryPath) : null
+      let summary = meeting.summaryPath ? readSummary(meeting.summaryPath, meeting) : null
       if (!summary && meeting.status === 'summarized') {
         summary = recoverSummaryFromCompanionNote(meeting)
       }

@@ -214,6 +214,23 @@
   color: var(--cv-crimson);
 }
 
+/* Non-blocking advisory (cloud-mount private folder / non-Drive shared folder).
+ * Amber, not crimson — it informs, it never blocks the step. */
+.warn {
+  font-size: 12.5px;
+  color: var(--color-warning-text, #92400e);
+}
+
+/* Picked-folder button shows the chosen path; mono + truncated for long paths. */
+.folderPath {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 
 .primaryBtn {

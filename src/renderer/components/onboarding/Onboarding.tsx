@@ -20,6 +20,7 @@ import { decideGate, STEP } from './onboarding-logic'
 import { FlatProgress } from './FlatProgress'
 import { SignInStep } from './steps/SignInStep'
 import { WorkspaceStep } from './steps/WorkspaceStep'
+import { StorageStep } from './steps/StorageStep'
 import { GoogleStep } from './steps/GoogleStep'
 import { KeysStep } from './steps/KeysStep'
 import { ImportStep } from './steps/ImportStep'
@@ -49,7 +50,7 @@ type Action =
   | { type: 'addInvite'; email: string }
   | { type: 'removeInvite'; email: string }
 
-const SETUP_LABELS = ['Workspace', 'Google', 'Keys', 'Import', 'Team']
+const SETUP_LABELS = ['Workspace', 'Storage', 'Google', 'Keys', 'Import', 'Team']
 
 const EMPTY: OBState = {
   step: STEP.signin,
@@ -192,6 +193,12 @@ export function Onboarding() {
             onFirmName={(name, derivedSlug) => dispatch({ type: 'firmName', name, derivedSlug })}
             onSlug={(value) => dispatch({ type: 'slug', value })}
             onBack={() => go(STEP.signin)}
+            onNext={() => go(STEP.storage)}
+          />
+        )}
+        {state.step === STEP.storage && (
+          <StorageStep
+            onBack={() => go(STEP.workspace)}
             onNext={() => go(STEP.google)}
           />
         )}
@@ -202,7 +209,7 @@ export function Onboarding() {
               dispatch({ type: 'googleConnected' })
               go(STEP.keys)
             }}
-            onBack={() => go(STEP.workspace)}
+            onBack={() => go(STEP.storage)}
             onSkip={() => go(STEP.keys)}
           />
         )}

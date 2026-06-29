@@ -49,7 +49,7 @@ export async function generateSummary(
   if (!meeting) throw new Error('Meeting not found')
   if (!meeting.transcriptPath) throw new Error('No transcript available')
 
-  const transcript = readTranscript(meeting.transcriptPath)
+  const transcript = readTranscript(meeting.transcriptPath, meeting)
   if (!transcript) throw new Error('Could not read transcript file')
 
   const template = getTemplate(templateId)
@@ -115,7 +115,7 @@ export async function generateSummary(
   summaryAbortController = null
 
   // Save summary
-  const summaryPath = writeSummary(meetingId, summary, meeting.title, meeting.date, meeting.attendees)
+  const summaryPath = writeSummary(meetingId, summary, meeting.title, meeting.date, meeting.attendees, meeting.isPrivate)
 
   // Update meeting record.
   //

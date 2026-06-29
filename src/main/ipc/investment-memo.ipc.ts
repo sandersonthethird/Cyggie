@@ -570,7 +570,7 @@ export function registerInvestmentMemoHandlers(): void {
     const summaryRows = companyRepo.listCompanyMeetingSummaryPaths(companyId)
     const summaries: Array<{ title: string; date: string; content: string }> = []
     for (const row of summaryRows) {
-      const content = readSummary(row.summaryPath)
+      const content = readSummary(row.summaryPath, { id: row.meetingId, isPrivate: row.isPrivate })
       if (content) summaries.push({ title: row.title, date: row.date, content })
     }
 
@@ -582,7 +582,7 @@ export function registerInvestmentMemoHandlers(): void {
       if (meetingsWithSummary.has(meeting.id)) continue
       const full = meetingRepo.getMeeting(meeting.id)
       if (!full?.transcriptPath) continue
-      const content = readTranscript(full.transcriptPath)
+      const content = readTranscript(full.transcriptPath, full)
       if (content) transcripts.push({ title: meeting.title, date: meeting.date, content })
     }
 
@@ -916,7 +916,7 @@ export function registerInvestmentMemoHandlers(): void {
       for (const id of meetingIds) {
         const meeting = meetingRepo.getMeeting(id)
         if (!meeting?.transcriptPath) continue
-        const content = readTranscript(meeting.transcriptPath)
+        const content = readTranscript(meeting.transcriptPath, meeting)
         if (content) newTranscripts.push({ id, title: meeting.title, date: meeting.date, content })
       }
       const { newNotes, newEmails } = collectNewNotesAndEmails(companyId, sinceIso)

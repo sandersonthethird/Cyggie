@@ -34,6 +34,7 @@ import { registerEntitiesChatHandlers } from './entities-chat.ipc'
 import { registerFileHandlers } from './file.ipc'
 import { registerChatSessionHandlers } from './chat-session.ipc'
 import { registerAttachmentHandlers } from './attachment.ipc'
+import { registerStorageIpc } from './storage.ipc'
 
 export function registerAllHandlers(): void {
   registerMeetingHandlers()
@@ -72,4 +73,5 @@ export function registerAllHandlers(): void {
   registerChatSessionHandlers()
   registerAttachmentHandlers()
   registerOnboardingHandlers()
+  registerStorageIpc()
 }

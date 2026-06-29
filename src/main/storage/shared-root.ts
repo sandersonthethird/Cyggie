@@ -3,6 +3,7 @@ import { join } from 'path'
 import { readdirSync, statSync } from 'fs'
 import { fetchFirmStorageConfig, type FirmStorageSpec } from '../services/gateway-firm'
 import { setResolvedSharedRoot } from './paths'
+import { drainHoldQueue } from './hold-queue'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared-root resolver (two-tier storage, Slice 2/3).
@@ -107,22 +108,42 @@ export async function refreshSharedRoot(): Promise<SharedRootState> {
   const fetched = await fetchFirmStorageConfig()
 
   if (!fetched.ok) {
-    if (cachedState.status === 'resolved') return cachedState // stale-ok
-    cachedState = { status: 'unresolved', reason: 'fetch-failed' }
-    setResolvedSharedRoot(null)
-    return cachedState
+    // Offline-tolerant: keep a previously-resolved path (stale-ok) rather than
+    // dropping public files to a hold state on a transient fetch blip.
+    if (cachedState.status !== 'resolved') {
+      cachedState = { status: 'unresolved', reason: 'fetch-failed' }
+      setResolvedSharedRoot(null)
+    }
+  } else {
+    const res = resolveSpecToMount(fetched.config)
+    if (res.ok) {
+      cachedState = { status: 'resolved', path: res.path }
+      setResolvedSharedRoot(res.path)
+    } else if (res.reason === 'no-spec') {
+      cachedState = { status: 'unset' }
+      setResolvedSharedRoot(null)
+    } else {
+      cachedState = { status: 'unresolved', reason: res.reason }
+      setResolvedSharedRoot(null)
+    }
   }
 
-  const res = resolveSpecToMount(fetched.config)
-  if (res.ok) {
-    cachedState = { status: 'resolved', path: res.path }
-    setResolvedSharedRoot(res.path)
-  } else if (res.reason === 'no-spec') {
-    cachedState = { status: 'unset' }
-    setResolvedSharedRoot(null)
-  } else {
-    cachedState = { status: 'unresolved', reason: res.reason }
-    setResolvedSharedRoot(null)
+  // Structured resolution log (Slice 3b metrics): track resolve success vs the
+  // failure reason so the beta can watch the shared-root resolution rate.
+  if (cachedState.status === 'resolved') {
+    console.log(`[TwoTier] shared-root resolved path=${cachedState.path}`)
+  } else if (cachedState.status === 'unresolved') {
+    console.warn(`[TwoTier] shared-root UNRESOLVED reason=${cachedState.reason}`)
   }
+
+  // Now that the shared root may have (re)resolved, drain any files that were
+  // HELD while it was unavailable (Issue 3A). No-op when nothing is queued.
+  if (cachedState.status === 'resolved') {
+    const { placed, remaining } = drainHoldQueue()
+    if (placed > 0) {
+      console.log(`[TwoTier] drained held-finalize queue: placed=${placed} remaining=${remaining}`)
+    }
+  }
+
   return cachedState
 }

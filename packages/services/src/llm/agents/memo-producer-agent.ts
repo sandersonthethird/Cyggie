@@ -211,7 +211,7 @@ export async function runMemoProducerAgent(
     if (meetingFilter && !meetingFilter.has(m.id)) continue
     const meeting = meetingRepo.getMeeting(m.id)
     if (!meeting?.transcriptPath) continue
-    const content = readTranscript(meeting.transcriptPath)
+    const content = readTranscript(meeting.transcriptPath, meeting)
     if (!content) continue
     transcriptInputs.push({
       id: m.id,
@@ -254,7 +254,7 @@ export async function runMemoProducerAgent(
   // Niche signal: most recent summary's first 500 chars.
   const summariesByDateDesc = summaryPaths // already date DESC per repo contract
   const nicheSignal = summariesByDateDesc[0]
-    ? (readSummary(summariesByDateDesc[0].summaryPath) ?? '').slice(0, 500)
+    ? (readSummary(summariesByDateDesc[0].summaryPath, { id: summariesByDateDesc[0].meetingId, isPrivate: summariesByDateDesc[0].isPrivate }) ?? '').slice(0, 500)
     : null
 
   // ─── Exa pre-research (best-effort) ────────────────────────────────────

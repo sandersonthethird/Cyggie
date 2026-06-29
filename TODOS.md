@@ -4182,3 +4182,71 @@ over surfaces × sub-keys × intensities via `resolve()`. Lint = a custom rule o
 `no-restricted-syntax` scoped to `.tsx`, allow-listing event-handler usage.
 **Effort:** S (each). **Priority:** P2.
 **Depends on / blocked by:** nothing.
+
+## Two-tier storage — recording sharing via R2 (deferred from the storage redesign)
+
+**What:** Upload meeting recordings to R2 with presigned PUT/GET gated by the
+gateway JWT, reusing the attachment transport pattern, so teammates/mobile can
+view permitted recordings.
+
+**Why:** Today recordings are desktop-LOCAL only — no teammate or mobile client can
+ever view another user's recording. The two-tier storage feature keeps recordings
+local-private by design; this is the future path if cross-user recording access is
+ever wanted, replacing the un-ACL'd shared-Drive-folder approach.
+
+**Pros:** Unifies file privacy on the mechanism the app already trusts for
+attachments (presigned URLs + firm/JWT scoping). **Cons:** video storage cost;
+playback UI on desktop + mobile; transcode concerns.
+
+**Context/where to start:** mirror `src/main/attachments/attachment-transport.ts`
+(requestUploadUrl/putBytes) + `api-gateway/src/routes/attachments.ts` (presign +
+firm-scope check). Recordings live under `getRecordingsDir()` (`video-writer.ts`).
+**Effort:** L. **Priority:** P2.
+**Depends on / blocked by:** a real cross-user recording-access ask + storage budget.
+
+## Two-tier storage — Drive-mount resolver hardening (filesystem heuristic → Drive API)
+
+**What:** Replace the filesystem-heuristic shared-root resolver
+(`src/main/storage/shared-root.ts` `resolveSpecToMount`) with a Drive API-based
+resolver once cloud Drive services land.
+
+**Why:** The current resolver enumerates `~/Library/CloudStorage/GoogleDrive-*` and
+picks the account whose tree contains `rel_path`. This is fragile with multiple
+Google accounts, online-only (not-yet-synced) folders, and non-standard mount
+layouts. A Drive API resolver (resolve a shared-drive/folder ID → local mount) is
+robust.
+
+**Pros:** Deterministic resolution; handles online-only + multi-account cleanly.
+**Cons:** Needs Drive API scope + the post-V1 cloud Drive work (see "Cloud-side
+Gmail + Drive services").
+
+**Context/where to start:** `resolveSpecToMount` is pure + dep-injected (unit-tested
+in `src/tests/storage-shared-root.test.ts`) — swap its body. The stored spec already
+carries `{ provider:'gdrive', relPath }`; extend to carry a Drive folder/shared-drive
+ID. **Effort:** M. **Priority:** P2.
+**Depends on / blocked by:** post-V1 cloud Drive services.
+
+## ⚠️ Neon migration drift — tracking table at 0048, schema partially applied out of order
+
+**What:** Reconcile the Neon `drizzle.__drizzle_migrations` tracking table (49 rows,
+matching files through **0048**) with the actual applied schema and the repo's
+migration files (now through 0054).
+
+**Why:** Discovered 2026-06-29 while applying the two-tier-storage `firm_settings`
+migration. The schema is **inconsistently** partially applied: `org_companies.firm_id`
+is nullable (0052 applied) but `meetings.enriched_at` is **MISSING** (0049 not
+applied) and `org_companies.hq_address` still exists (0050 not applied). Migrations
+0049–0053 contain `DROP`s, so **`drizzle-kit migrate` is UNSAFE** — it would run those
+DROPs against a schema that's already diverged. `meetings.enriched_at` missing may be
+silently affecting enrichment sync (the T3 enrichment feature writes that column).
+
+**Pros:** Restores a trustworthy migrate path; fixes any silent enrichment-sync gap.
+**Cons:** Requires careful per-migration verification (apply-or-skip each of 0049–0053
+by inspecting actual schema state), not a blanket run.
+
+**Context/where to start:** compare each of `packages/db/migrations/0049..0053` against
+live `information_schema`; hand-apply only the not-yet-applied statements; backfill the
+matching `__drizzle_migrations` rows (hash = sha256 of the file — verified algorithm).
+Migration 0054 (firm_settings) was already hand-applied + recorded this way as the
+template. **Effort:** M. **Priority:** P1 (latent data-correctness risk).
+**Depends on / blocked by:** nothing — can be done independently.

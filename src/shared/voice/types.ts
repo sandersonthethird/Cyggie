@@ -38,6 +38,7 @@ export type SubKey =
   // onboarding steps
   | 'signIn'
   | 'workspace'
+  | 'storage'
   | 'google'
   | 'keys'
   | 'team'

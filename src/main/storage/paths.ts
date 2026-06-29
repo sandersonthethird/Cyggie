@@ -28,10 +28,20 @@ export function setStoragePath(path: string): void {
 // verified no-op until Slice 2 (shared-root resolution) and Slice 3 (routing)
 // wire them up behind the feature flag.
 
-/** Per-user local root for a user's own private files. Placeholder until the
- *  `privateStoragePath` setting lands (Slice 4); today == current storagePath. */
+// Per-user local root for a user's own private files (Slice 4). Loaded from the
+// `privateStoragePath` setting at startup via setPrivateStoragePath; falls back
+// to the single storagePath when the user hasn't chosen a separate private
+// folder. Kept as a module var (like storagePath) so paths.ts stays db-free.
+let privateStoragePath: string = ''
+
+export function setPrivateStoragePath(path: string): void {
+  privateStoragePath = path
+}
+
+/** Per-user local root for a user's own private files. Defaults to storagePath
+ *  until the user picks a dedicated private folder in onboarding/Settings. */
 export function getPrivateRoot(): string {
-  return getStoragePath()
+  return privateStoragePath || getStoragePath()
 }
 
 // The shared root is resolved asynchronously by storage/shared-root.ts (fetch

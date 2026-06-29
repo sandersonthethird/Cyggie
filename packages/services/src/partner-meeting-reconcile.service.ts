@@ -199,7 +199,7 @@ export async function generateReconciliationProposals(
     if (!meeting) {
       console.warn(`[ReconcileService] meetingId=${digest.meetingId} not found — proceeding without transcript`)
     } else if (meeting.transcriptPath) {
-      transcript = readTranscript(meeting.transcriptPath) ?? ''
+      transcript = readTranscript(meeting.transcriptPath, meeting) ?? ''
     }
   }
 

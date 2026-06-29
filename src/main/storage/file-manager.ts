@@ -1,8 +1,86 @@
-import { readFileSync, writeFileSync, unlinkSync, renameSync, existsSync, statSync } from 'fs'
-import { join, extname } from 'path'
+import { readFileSync, writeFileSync, unlinkSync, renameSync, existsSync, statSync, mkdirSync } from 'fs'
+import { join, extname, dirname } from 'path'
 import { getTranscriptsDir, getSummariesDir, getRecordingsDir } from './paths'
+import {
+  isTwoTierStorageEnabled,
+  placeFinalizedFile,
+  resolveExistingFile,
+  stagingPathFor,
+  type StorageKind,
+} from './routing'
+import { enqueueHeldFile } from './hold-queue'
 import { extractCompanyFromEmail } from '../utils/company-extractor'
 import { hasDriveContentScope } from '../calendar/google-auth'
+
+// ── Two-tier routing shims (Slice 3 wiring) ──────────────────────────────────
+//
+// Transcripts/summaries are one-shot writes (not streamed), so we stage→place
+// only to get uniform HOLD handling when a public file's shared root isn't
+// resolved. The `meeting` arg is OPTIONAL: when omitted (or the flag is OFF)
+// these are byte-identical to the pre-two-tier single-root behavior, so callers
+// can be threaded incrementally without changing behavior.
+
+interface MeetingRef {
+  id: string
+  isPrivate?: boolean | null
+}
+
+function legacyDir(kind: 'transcript' | 'summary'): string {
+  return kind === 'transcript' ? getTranscriptsDir() : getSummariesDir()
+}
+
+function routedWriteFile(
+  kind: 'transcript' | 'summary',
+  meeting: MeetingRef | undefined,
+  filename: string,
+  content: string,
+): void {
+  if (!meeting || !isTwoTierStorageEnabled()) {
+    writeFileSync(join(legacyDir(kind), filename), content, 'utf-8') // legacy: identical to before
+    return
+  }
+  const staging = stagingPathFor(kind, filename)
+  mkdirSync(dirname(staging), { recursive: true })
+  writeFileSync(staging, content, 'utf-8')
+  // placeFinalizedFile moves staging→routed root, or HOLDS in staging when the
+  // public shared root is unresolved (still readable via resolveExistingFile).
+  // On hold, enqueue so the held-finalize queue drains it once the root recovers.
+  const res = placeFinalizedFile(meeting, kind, filename, staging)
+  if (res.kind === 'held') {
+    enqueueHeldFile({ meetingId: meeting.id, kind, filename, stagingPath: res.stagingPath })
+  }
+}
+
+function routedReadPath(
+  kind: 'transcript' | 'summary',
+  meeting: MeetingRef | undefined,
+  filename: string,
+): string | null {
+  if (!meeting || !isTwoTierStorageEnabled()) {
+    const p = join(legacyDir(kind), filename) // legacy: single-root lookup
+    return existsSync(p) ? p : null
+  }
+  return resolveExistingFile(meeting, kind as StorageKind, filename)
+}
+
+/**
+ * Resolve the destination for an in-place edit of an EXISTING file (speaker
+ * rename, manual summary edit). Writes back to wherever the file currently
+ * lives — the routed root, or staging if it was HELD — so the edit doesn't
+ * silently fork a second copy in the legacy dir. Falls back to the legacy
+ * single-root path when the flag is off, no meeting is threaded, or the file
+ * can't be resolved (treat as a fresh write to the legacy location).
+ */
+function routedUpdatePath(
+  kind: 'transcript' | 'summary',
+  meeting: MeetingRef | undefined,
+  filename: string,
+): string {
+  if (!meeting || !isTwoTierStorageEnabled()) {
+    return join(legacyDir(kind), filename)
+  }
+  return resolveExistingFile(meeting, kind as StorageKind, filename) ?? join(legacyDir(kind), filename)
+}
 
 // Domain to exclude from filenames (user's own domain)
 const EXCLUDED_DOMAIN = 'redswanventures.com'
@@ -88,24 +166,26 @@ export function writeTranscript(
   content: string,
   title?: string,
   date?: string,
-  attendees?: string[] | null
+  attendees?: string[] | null,
+  isPrivate?: boolean | null
 ): string {
   const shortId = meetingId.split('-')[0]
   const filename =
     title && date ? `${sanitizeFilename(title, date, attendees)} (${shortId}).md` : `${meetingId}.md`
-  const filepath = join(getTranscriptsDir(), filename)
-  writeFileSync(filepath, content, 'utf-8')
+  // undefined isPrivate = caller not yet threaded → legacy single-root write.
+  const meeting = isPrivate === undefined ? undefined : { id: meetingId, isPrivate }
+  routedWriteFile('transcript', meeting, filename, content)
   return filename
 }
 
-export function updateTranscriptContent(filename: string, content: string): void {
-  const filepath = join(getTranscriptsDir(), filename)
+export function updateTranscriptContent(filename: string, content: string, meeting?: MeetingRef): void {
+  const filepath = routedUpdatePath('transcript', meeting, filename)
   writeFileSync(filepath, content, 'utf-8')
 }
 
-export function readTranscript(filename: string): string | null {
-  const filepath = join(getTranscriptsDir(), filename)
-  if (!existsSync(filepath)) return null
+export function readTranscript(filename: string, meeting?: MeetingRef): string | null {
+  const filepath = routedReadPath('transcript', meeting, filename)
+  if (!filepath) return null
   return readFileSync(filepath, 'utf-8')
 }
 
@@ -114,29 +194,30 @@ export function writeSummary(
   content: string,
   title?: string,
   date?: string,
-  attendees?: string[] | null
+  attendees?: string[] | null,
+  isPrivate?: boolean | null
 ): string {
   const shortId = meetingId.split('-')[0]
   const filename =
     title && date ? `${sanitizeFilename(title, date, attendees)} (${shortId}).md` : `${meetingId}.md`
-  const filepath = join(getSummariesDir(), filename)
-  writeFileSync(filepath, content, 'utf-8')
+  const meeting = isPrivate === undefined ? undefined : { id: meetingId, isPrivate }
+  routedWriteFile('summary', meeting, filename, content)
   return filename
 }
 
-export function readSummary(filename: string): string | null {
-  const filepath = join(getSummariesDir(), filename)
-  if (!existsSync(filepath)) return null
+export function readSummary(filename: string, meeting?: MeetingRef): string | null {
+  const filepath = routedReadPath('summary', meeting, filename)
+  if (!filepath) return null
   return readFileSync(filepath, 'utf-8')
 }
 
-export function summaryFileExists(filename: string | null): boolean {
+export function summaryFileExists(filename: string | null, meeting?: MeetingRef): boolean {
   if (!filename) return false
-  return existsSync(join(getSummariesDir(), filename))
+  return routedReadPath('summary', meeting, filename) != null
 }
 
-export function updateSummaryContent(filename: string, content: string): void {
-  const filepath = join(getSummariesDir(), filename)
+export function updateSummaryContent(filename: string, content: string, meeting?: MeetingRef): void {
+  const filepath = routedUpdatePath('summary', meeting, filename)
   writeFileSync(filepath, content, 'utf-8')
 }
 

@@ -12,6 +12,7 @@ import { useChatPanelStore } from '../../stores/chat-panel.store'
 import { useSidebarMode } from '../../hooks/useSidebarMode'
 import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { useFirmTemplate } from '../../hooks/useFirmTemplate'
+import { useSharedStorageStatus } from '../../hooks/useSharedStorageStatus'
 import { IPC_CHANNELS } from '../../../shared/constants/channels'
 import type { CalendarEvent } from '../../../shared/types/calendar'
 import type { Meeting } from '../../../shared/types/meeting'
@@ -33,6 +34,9 @@ export default function Layout() {
   const dismissedEventIds = useAppStore((s) => s.dismissedEventIds)
   const isRecording = useRecordingStore((s) => s.isRecording)
   const recordingMeetingId = useRecordingStore((s) => s.meetingId)
+  // Two-tier storage: persistent banner while public files are paused (shared
+  // Drive folder unavailable + at least one file held). Idle unless the flag is on.
+  const sharedStorage = useSharedStorageStatus()
   const startRecordingStore = useRecordingStore((s) => s.startRecording)
   const meetingMatch = useMatch('/meeting/:id')
   const [bannerEvent, setBannerEvent] = useState<CalendarEvent | null>(null)
@@ -346,6 +350,14 @@ export default function Layout() {
         <div className={styles.meetingBannerError}>
           {recordingError}
           <button className={styles.bannerDismissBtn} onClick={() => setRecordingError(null)}>×</button>
+        </div>
+      )}
+      {sharedStorage.paused && sharedStorage.message && (
+        // Persistent (non-dismissable) operational status — straight copy, no
+        // brand voice. Clears automatically once the shared root recovers and
+        // the held-finalize queue drains.
+        <div className={styles.storagePausedBanner} role="status">
+          {sharedStorage.message}
         </div>
       )}
     </div>

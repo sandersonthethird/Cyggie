@@ -47,7 +47,7 @@ export function buildContactContext(contactId: string): ContactContextResult {
     if (summaryTotal >= MAX_TOTAL_SUMMARIES) break
     const full = meetingRepo.getMeeting(meetingRef.id)
     if (!full?.summaryPath) continue
-    const content = readSummary(full.summaryPath)
+    const content = readSummary(full.summaryPath, full)
     if (!content) continue
     const excerpt = content.length > MAX_SUMMARY_CHARS ? content.substring(0, MAX_SUMMARY_CHARS) + '...' : content
     summaryParts.push(`### ${meetingRef.title} (${new Date(meetingRef.date).toLocaleDateString()})\n${excerpt}`)
@@ -67,7 +67,7 @@ export function buildContactContext(contactId: string): ContactContextResult {
     if (meetingsWithSummary.has(meetingRef.id)) continue
     const full = meetingRepo.getMeeting(meetingRef.id)
     if (!full?.transcriptPath) continue
-    const content = readTranscript(full.transcriptPath)
+    const content = readTranscript(full.transcriptPath, full)
     if (!content) continue
     const excerpt = content.length > MAX_TRANSCRIPT_CHARS ? content.substring(0, MAX_TRANSCRIPT_CHARS) + '...' : content
     transcriptParts.push(`### ${meetingRef.title} (${new Date(meetingRef.date).toLocaleDateString()})\n${excerpt}`)

@@ -301,6 +301,9 @@ export interface CompanyMeetingRef {
   durationSeconds: number | null
   summaryPath: string | null
   summaryDriveId: string | null
+  // Carried so two-tier file reads (summaryFileExists) can resolve the
+  // is_private-implied root first without re-fetching the full meeting.
+  isPrivate: boolean
   hasNonEmptyNotes: boolean
   hasReadableSummary?: boolean
   hasSummaryDriveId?: boolean

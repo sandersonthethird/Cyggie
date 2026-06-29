@@ -225,6 +225,14 @@ export const voiceCatalog: VoiceCatalog = {
         "Your firm's name — make it sound like it raised a Fund III.",
       ],
     },
+    storage: {
+      plain: 'Choose where your meeting files live — private stays on this Mac, shared goes to your firm folder.',
+      subtle: ['Private files stay on this Mac; shared files go to your firm folder. Pick your spots.'],
+      full: [
+        'Private files stay on this Mac. Shared files go to the firm folder. Boundaries — healthy.',
+        "Your stuff on this Mac, the firm's stuff in the shared folder. Everyone gets their lane.",
+      ],
+    },
     google: {
       plain: "Cyggie reads your calendar to build your firm's companies and contacts automatically.",
       subtle: ["Connect Google and Cyggie builds your companies and contacts from your calendar."],

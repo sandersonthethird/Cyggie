@@ -72,7 +72,7 @@ export async function queryMeeting(
 
   // Add transcript
   if (meeting.transcriptPath) {
-    const transcript = readTranscript(meeting.transcriptPath)
+    const transcript = readTranscript(meeting.transcriptPath, meeting)
     if (transcript) {
       parts.push('## Transcript')
       parts.push(transcript)
@@ -91,7 +91,7 @@ export async function queryMeeting(
 
   // Add summary if present
   if (meeting.summaryPath) {
-    const summary = readSummary(meeting.summaryPath)
+    const summary = readSummary(meeting.summaryPath, meeting)
     if (summary) {
       parts.push('## AI Summary')
       parts.push(summary)
@@ -225,7 +225,7 @@ export function buildMeetingContext(question: string): string {
     parts.push('')
 
     if (meeting.summaryPath) {
-      const summary = readSummary(meeting.summaryPath)
+      const summary = readSummary(meeting.summaryPath, meeting)
       if (summary) {
         parts.push('**Summary:**')
         parts.push(summary)
@@ -240,7 +240,7 @@ export function buildMeetingContext(question: string): string {
     }
 
     if (meeting.transcriptPath) {
-      const transcript = readTranscript(meeting.transcriptPath)
+      const transcript = readTranscript(meeting.transcriptPath, meeting)
       if (transcript) {
         const excerptLength = meeting.summaryPath ? 1500 : 3000
         let excerpt = transcript

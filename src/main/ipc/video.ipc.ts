@@ -59,7 +59,7 @@ export function registerVideoHandlers(): void {
     // surface; silence would be a data-loss bug.
     const finalizePromise = (async () => {
       try {
-        await finalizeVideoFile(meetingId, filename, previousRecordingPath)
+        await finalizeVideoFile(meetingId, filename, previousRecordingPath, meeting.isPrivate)
         meetingRepo.updateMeeting(meetingId, { recordingPath: filename })
         broadcast(IPC_CHANNELS.VIDEO_FINALIZED, { meetingId, filename })
       } catch (err) {

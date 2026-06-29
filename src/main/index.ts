@@ -8,7 +8,9 @@ import { getDatabase } from '@cyggie/db/sqlite/connection'
 import { registerAllHandlers } from './ipc'
 import { fetchAndEnrichCalendarEvents, calendarCacheKey } from './ipc/calendar.ipc'
 import { persistentCache } from './cache/persistent-cache'
-import { initializeStorage, setStoragePath, getRecordingsDir, getStoragePath } from './storage/paths'
+import { initializeStorage, setStoragePath, getStoragePath, setPrivateStoragePath } from './storage/paths'
+import { resolveRecordingFilePath } from './storage/routing'
+import { initTwoTierStorage } from './storage/two-tier-bootstrap'
 import * as settingsRepo from '@cyggie/db/sqlite/repositories/settings.repo'
 import { cleanupStaleRecordings, cleanupExpiredScheduledMeetings } from '@cyggie/db/sqlite/repositories'
 import { cleanupOrphanedTempFiles, getActiveRecordingMeetingId } from './video/video-writer'
@@ -319,6 +321,12 @@ app.whenReady().then(() => {
     if (savedStoragePath) {
       setStoragePath(savedStoragePath)
     }
+    // Slice 4 — per-user private root (two-tier). Falls back to storagePath when
+    // the user hasn't chosen a dedicated private folder in onboarding/Settings.
+    const savedPrivatePath = settingsRepo.getSetting('privateStoragePath')
+    if (savedPrivatePath) {
+      setPrivateStoragePath(savedPrivatePath)
+    }
   }
 
   // Ensure a local current-user identity exists so new writes are attributable.
@@ -350,6 +358,12 @@ app.whenReady().then(() => {
   // configureSyncGlobals can resolve user_id on each call).
   void startupUserId
   bootstrapSync()
+
+  // Two-tier storage (Slice 3b): wire the setting-backed flag and resolve the
+  // firm shared root now + periodically (also drains any HELD public files once
+  // Drive mounts). No-op/networkless when the flag is off. Runs after sync
+  // bootstrap so firm/auth context is established.
+  initTwoTierStorage()
 
   // One-time heal of notes mis-stamped with the gateway id (the two-identity
   // split). No-op when signed out or already reconciled; runs after credential
@@ -477,13 +491,13 @@ app.whenReady().then(() => {
 
     const url = new URL(request.url)
     const filename = decodeURIComponent(url.pathname).replace(/^\/+/, '')
-    const recordingsDir = normalize(join(getRecordingsDir(), '/'))
-    const filePath = normalize(join(recordingsDir, filename))
-    // Ensure the resolved path stays inside the recordings directory
-    if (!filePath.startsWith(recordingsDir)) {
-      return new Response('Forbidden', { status: 403 })
-    }
-    if (!existsSync(filePath)) {
+    // The media:// URL carries only the filename (no meetingId), so probe the
+    // recordings root(s) + the held-staging slot. resolveRecordingFilePath
+    // applies the per-candidate path-traversal guard and returns null on a miss
+    // or a rejected ../ traversal. Flag OFF → the single recordings dir, exactly
+    // as the inline lookup did before.
+    const filePath = resolveRecordingFilePath(filename)
+    if (!filePath) {
       return new Response('Not Found', { status: 404 })
     }
 

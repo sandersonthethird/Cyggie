@@ -71,7 +71,7 @@ export async function generateCompanyKeyTakeaways(
   const summaryParts: string[] = []
   for (const row of summaryRows) {
     if (totalChars >= MAX_TOTAL_CONTEXT) break
-    const content = readSummary(row.summaryPath)
+    const content = readSummary(row.summaryPath, { id: row.meetingId, isPrivate: row.isPrivate })
     if (!content) continue
     const excerpt = content.length > MAX_SUMMARY_CHARS ? content.substring(0, MAX_SUMMARY_CHARS) + '...' : content
     summaryParts.push(`### ${row.title} (${new Date(row.date).toLocaleDateString()})\n${excerpt}`)

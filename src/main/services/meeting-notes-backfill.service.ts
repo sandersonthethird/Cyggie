@@ -14,6 +14,7 @@ interface MeetingRow {
   title: string
   summary_path: string
   attendee_emails: string | null
+  is_private: number | null
 }
 
 export function backfillMeetingSummaryNotes(userId: string | null): { meetings: number; created: number; skipped: number } {
@@ -21,7 +22,7 @@ export function backfillMeetingSummaryNotes(userId: string | null): { meetings: 
 
   const meetings = db
     .prepare(`
-      SELECT id, title, summary_path, attendee_emails
+      SELECT id, title, summary_path, attendee_emails, is_private
       FROM meetings
       WHERE summary_path IS NOT NULL
       ORDER BY date ASC
@@ -34,7 +35,7 @@ export function backfillMeetingSummaryNotes(userId: string | null): { meetings: 
   for (const meeting of meetings) {
     let summary: string | null = null
     try {
-      summary = readSummary(meeting.summary_path)
+      summary = readSummary(meeting.summary_path, { id: meeting.id, isPrivate: meeting.is_private === 1 })
     } catch {
       skipped++
       continue
