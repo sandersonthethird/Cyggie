@@ -94,6 +94,31 @@ The obviated cluster is narrow and recording-centric:
 Everything else audited (the CRM/contacts/companies/partner-meeting/notes-polish/
 investment-thesis backlog) is **still fully relevant** — untouched by any pivot.
 
+## Cyggie deeplink sharing (platform-native) — replace Google Drive share links
+
+**What:** A native in-Cyggie way to share a meeting (transcript/summary/recording)
+with firm members via a deeplink (`cyggie://meeting/<id>` / web URL), instead of a
+Google Drive link.
+
+**Why:** Sharing should happen *on the platform*, not via Drive. Two-tier storage
+already drops the auto Drive-API share-link — the finalize-time gate
+(`shouldAutoUploadToDrive` in [google-drive.ts](src/main/drive/google-drive.ts)) no
+longer uploads to the Drive API or sets `transcript_drive_id`/`summary_drive_id` when
+two-tier is on. The org also blocks public Drive links anyway
+(`publishOutNotPermitted`). So the Drive-link UX is going away by design; this is the
+intended replacement.
+
+**Current state:** The on-demand Drive share (`DRIVE_GET_SHARE_LINK` in
+[drive.ipc.ts](src/main/ipc/drive.ipc.ts)) still exists but is legacy (and Slice-5
+refuses it for private meetings). Files now live in the firm shared Drive *mount*
+(public) or the per-user local folder (private) via two-tier routing.
+
+**Where to start:** a permissioned deeplink that resolves a meeting for a firm member
+(gateway route + desktop/mobile handler), gated on `is_private` (private meetings are
+owner-only). No prerequisite.
+
+**Depends on / blocked by:** none. Lands cleanly after two-tier is flipped on.
+
 ## Memo — accept/reject diff preview before persisting ("living memo")
 
 **What:** When incorporating new material (calls/notes/emails) into an existing memo,

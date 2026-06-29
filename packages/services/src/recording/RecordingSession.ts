@@ -94,8 +94,8 @@ import { getCurrentUserId } from '@main/security/current-user'
 import { writeTranscript } from '@main/storage/file-manager'
 import { getTranscriptsDir } from '@main/storage/paths'
 import { getCurrentMeetingEvent, getEventById } from '@main/calendar/google-calendar'
-import { isCalendarConnected, hasDriveScope } from '@main/calendar/google-auth'
-import { uploadTranscript } from '@main/drive/google-drive'
+import { isCalendarConnected } from '@main/calendar/google-auth'
+import { uploadTranscript, shouldAutoUploadToDrive } from '@main/drive/google-drive'
 import { extractCompaniesFromEmails } from '@main/utils/company-extractor'
 import {
   buildSpeakerMap,
@@ -939,7 +939,7 @@ export class RecordingSession {
           timeStep('fts-index', () => indexMeeting(meetingId, meeting.title, fullText))
         }
 
-        if (hasDriveScope()) {
+        if (shouldAutoUploadToDrive(meeting)) {
           const fullPath = join(getTranscriptsDir(), transcriptPath)
           uploadTranscript(fullPath)
             .then(({ driveId }) => {

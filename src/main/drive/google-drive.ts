@@ -8,6 +8,7 @@ import {
   hasDriveScope,
   isCalendarConnected
 } from '../calendar/google-auth'
+import { isTwoTierStorageEnabled } from '../storage/routing'
 import { markdownToHtml, buildMemoDocTitle, type MemoHeaderParams } from '../services/memo-export.service'
 import type { DriveShareResponse } from '../../shared/types/drive'
 import type { CompanyDriveFileRef } from '../../shared/types/company'
@@ -287,6 +288,25 @@ async function uploadFileToDrive(
   }
 
   return { fileId, webViewLink }
+}
+
+/**
+ * Whether to auto-upload a finalized transcript/summary to the Drive *API* on
+ * finalize. True only when:
+ *   • Drive is connected (hasDriveScope), AND
+ *   • two-tier storage is OFF — when ON, the Drive *mount* already holds public
+ *     files, so an API upload would be a duplicate Drive copy, AND
+ *   • the meeting is EXPLICITLY public — fail-closed: null/unknown ⇒ no upload,
+ *     so a private file never reaches the Drive API (the gap Slice 5 closed for
+ *     the on-demand share, applied here to the auto path).
+ *
+ * Single source of truth for the two finalize-time auto-upload call sites
+ * (RecordingSession transcript, summarizer summary).
+ */
+export function shouldAutoUploadToDrive(
+  meeting: { isPrivate?: boolean | null } | null | undefined
+): boolean {
+  return hasDriveScope() && !isTwoTierStorageEnabled() && meeting?.isPrivate === false
 }
 
 export async function uploadTranscript(
