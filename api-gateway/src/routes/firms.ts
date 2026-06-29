@@ -609,6 +609,141 @@ export async function registerFirmRoutes(
   })
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Firm-wide storage config (two-tier storage, Slice 2).
+  //
+  // The admin-designated SHARED files location lives here as a MOUNT-RELATIVE
+  // Drive spec — never an absolute path, because a shared Google Drive folder
+  // resolves to a different absolute path on each user's machine. Each desktop
+  // client resolves rel_path against its own ~/…/CloudStorage/GoogleDrive-<acct>/.
+  //
+  //   admin  PUT  /firms/me/storage-config  (requireAdmin) → upsert
+  //   member GET  /firms/me/storage-config  (requireFirm)  → read (inherit)
+  //
+  // Stored in firm_settings under key 'storageConfig' as a JSON string.
+  // ─────────────────────────────────────────────────────────────────────────
+  const STORAGE_CONFIG_KEY = 'storageConfig'
+
+  // rel_path must be a clean *relative* path: no leading slash, no '..' or empty
+  // segments (path-traversal guard — the client joins this onto its CloudStorage
+  // root, so a '..' could escape it). Forward slashes only; backslashes rejected.
+  const relPathSchema = z
+    .string()
+    .min(1)
+    .max(512)
+    .refine(
+      (p) =>
+        !p.startsWith('/') &&
+        !p.includes('\\') &&
+        !p.split('/').some((seg) => seg === '..' || seg === '' || seg === '.'),
+      'rel_path must be a clean relative path (no leading slash, no ".." or empty segments)',
+    )
+
+  const storageConfigShape = z.object({
+    provider: z.literal('gdrive'),
+    rel_path: relPathSchema,
+  })
+
+  fastifyTyped.route({
+    method: 'GET',
+    url: '/firms/me/storage-config',
+    schema: {
+      response: {
+        200: z.object({
+          storage_config: storageConfigShape.nullable(),
+          updated_by_user_id: z.string().nullable(),
+          updated_at: z.string().nullable(),
+        }),
+      },
+    },
+    handler: async (req) => {
+      const u = req.requireFirm()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const row = await db.query.firmSettings.findFirst({
+        where: and(
+          eq(schema.firmSettings.firmId, u.firm_id),
+          eq(schema.firmSettings.key, STORAGE_CONFIG_KEY),
+        ),
+      })
+      if (!row) {
+        return { storage_config: null, updated_by_user_id: null, updated_at: null }
+      }
+      // Stored value is admin-validated JSON; parse defensively so a malformed
+      // row degrades to "unset" rather than 500-ing every client that polls it.
+      let parsed: { provider: 'gdrive'; rel_path: string } | null = null
+      try {
+        const candidate = JSON.parse(row.value)
+        parsed = storageConfigShape.parse(candidate)
+      } catch {
+        req.log.warn({ firmId: u.firm_id }, 'firm storage-config row is malformed; returning null')
+      }
+      return {
+        storage_config: parsed,
+        updated_by_user_id: row.updatedByUserId,
+        updated_at: row.updatedAt.toISOString(),
+      }
+    },
+  })
+
+  fastifyTyped.route({
+    method: 'PUT',
+    url: '/firms/me/storage-config',
+    schema: {
+      body: storageConfigShape,
+      response: {
+        200: z.object({
+          storage_config: storageConfigShape,
+          updated_by_user_id: z.string(),
+          updated_at: z.string(),
+        }),
+      },
+    },
+    handler: async (req) => {
+      // Admin-only — requireAdmin throws the stable 403 ADMIN_REQUIRED for
+      // members. The shared location is a firm-wide setting only an admin may set.
+      const u = req.requireAdmin()
+      const db = getDb(env.GATEWAY_DATABASE_URL)
+      const value = JSON.stringify({
+        provider: req.body.provider,
+        rel_path: req.body.rel_path,
+      })
+      const now = new Date()
+      const [row] = await db
+        .insert(schema.firmSettings)
+        .values({
+          firmId: u.firm_id,
+          key: STORAGE_CONFIG_KEY,
+          value,
+          updatedByUserId: u.sub,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [schema.firmSettings.firmId, schema.firmSettings.key],
+          set: { value, updatedByUserId: u.sub, updatedAt: now },
+        })
+        .returning()
+      if (!row) {
+        throw new GatewayError({
+          statusCode: 500,
+          code: 'STORAGE_CONFIG_WRITE_FAILED',
+          message: 'Failed to persist firm storage config',
+        })
+      }
+      await db.insert(schema.auditLog).values({
+        userId: u.sub,
+        deviceId: u.device,
+        eventType: 'firm.storage_config.update',
+        actor: 'user',
+        details: { firm_id: u.firm_id, rel_path: req.body.rel_path },
+      })
+      return {
+        storage_config: { provider: req.body.provider, rel_path: req.body.rel_path },
+        updated_by_user_id: u.sub,
+        updated_at: now.toISOString(),
+      }
+    },
+  })
+
+  // ─────────────────────────────────────────────────────────────────────────
   // GET /firms/me/members — list firm members with roles.
   // Any firm member can list — needed for the chat UI to attribute mentions.
   // ─────────────────────────────────────────────────────────────────────────

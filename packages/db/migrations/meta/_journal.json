@@ -379,6 +379,13 @@
       "when": 1782677688039,
       "tag": "0053_premium_patriot",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1782736825601,
+      "tag": "0054_living_arachne",
+      "breakpoints": true
     }
   ]
 }
