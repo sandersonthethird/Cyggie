@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs'
 
 const DOCS = join(tmpdir(), 'cyggie-routing-docs')
 const TEMP = join(tmpdir(), 'cyggie-routing-temp')
@@ -13,6 +13,7 @@ import { setStoragePath, setResolvedSharedRoot, getStoragePath } from '../main/s
 import {
   rootForMeeting,
   resolveExistingFile,
+  placeFinalizedFile,
   isTwoTierStorageEnabled,
   __setTwoTierFlagForTests,
   __resetResolveCacheForTests,
@@ -131,4 +132,53 @@ describe('resolveExistingFile — implied root first, fallback once, cached', ()
       join(SHARED, 'transcripts', 'reloc.md'),
     )
   })
+})
+
+describe('placeFinalizedFile — stage→finalize (2A) + hold (3A)', () => {
+  const STAGING = join(tmpdir(), 'cyggie-routing-staging')
+
+  function stage(filename: string, body = 'data'): string {
+    mkdirSync(STAGING, { recursive: true })
+    const p = join(STAGING, filename)
+    writeFileSync(p, body)
+    return p
+  }
+
+  it('places a private meeting\'s staged file into the local root and removes the staging copy', () => {
+    __setTwoTierFlagForTests(true)
+    setResolvedSharedRoot(SHARED)
+    const src = stage('rec.mp4', 'video')
+    const res = placeFinalizedFile({ id: 'p1', isPrivate: true }, 'recording', 'rec.mp4', src)
+    expect(res).toEqual({ kind: 'placed', path: join(LOCAL, 'recordings', 'rec.mp4') })
+    expect(existsSync(src)).toBe(false) // moved, not copied-and-left
+    expect(readFileSync(join(LOCAL, 'recordings', 'rec.mp4'), 'utf-8')).toBe('video')
+  })
+
+  it('places a public meeting\'s staged file into the shared root', () => {
+    __setTwoTierFlagForTests(true)
+    setResolvedSharedRoot(SHARED)
+    const src = stage('pub.md')
+    const res = placeFinalizedFile({ id: 'p2', isPrivate: false }, 'transcript', 'pub.md', src)
+    expect(res).toEqual({ kind: 'placed', path: join(SHARED, 'transcripts', 'pub.md') })
+    expect(existsSync(join(SHARED, 'transcripts', 'pub.md'))).toBe(true)
+  })
+
+  it('HOLDS a public file in staging when the shared root is unresolved (no silent local mis-file)', () => {
+    __setTwoTierFlagForTests(true)
+    setResolvedSharedRoot(null)
+    const src = stage('held.md')
+    const res = placeFinalizedFile({ id: 'p3', isPrivate: false }, 'transcript', 'held.md', src)
+    expect(res).toEqual({ kind: 'held', reason: 'shared-unresolved', stagingPath: src })
+    expect(existsSync(src)).toBe(true) // still in staging, NOT moved to local
+    expect(existsSync(join(LOCAL, 'transcripts', 'held.md'))).toBe(false)
+  })
+
+  it('FLAG OFF → places into the single storagePath root (identity)', () => {
+    __setTwoTierFlagForTests(false)
+    const src = stage('legacy.md')
+    const res = placeFinalizedFile({ id: 'p4', isPrivate: false }, 'summary', 'legacy.md', src)
+    expect(res).toEqual({ kind: 'placed', path: join(getStoragePath(), 'summaries', 'legacy.md') })
+  })
+
+  afterAll(() => rmSync(STAGING, { recursive: true, force: true }))
 })

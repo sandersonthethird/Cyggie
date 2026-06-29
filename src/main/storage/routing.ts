@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, mkdirSync, renameSync, copyFileSync, unlinkSync } from 'fs'
 import {
   getStoragePath,
   getPrivateRoot,
@@ -144,4 +144,56 @@ export function resolveExistingFile(
     }
   }
   return null
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stage → finalize (Issue 2A) + hold (Issue 3A).
+//
+// All in-progress writes land in a neutral LOCAL staging dir; the finalized
+// artifact is MOVED into its routed root here. A recording made public then
+// toggled private can therefore never pre-leak bytes to the firm Drive, and a
+// public file whose shared root isn't resolved yet is HELD in staging (not
+// silently mis-filed locally) for the queue to drain once resolution recovers.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type PlaceResult =
+  | { kind: 'placed'; path: string }
+  | { kind: 'held'; reason: 'shared-unresolved'; stagingPath: string }
+
+/** Cross-volume-safe move (staging is local; the target root may be a Drive mount
+ *  on another volume → rename throws EXDEV, fall back to copy+unlink). */
+function moveFile(src: string, dest: string): void {
+  try {
+    renameSync(src, dest)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EXDEV') {
+      copyFileSync(src, dest)
+      unlinkSync(src)
+    } else {
+      throw err
+    }
+  }
+}
+
+/**
+ * Move a staged file into the meeting's routed root, or HOLD it in staging when
+ * the (public) destination shared root isn't resolved. On success the resolve
+ * cache is primed so the first read is free.
+ */
+export function placeFinalizedFile(
+  meeting: MeetingPrivacy & { id: string },
+  kind: StorageKind,
+  filename: string,
+  stagingPath: string,
+): PlaceResult {
+  const route = rootForMeeting(meeting)
+  if (route.kind === 'hold') {
+    return { kind: 'held', reason: route.reason, stagingPath }
+  }
+  const dir = dirFor(kind, route.root)
+  mkdirSync(dir, { recursive: true })
+  const dest = join(dir, filename)
+  moveFile(stagingPath, dest)
+  resolveCache.set(cacheKey(meeting.id, kind, filename), dest)
+  return { kind: 'placed', path: dest }
 }
