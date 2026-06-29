@@ -493,21 +493,26 @@ export function registerMeetingHandlers(): void {
     // AND the user hasn't explicitly toggled the flag, recompute it from the
     // new count. user_set=true → locked, never recomputed here.
     const attendeesChanged = data.attendees !== undefined || data.attendeeEmails !== undefined
-    if (attendeesChanged && data.isGroupEvent === undefined) {
-      const before = meetingRepo.getMeeting(id)
-      if (before) {
-        const newEmails = data.attendeeEmails !== undefined
-          ? (data.attendeeEmails ?? [])
-          : (before.attendeeEmails ?? [])
-        const recomputed = computeAutoGroupEventFlag(
-          newEmails.length,
-          before.isGroupEventUserSet,
-          before.isGroupEvent,
-          GROUP_EVENT_ATTENDEE_THRESHOLD,
-        )
-        if (recomputed !== null) {
-          data = { ...data, isGroupEvent: recomputed }
-        }
+    // A privacy flip relocates files between roots (3f) — needs the pre-update
+    // value to detect an actual change. Fetch `before` once for either need.
+    const privacyRequested = data.isPrivate !== undefined
+    const before =
+      (attendeesChanged && data.isGroupEvent === undefined) || privacyRequested
+        ? meetingRepo.getMeeting(id)
+        : null
+
+    if (attendeesChanged && data.isGroupEvent === undefined && before) {
+      const newEmails = data.attendeeEmails !== undefined
+        ? (data.attendeeEmails ?? [])
+        : (before.attendeeEmails ?? [])
+      const recomputed = computeAutoGroupEventFlag(
+        newEmails.length,
+        before.isGroupEventUserSet,
+        before.isGroupEvent,
+        GROUP_EVENT_ATTENDEE_THRESHOLD,
+      )
+      if (recomputed !== null) {
+        data = { ...data, isGroupEvent: recomputed }
       }
     }
 
@@ -519,6 +524,28 @@ export function registerMeetingHandlers(): void {
         console.error('[Contacts] Failed to sync from meeting update:', err)
       }
     }
+
+    // Slice 3f — when privacy actually flips, relocate this meeting's files
+    // between the private (local) and shared (Drive) roots. Backgrounded off the
+    // reply (the copy may cross to a Drive mount); no-op when two-tier is off.
+    // This is the real privacy toggle (MeetingDetail → MEETING_UPDATE), so the
+    // relocation hook lives here rather than on a dedicated channel.
+    if (updated && privacyRequested && before && before.isPrivate !== data.isPrivate) {
+      const isPrivate = data.isPrivate as boolean
+      const files = {
+        transcript: updated.transcriptPath,
+        summary: updated.summaryPath,
+        recording: updated.recordingPath,
+      }
+      setImmediate(() => {
+        try {
+          relocateMeetingFiles(id, isPrivate, files)
+        } catch (err) {
+          console.error(`[MEETING_UPDATE] relocation failed for ${id}:`, err)
+        }
+      })
+    }
+
     if (updated) {
       logAudit(userId, 'meeting', id, 'update', data)
     }
@@ -646,39 +673,6 @@ export function registerMeetingHandlers(): void {
       updateSummaryContent(meeting.summaryPath, summaryContent, meeting)
       meetingRepo.updateMeeting(id, { summaryPath: meeting.summaryPath }, userId)
       logAudit(userId, 'meeting', id, 'update', { summaryEdited: true })
-      return meetingRepo.getMeeting(id)
-    }
-  )
-
-  // Slice 3f — flip a meeting's privacy and relocate its files between the
-  // private (local) and shared (Drive) roots. The flag write + reply are
-  // synchronous; the relocation (a copy that may cross to a Drive mount) runs in
-  // the background off the reply. Two-tier-OFF: relocateMeetingFiles is a no-op,
-  // so this is just the flag write.
-  ipcMain.handle(
-    IPC_CHANNELS.MEETING_SET_PRIVACY,
-    (_event, id: string, isPrivate: boolean) => {
-      const userId = getCurrentUserId()
-      const meeting = meetingRepo.getMeeting(id)
-      if (!meeting) throw new Error('Meeting not found')
-      if (meeting.isPrivate === isPrivate) return meeting // no-op, no relocation
-
-      meetingRepo.updateMeeting(id, { isPrivate }, userId)
-
-      const files = {
-        transcript: meeting.transcriptPath,
-        summary: meeting.summaryPath,
-        recording: meeting.recordingPath,
-      }
-      setImmediate(() => {
-        try {
-          relocateMeetingFiles(id, isPrivate, files)
-        } catch (err) {
-          console.error(`[MEETING_SET_PRIVACY] relocation failed for ${id}:`, err)
-        }
-      })
-
-      logAudit(userId, 'meeting', id, 'update', { isPrivate })
       return meetingRepo.getMeeting(id)
     }
   )
