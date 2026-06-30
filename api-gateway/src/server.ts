@@ -2,15 +2,41 @@
 // run before Fastify wires any handlers.
 import { Sentry } from './sentry'
 import { loadEnv } from './env'
-import { closeDb } from './db'
+import { closeDb, getPool } from './db'
 import { buildApp } from './app'
 import { startPendingSweeper, stopPendingSweeper } from './auth/pending'
 import { reconcileStuckJobs } from './recording/transcribe-job'
 import { startStaleRecordingSweeper, stopStaleRecordingSweeper } from './recording/stale-sweeper'
+import { checkOwnedTableSchemaDrift } from './sync/schema-drift'
 
 async function main() {
   const env = loadEnv()
   const app = await buildApp(env)
+
+  // Schema-drift guard: catch the "migration written but not applied to Neon"
+  // class that silently broke all meetings sync on 2026-06-29 (see
+  // sync/schema-drift.ts). Non-fatal — a false positive must not down the
+  // gateway; the signal is the loud error + Sentry alert. Fire-and-forget so it
+  // never delays serving traffic.
+  if (env.NODE_ENV !== 'test') {
+    checkOwnedTableSchemaDrift(getPool(env.GATEWAY_DATABASE_URL))
+      .then((drifts) => {
+        if (drifts.length === 0) return
+        app.log.error(
+          { drifts, metric: 'schema.drift_detected' },
+          'OWNED-TABLE SCHEMA DRIFT: Neon is missing columns the Drizzle schema ' +
+            'expects — sync writes to these tables WILL fail. Apply the pending migration.',
+        )
+        Sentry.captureMessage('owned-table schema drift detected', {
+          level: 'error',
+          tags: { source: 'boot', metric: 'schema.drift_detected' },
+          extra: { drifts },
+        })
+      })
+      .catch((err) => {
+        app.log.error({ err }, 'schema-drift check failed to run')
+      })
+  }
 
   // Background sweeper for expired oauth_pending rows. Skipped in tests so
   // they don't leave a setInterval handle hanging.

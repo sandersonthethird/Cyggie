@@ -44,6 +44,44 @@ and never got a ✅ line. Code-verified and moved to ✅ this pass (see each ent
   **T28/T29/T35/T36/T37** (user signal), **T3 `llm_fallback_rate`** follow-up (P3).
 - *Untracked idea (not in TODOS):* iOS Live Activity — raise separately if wanted.
 
+### 2026-06-29 — Sync reliability follow-ups
+
+Surfaced while fixing "mobile calendar not showing today's recorded meetings."
+Root cause was a Neon migration-drift: SQLite migration 138 added
+`meetings.enriched_at` and the SyncAgent emitted it, but Postgres migration 0051
+was never applied to Neon, so **every** meetings push failed with `column
+"enriched_at" of relation "meetings" does not exist` (29 rows stuck `failed` in
+the desktop outbox, invisible to the user). Fixed by hand-applying 0051's columns
+to Neon (`enriched_at`, `enrich_attempts`, partial index), re-driving the outbox,
+and repairing 2 stale-replayed rows. A boot-time schema-drift guard now alerts on
+this class (`api-gateway/src/sync/schema-drift.ts` + `test/schema-drift.test.ts`).
+
+- **SR-1 — Chat sync: 5 stuck outbox failures.** The desktop outbox has 3
+  `chat_sessions` rejected with `duplicate key value violates unique constraint
+  "chat_sessions_active_idx"` (a partial-unique "one active session per scope" —
+  the desktop is pushing a 2nd row marked active) and 2 `chat_session_messages`
+  rejected with an FK violation (a message pushed before/without its parent
+  session). Effect: chat sessions/messages aren't reaching Neon → absent on
+  mobile and lost on reinstall. **Start:** dump the 5 payloads —
+  `sqlite3 ~/Documents/MeetingIntelligence/echovault.db "SELECT id, table_name,
+  op, last_error, payload FROM outbox WHERE table_name LIKE 'chat_session%' AND
+  status='failed';"` — then decide whether the fix is desktop-side (don't emit a
+  2nd active row / order parent before child) or gateway-side (upsert/relax).
+  Independent of the meetings fix. *Not blocking.*
+
+- **SR-2 — Neon migration drift 0045–0052.** Neon is hand-applied only through
+  0044 (0044 hand-applied 2026-06-23; 0051's columns hand-applied 2026-06-29).
+  The Drizzle schema + gateway code expect through 0052. Still unapplied: 0046
+  (`users_profile_identity`), 0047–0050, 0052 — and 0045 is the **deferred**
+  `co_investors` DROP (budget hit, see memory `project_neon_migration_state.md`).
+  Each unapplied additive migration is a latent silent-sync-failure exactly like
+  `enriched_at`. **Plan:** the new boot-time drift guard will now name the
+  missing columns on the next gateway deploy — read its Sentry/log output, then
+  hand-apply the additive migrations, decide on the 0045 DROP, and reconcile the
+  Drizzle journal so a future `drizzle-kit migrate` is safe. **Do NOT** blanket
+  `drizzle-kit migrate` — the watermark would run the 0045 DROP. *Best done now
+  that the guard makes the gaps visible.*
+
 ### 2026-06-28 — Multi-firm onboarding (firm #2) fast-follows
 
 Deferred items from the "Safely Onboard Firm #2" plan + eng-review
